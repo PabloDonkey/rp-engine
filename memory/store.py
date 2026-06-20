@@ -1,8 +1,26 @@
 """JSON file storage for memory persistence."""
 
 import json
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    """JSON encoder that handles datetime objects."""
+
+    def default(self, obj: Any) -> Any:
+        """Encode datetime objects as ISO format strings.
+
+        Args:
+            obj: Object to encode
+
+        Returns:
+            JSON-serializable representation
+        """
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 class JSONStore:
@@ -25,7 +43,7 @@ class JSONStore:
             data_dict = data
 
         with open(filepath, "w") as f:
-            json.dump(data_dict, f, indent=2)
+            json.dump(data_dict, f, indent=2, cls=DateTimeEncoder)
 
     @staticmethod
     def load(filepath: Path) -> dict[str, Any]:
@@ -41,8 +59,15 @@ class JSONStore:
             FileNotFoundError: If file doesn't exist
             json.JSONDecodeError: If file is not valid JSON
         """
-        with open(filepath, "r") as f:
-            return json.load(f)
+        with open(filepath) as f:
+            try:
+                return cast(dict[str, Any], json.load(f))
+            except json.JSONDecodeError as e:
+                raise json.JSONDecodeError(
+                    f"Failed to parse {filepath}: {e.msg}",
+                    e.doc,
+                    e.pos,
+                ) from e
 
     @staticmethod
     def exists(filepath: Path) -> bool:
