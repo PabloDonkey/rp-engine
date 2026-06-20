@@ -62,49 +62,67 @@ rp-engine/
 
 ### Installation
 
-1. **Clone or navigate to the project:**
+1. **Navigate to the project:**
    ```bash
    cd /home/pablo/projects/rp-engine
    ```
 
-2. **Create a Python virtual environment:**
+2. **Run setup script:**
    ```bash
-   python3.12 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   bash setup.sh
    ```
+   
+   This creates a `.venv` wrapper and installs all dependencies.
 
-3. **Install dependencies:**
+3. **Verify setup:**
    ```bash
-   pip install -e ".[dev]"
-   ```
-
-4. **Set up environment variables:**
-   ```bash
-   cp .env.example .env
-   # Edit .env if needed (defaults work for local LM Studio)
+   bash verify.sh
    ```
 
 ### Running the Engine
 
-1. **Start LM Studio** with a model loaded on `http://localhost:1234/v1`
+**Option 1: Using .venv wrapper directly**
+```bash
+.venv/bin/python app/main.py
+```
 
-2. **Run the CLI:**
-   ```bash
-   python app/main.py
-   ```
+**Option 2: Using system Python directly**
+```bash
+python3.12 app/main.py
+```
 
-3. **Follow the prompts:**
-   - Enter a session ID or create a new one
-   - Set character name and personality
-   - (Optional) Set world/setting name
-   - Start chatting!
+**Option 3: Activate venv in terminal and run**
+```bash
+source .venv/bin/activate
+python app/main.py
+deactivate  # when done
+```
 
-4. **Commands in chat:**
-   - Type normally to chat
-   - `save` - Save the session
-   - `quit` - Save and exit
-   - `exit` - Exit without saving
-   - `Ctrl+C` - Emergency exit (auto-saves)
+### Example Session
+
+```
+Session ID (or 'new' for new session): new
+Enter new session ID: dragon_tavern
+Character name: Aldric
+Character personality for Aldric: Experienced tavern keeper, cynical but kind-hearted
+Character tone (optional): Warm but sarcastic
+
+Initializing LM Studio client...
+API URL: http://localhost:1234/v1
+============================================================
+Session: dragon_tavern | Character: Aldric | Messages: 0
+============================================================
+Type 'exit' to quit, 'save' to save session, 'quit' to save and exit
+
+> You walk into a quiet tavern and sit at the bar
+
+Aldric glances up from polishing a glass, his weathered face breaking 
+into a knowing smile. "Another soul seeking refuge from the world," he 
+says, setting down the glass. "What can I get you?"
+
+> save
+Session saved.
+```
 
 ### Example Session
 
