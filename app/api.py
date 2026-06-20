@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, request, send_from_directory
+from flask import Flask, request
 from flask_cors import CORS
 
 from app.config import config
@@ -15,7 +15,7 @@ from memory.session import SessionManager
 from memory.world import WorldManager
 
 # Initialize Flask app
-app = Flask(__name__, static_folder="static", static_url_path="")
+app = Flask(__name__)
 
 # Enable CORS for all routes
 CORS(app)
@@ -79,16 +79,6 @@ def health() -> dict[str, str]:
         Status response
     """
     return {"status": "ok", "timestamp": datetime.now().isoformat()}
-
-
-@app.route("/", methods=["GET"])
-def index() -> Any:
-    """Serve web UI.
-
-    Returns:
-        HTML index page
-    """
-    return send_from_directory("static", "index.html")
 
 
 @app.route("/api/sessions", methods=["GET"])
