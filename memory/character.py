@@ -22,6 +22,8 @@ class CharacterState(BaseModel):
     name: str
     personality: str = "Neutral"
     tone: str = "Conversational"
+    system_prompt: str = "You are a helpful AI assistant."
+    introduction: str = "Hello! I'm here to chat."
     relationship_level: float = Field(default=0.0, ge=-100.0, le=100.0)
     created_at: datetime = Field(default_factory=datetime.now)
     last_updated: datetime = Field(default_factory=datetime.now)
@@ -76,7 +78,12 @@ class CharacterManager:
         return CharacterState.model_validate(data)
 
     def create_character(
-        self, name: str, personality: str = "Neutral", tone: str = "Conversational"
+        self,
+        name: str,
+        personality: str = "Neutral",
+        tone: str = "Conversational",
+        system_prompt: str = "You are a helpful AI assistant.",
+        introduction: str = "Hello! I'm here to chat.",
     ) -> CharacterState:
         """Create a new character.
 
@@ -84,12 +91,18 @@ class CharacterManager:
             name: Character name
             personality: Character personality description
             tone: Default tone for dialogue
+            system_prompt: System prompt for LLM
+            introduction: Character introduction/greeting
 
         Returns:
             New CharacterState object
         """
         character = CharacterState(
-            name=name, personality=personality, tone=tone
+            name=name,
+            personality=personality,
+            tone=tone,
+            system_prompt=system_prompt,
+            introduction=introduction,
         )
         self.save_character(character)
         return character

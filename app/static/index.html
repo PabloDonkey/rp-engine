@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RP Engine - Management & Chat</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 15px 20px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .header h1 {
+            font-size: 20px;
+            margin-bottom: 3px;
+        }
+
+        .header p {
+            font-size: 11px;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+            gap: 15px;
+            padding: 15px;
+        }
+
+        .sidebar {
+            width: 250px;
+            background: #16213e;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 15px;
+            overflow-y: auto;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .sidebar-section {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .sidebar-title {
+            font-weight: 600;
+            color: #667eea;
+            font-size: 12px;
+            text-transform: uppercase;
+            border-bottom: 1px solid #667eea;
+            padding-bottom: 5px;
+        }
+
+        .item-list {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .item-button {
+            background: #0f3460;
+            border: 1px solid #667eea;
+            color: #eee;
+            padding: 8px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+            text-align: left;
+        }
+
+        .item-button:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .item-button.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 5px;
+        }
+
+        .btn-small {
+            flex: 1;
+            padding: 6px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            transition: background 0.2s;
+        }
+
+        .btn-small:hover {
+            background: #764ba2;
+        }
+
+        .btn-danger {
+            background: #d32f2f;
+        }
+
+        .btn-danger:hover {
+            background: #b71c1c;
+        }
+
+        .content {
+            flex: 1;
+            background: #16213e;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .panel {
+            display: none;
+            flex: 1;
+            overflow: auto;
+            padding: 15px;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .panel.active {
+            display: flex;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #aaa;
+        }
+
+        input[type="text"],
+        input[type="email"],
+        textarea,
+        select {
+            padding: 8px;
+            background: #0f3460;
+            border: 1px solid #667eea;
+            color: #eee;
+            border-radius: 4px;
+            font-family: inherit;
+            font-size: 12px;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        input[type="text"]:focus,
+        input[type="email"]:focus,
+        textarea:focus,
+        select:focus {
+            outline: none;
+            border-color: #764ba2;
+            background: #1a1a2e;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: #764ba2;
+        }
+
+        .btn-secondary {
+            background: #555;
+        }
+
+        .btn-secondary:hover {
+            background: #777;
+        }
+
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            gap: 10px;
+        }
+
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            padding: 10px;
+            background: #0f3460;
+            border-radius: 4px;
+        }
+
+        .message {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 5px;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message-bubble {
+            max-width: 70%;
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.4;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .message.user .message-bubble {
+            background: #667eea;
+            color: white;
+        }
+
+        .message.assistant .message-bubble {
+            background: #333;
+            color: #eee;
+        }
+
+        .message.system .message-bubble {
+            background: #444;
+            color: #aaa;
+            text-align: center;
+            font-size: 11px;
+        }
+
+        .input-area {
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+        }
+
+        .input-area textarea {
+            flex: 1;
+            min-height: 50px;
+            max-height: 100px;
+        }
+
+        .input-area button {
+            padding: 8px 16px;
+            align-self: flex-end;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .card {
+            background: #0f3460;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #667eea;
+        }
+
+        .card-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #667eea;
+        }
+
+        .card-content {
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .error {
+            background: #5f0000;
+            border: 1px solid #d32f2f;
+            color: #ffb3b3;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .success {
+            background: #004d00;
+            border: 1px solid #4caf50;
+            color: #b3ffb3;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .sidebar {
+                width: 100%;
+                max-height: 200px;
+            }
+
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+
+            .message-bubble {
+                max-width: 90%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎭 RP Engine Pro</h1>
+        <p>Character Management & Roleplay Chat</p>
+    </div>
+
+    <div class="main-content">
+        <div class="sidebar">
+            <!-- Session Management -->
+            <div class="sidebar-section">
+                <div class="sidebar-title">📋 Sessions</div>
+                <div class="item-list" id="sessionList"></div>
+                <div class="action-buttons">
+                    <button class="btn-small" onclick="showPanel('new-session')">+ New</button>
+                </div>
+            </div>
+
+            <!-- Character Management -->
+            <div class="sidebar-section">
+                <div class="sidebar-title">🎭 Characters</div>
+                <div class="item-list" id="characterList"></div>
+                <div class="action-buttons">
+                    <button class="btn-small" onclick="showPanel('new-character')">+ New</button>
+                </div>
+            </div>
+
+            <!-- World Management -->
+            <div class="sidebar-section">
+                <div class="sidebar-title">🌍 Worlds</div>
+                <div class="item-list" id="worldList"></div>
+                <div class="action-buttons">
+                    <button class="btn-small" onclick="showPanel('new-world')">+ New</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="content">
+            <!-- New Session Panel -->
+            <div id="new-session" class="panel">
+                <h2>Create New Session</h2>
+                <div class="form-group">
+                    <label>Session ID</label>
+                    <input type="text" id="newSessionId" placeholder="Enter unique session ID">
+                </div>
+                <div class="form-group">
+                    <label>Select Character</label>
+                    <select id="newSessionChar">
+                        <option value="">-- Select a character --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Select World (Optional)</label>
+                    <select id="newSessionWorld">
+                        <option value="">-- None --</option>
+                    </select>
+                </div>
+                <div class="button-group">
+                    <button class="btn" onclick="createSession()">Create</button>
+                    <button class="btn btn-secondary" onclick="loadSessions()">Cancel</button>
+                </div>
+            </div>
+
+            <!-- Chat Panel -->
+            <div id="chat" class="panel active">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h2 id="chatTitle">Welcome to RP Engine</h2>
+                    <button class="btn btn-secondary" onclick="loadSessions()" style="padding: 4px 12px; font-size: 11px;">Back</button>
+                </div>
+                <div class="chat-container">
+                    <div class="messages" id="messagesDisplay">
+                        <div class="message system">
+                            <div class="message-bubble">Select a session from the left to start chatting!</div>
+                        </div>
+                    </div>
+                    <div class="input-area">
+                        <textarea id="messageInput" placeholder="Type your message here (Shift+Enter for newline)..." onkeypress="handleKeyPress(event)" disabled></textarea>
+                        <button class="btn" id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- New Character Panel -->
+            <div id="new-character" class="panel">
+                <h2>Create New Character</h2>
+                <div class="form-group">
+                    <label>Character Name</label>
+                    <input type="text" id="charName" placeholder="e.g., Alice, Wizard, Dragon">
+                </div>
+                <div class="form-group">
+                    <label>Personality</label>
+                    <textarea id="charPersonality" placeholder="Describe the character's personality"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Tone</label>
+                    <input type="text" id="charTone" placeholder="e.g., Whimsical, Serious, Friendly">
+                </div>
+                <div class="form-group">
+                    <label>System Prompt (for LLM)</label>
+                    <textarea id="charSystemPrompt" placeholder="How should the LLM behave as this character?"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Introduction</label>
+                    <textarea id="charIntroduction" placeholder="What does the character say when greeting?"></textarea>
+                </div>
+                <div class="button-group">
+                    <button class="btn" onclick="createCharacter()">Create</button>
+                    <button class="btn btn-secondary" onclick="loadCharacters()">Cancel</button>
+                </div>
+            </div>
+
+            <!-- New World Panel -->
+            <div id="new-world" class="panel">
+                <h2>Create New World</h2>
+                <div class="form-group">
+                    <label>World Name</label>
+                    <input type="text" id="worldName" placeholder="e.g., Wonderland, Medieval Times">
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea id="worldDesc" placeholder="Describe the world setting, atmosphere, rules..."></textarea>
+                </div>
+                <div class="button-group">
+                    <button class="btn" onclick="createWorld()">Create</button>
+                    <button class="btn btn-secondary" onclick="loadWorlds()">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000';
+        let currentSessionId = null;
+        let currentCharacter = null;
+        let currentWorld = null;
+
+        // === Navigation ===
+        function showPanel(panelId) {
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            document.getElementById(panelId).classList.add('active');
+        }
+
+        // === Session Management ===
+        async function loadSessions() {
+            try {
+                const response = await fetch(`${API_URL}/api/sessions`);
+                const data = await response.json();
+                const list = document.getElementById('sessionList');
+                list.innerHTML = '';
+                
+                for (const sessionId of data.sessions) {
+                    const btn = document.createElement('button');
+                    btn.className = 'item-button';
+                    btn.textContent = sessionId;
+                    btn.onclick = () => loadSession(sessionId);
+                    
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'btn-small btn-danger';
+                    deleteBtn.textContent = '✕';
+                    deleteBtn.style.width = '30px';
+                    deleteBtn.style.padding = '4px';
+                    deleteBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        deleteSession(sessionId);
+                    };
+                    
+                    const container = document.createElement('div');
+                    container.style.display = 'flex';
+                    container.style.gap = '5px';
+                    container.appendChild(btn);
+                    container.appendChild(deleteBtn);
+                    list.appendChild(container);
+                }
+                
+                showPanel('chat');
+            } catch (error) {
+                console.error('Error loading sessions:', error);
+            }
+        }
+
+        async function loadSession(sessionId) {
+            try {
+                const response = await fetch(`${API_URL}/api/sessions/${sessionId}`);
+                if (!response.ok) throw new Error('Session not found');
+                
+                const data = await response.json();
+                currentSessionId = sessionId;
+                
+                const charResp = await fetch(`${API_URL}/api/characters/${data.session.character}`);
+                if (charResp.ok) {
+                    currentCharacter = (await charResp.json()).character;
+                }
+                
+                document.getElementById('chatTitle').textContent = `📋 ${sessionId}`;
+                displayMessages(data.session.messages);
+                document.getElementById('messageInput').disabled = false;
+                document.getElementById('sendBtn').disabled = false;
+                showPanel('chat');
+            } catch (error) {
+                alert('Error loading session: ' + error.message);
+            }
+        }
+
+        async function createSession() {
+            const id = document.getElementById('newSessionId').value.trim();
+            const charName = document.getElementById('newSessionChar').value;
+            const worldName = document.getElementById('newSessionWorld').value || null;
+            
+            if (!id || !charName) {
+                alert('Session ID and Character are required');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/sessions`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: id,
+                        character_name: charName,
+                        world_name: worldName
+                    })
+                });
+                
+                if (response.ok) {
+                    document.getElementById('newSessionId').value = '';
+                    await loadSessions();
+                } else {
+                    alert('Error creating session');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function deleteSession(sessionId) {
+            if (!confirm(`Delete session "${sessionId}"?`)) return;
+            
+            try {
+                await fetch(`${API_URL}/api/sessions/${sessionId}`, { method: 'DELETE' });
+                await loadSessions();
+            } catch (error) {
+                alert('Error deleting session: ' + error.message);
+            }
+        }
+
+        // === Character Management ===
+        async function loadCharacters() {
+            try {
+                const response = await fetch(`${API_URL}/api/characters`);
+                const data = await response.json();
+                const list = document.getElementById('characterList');
+                list.innerHTML = '';
+                
+                for (const charName of data.characters) {
+                    const btn = document.createElement('button');
+                    btn.className = 'item-button';
+                    btn.textContent = charName;
+                    btn.onclick = () => viewCharacter(charName);
+                    
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'btn-small btn-danger';
+                    deleteBtn.textContent = '✕';
+                    deleteBtn.style.width = '30px';
+                    deleteBtn.style.padding = '4px';
+                    deleteBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        deleteCharacter(charName);
+                    };
+                    
+                    const container = document.createElement('div');
+                    container.style.display = 'flex';
+                    container.style.gap = '5px';
+                    container.appendChild(btn);
+                    container.appendChild(deleteBtn);
+                    list.appendChild(container);
+                }
+                
+                updateSelectors();
+            } catch (error) {
+                console.error('Error loading characters:', error);
+            }
+        }
+
+        async function createCharacter() {
+            const name = document.getElementById('charName').value.trim();
+            const personality = document.getElementById('charPersonality').value.trim();
+            const tone = document.getElementById('charTone').value.trim();
+            const systemPrompt = document.getElementById('charSystemPrompt').value.trim();
+            const introduction = document.getElementById('charIntroduction').value.trim();
+            
+            if (!name) {
+                alert('Character name is required');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/characters`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name,
+                        personality: personality || 'Neutral',
+                        tone: tone || 'Conversational',
+                        system_prompt: systemPrompt || 'You are a helpful AI assistant.',
+                        introduction: introduction || 'Hello!'
+                    })
+                });
+                
+                if (response.ok) {
+                    document.getElementById('charName').value = '';
+                    document.getElementById('charPersonality').value = '';
+                    document.getElementById('charTone').value = '';
+                    document.getElementById('charSystemPrompt').value = '';
+                    document.getElementById('charIntroduction').value = '';
+                    await loadCharacters();
+                } else {
+                    alert('Error creating character');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function deleteCharacter(charName) {
+            if (!confirm(`Delete character "${charName}"?`)) return;
+            
+            try {
+                await fetch(`${API_URL}/api/characters/${charName}`, { method: 'DELETE' });
+                await loadCharacters();
+            } catch (error) {
+                alert('Error deleting character: ' + error.message);
+            }
+        }
+
+        async function viewCharacter(charName) {
+            try {
+                const response = await fetch(`${API_URL}/api/characters/${charName}`);
+                const data = await response.json();
+                const char = data.character;
+                
+                alert(`Character: ${char.name}\n\nPersonality: ${char.personality}\nTone: ${char.tone}\n\nSystem Prompt:\n${char.system_prompt}\n\nIntroduction:\n${char.introduction}`);
+            } catch (error) {
+                alert('Error loading character: ' + error.message);
+            }
+        }
+
+        // === World Management ===
+        async function loadWorlds() {
+            try {
+                const response = await fetch(`${API_URL}/api/worlds`);
+                const data = await response.json();
+                const list = document.getElementById('worldList');
+                list.innerHTML = '';
+                
+                for (const worldName of data.worlds) {
+                    const btn = document.createElement('button');
+                    btn.className = 'item-button';
+                    btn.textContent = worldName;
+                    btn.onclick = () => viewWorld(worldName);
+                    
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'btn-small btn-danger';
+                    deleteBtn.textContent = '✕';
+                    deleteBtn.style.width = '30px';
+                    deleteBtn.style.padding = '4px';
+                    deleteBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        deleteWorld(worldName);
+                    };
+                    
+                    const container = document.createElement('div');
+                    container.style.display = 'flex';
+                    container.style.gap = '5px';
+                    container.appendChild(btn);
+                    container.appendChild(deleteBtn);
+                    list.appendChild(container);
+                }
+                
+                updateSelectors();
+            } catch (error) {
+                console.error('Error loading worlds:', error);
+            }
+        }
+
+        async function createWorld() {
+            const name = document.getElementById('worldName').value.trim();
+            const desc = document.getElementById('worldDesc').value.trim();
+            
+            if (!name) {
+                alert('World name is required');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/api/worlds`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name,
+                        description: desc
+                    })
+                });
+                
+                if (response.ok) {
+                    document.getElementById('worldName').value = '';
+                    document.getElementById('worldDesc').value = '';
+                    await loadWorlds();
+                } else {
+                    alert('Error creating world');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function deleteWorld(worldName) {
+            if (!confirm(`Delete world "${worldName}"?`)) return;
+            
+            try {
+                await fetch(`${API_URL}/api/worlds/${worldName}`, { method: 'DELETE' });
+                await loadWorlds();
+            } catch (error) {
+                alert('Error deleting world: ' + error.message);
+            }
+        }
+
+        async function viewWorld(worldName) {
+            try {
+                const response = await fetch(`${API_URL}/api/worlds/${worldName}`);
+                const data = await response.json();
+                const world = data.world;
+                
+                alert(`World: ${world.name}\n\nDescription: ${world.description}`);
+            } catch (error) {
+                alert('Error loading world: ' + error.message);
+            }
+        }
+
+        // === Chat ===
+        function displayMessages(messages) {
+            const display = document.getElementById('messagesDisplay');
+            display.innerHTML = '';
+            
+            for (const msg of messages) {
+                const div = document.createElement('div');
+                div.className = `message ${msg.role}`;
+                const bubble = document.createElement('div');
+                bubble.className = 'message-bubble';
+                bubble.textContent = msg.content;
+                div.appendChild(bubble);
+                display.appendChild(div);
+            }
+            display.scrollTop = display.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const msg = input.value.trim();
+            
+            if (!msg || !currentSessionId) return;
+            
+            // Add user message
+            const display = document.getElementById('messagesDisplay');
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user';
+            const userBubble = document.createElement('div');
+            userBubble.className = 'message-bubble';
+            userBubble.textContent = msg;
+            userDiv.appendChild(userBubble);
+            display.appendChild(userDiv);
+            
+            input.value = '';
+            document.getElementById('sendBtn').disabled = true;
+            display.scrollTop = display.scrollHeight;
+            
+            try {
+                const response = await fetch(`${API_URL}/api/sessions/${currentSessionId}/message`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content: msg })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    const assistantDiv = document.createElement('div');
+                    assistantDiv.className = 'message assistant';
+                    const assistantBubble = document.createElement('div');
+                    assistantBubble.className = 'message-bubble';
+                    assistantBubble.textContent = data.message.assistant;
+                    assistantDiv.appendChild(assistantBubble);
+                    display.appendChild(assistantDiv);
+                    display.scrollTop = display.scrollHeight;
+                } else {
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'message system';
+                    const errorBubble = document.createElement('div');
+                    errorBubble.className = 'message-bubble';
+                    errorBubble.textContent = 'Error: Could not get response';
+                    errorDiv.appendChild(errorBubble);
+                    display.appendChild(errorDiv);
+                }
+            } catch (error) {
+                alert('Error sending message: ' + error.message);
+            } finally {
+                document.getElementById('sendBtn').disabled = false;
+                input.focus();
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        async function updateSelectors() {
+            const charSelect = document.getElementById('newSessionChar');
+            const worldSelect = document.getElementById('newSessionWorld');
+            
+            try {
+                const charResp = await fetch(`${API_URL}/api/characters`);
+                const charData = await charResp.json();
+                charSelect.innerHTML = '<option value="">-- Select a character --</option>';
+                for (const name of charData.characters) {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    charSelect.appendChild(opt);
+                }
+                
+                const worldResp = await fetch(`${API_URL}/api/worlds`);
+                const worldData = await worldResp.json();
+                worldSelect.innerHTML = '<option value="">-- None --</option>';
+                for (const name of worldData.worlds) {
+                    const opt = document.createElement('option');
+                    opt.value = name;
+                    opt.textContent = name;
+                    worldSelect.appendChild(opt);
+                }
+            } catch (error) {
+                console.error('Error updating selectors:', error);
+            }
+        }
+
+        // Initialize
+        window.addEventListener('load', async () => {
+            await loadSessions();
+            await loadCharacters();
+            await loadWorlds();
+        });
+    </script>
+</body>
+</html>

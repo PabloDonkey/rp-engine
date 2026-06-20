@@ -9,6 +9,8 @@ A sophisticated local roleplay engine in Python that uses LM Studio (OpenAI-comp
 ✅ **World State Tracking** - Events, locations, status flags  
 ✅ **Prompt Orchestration** - Structured prompt building with system instructions  
 ✅ **CLI Interface** - Interactive chat loop with session management  
+✅ **REST API** - Full API server for headless operation  
+✅ **Web UI** - Beautiful modern interface with multiline input support  
 ✅ **Type Safety** - Full Python type hints (mypy compatible)  
 ✅ **Code Quality** - Configured with ruff and mypy  
 ✅ **CI/CD** - GitHub Actions workflow for lint + type check + tests  
@@ -81,21 +83,26 @@ rp-engine/
 
 ### Running the Engine
 
-**Option 1: Using .venv wrapper directly**
+**Choose your interface:**
+
+#### Web UI (Recommended for best experience)
+```bash
+./run_api.sh
+```
+Then open http://localhost:5000 in your browser
+
+Features: ✨ Beautiful interface • 📝 Multiline input • 📋 Easy copy/paste • 💾 Auto-save
+
+#### CLI (Terminal-based)
 ```bash
 .venv/bin/python app/main.py
 ```
 
-**Option 2: Using system Python directly**
-```bash
-python3.12 app/main.py
-```
+Features: 🖥️ Direct orchestrator control • ⚡ Quick startup • 🔧 Power user friendly
 
-**Option 3: Activate venv in terminal and run**
-```bash
-source .venv/bin/activate
-python app/main.py
-deactivate  # when done
+---
+
+See [API_AND_WEB_UI.md](docs/API_AND_WEB_UI.md) for detailed API documentation and curl examples.
 ```
 
 ### Example Session

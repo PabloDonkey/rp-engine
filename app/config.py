@@ -17,6 +17,9 @@ class Config:
         "LM_STUDIO_API_URL", "http://localhost:1234/v1"
     )
 
+    # Web API server
+    API_PORT: str = os.getenv("API_PORT", "5000")
+
     # Data directories
     BASE_DIR: Path = Path(__file__).parent.parent
     SESSION_DIR: Path = BASE_DIR / os.getenv("SESSION_DIR", "data/sessions")
