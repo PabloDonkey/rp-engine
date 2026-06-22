@@ -8,11 +8,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 try:
-    from src.app.main import main
-    from src.app.config import config
-    from src.engine.orchestrator import Orchestrator
-    from src.llm.client import LMStudioClient
-    from src.memory.session import SessionMemory
+    from app.main import main
+    from app.config import config
+    from engine.orchestrator import Orchestrator
+    from llm.client import LMStudioClient
+    from memory.session import SessionMemory
     print("✅ All imports successful!")
     print(f"✅ Config initialized: {config.LM_STUDIO_API_URL}")
     print("✅ Application is ready to run!")

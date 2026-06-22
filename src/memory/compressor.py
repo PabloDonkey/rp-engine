@@ -9,7 +9,7 @@ TODO: Implement intelligent memory compression:
 
 from typing import Optional
 
-from src.memory.session import Message, SessionMemory
+from memory.session import Message, SessionMemory
 
 
 class MemoryCompressor:

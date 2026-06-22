@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from src.memory.store import JSONStore
+from memory.store import JSONStore
 
 
 class WorldState(BaseModel):

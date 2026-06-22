@@ -6,12 +6,12 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.app.config import config
-from src.engine.orchestrator import Orchestrator
-from src.llm.client import LMStudioClient
-from src.memory.character import CharacterManager, CharacterState
-from src.memory.session import SessionManager, SessionMemory
-from src.memory.world import WorldManager, WorldState
+from app.config import config
+from engine.orchestrator import Orchestrator
+from llm.client import LMStudioClient
+from memory.character import CharacterManager, CharacterState
+from memory.session import SessionManager, SessionMemory
+from memory.world import WorldManager, WorldState
 
 
 def _setup_session(
