@@ -4,9 +4,9 @@ import pytest
 from pathlib import Path
 from datetime import datetime
 
-from memory.session import Message, SessionMemory
-from memory.character import CharacterState
-from memory.world import WorldState
+from src.memory.session import Message, SessionMemory
+from src.memory.character import CharacterState
+from src.memory.world import WorldState
 
 
 class TestMessage:

@@ -2,11 +2,11 @@
 
 from typing import Optional
 
-from llm.client import LMStudioClient
-from engine.prompt_builder import PromptBuilder
-from memory.session import SessionMemory
-from memory.character import CharacterState
-from memory.world import WorldState
+from src.llm.client import LMStudioClient
+from src.engine.prompt_builder import PromptBuilder
+from src.memory.session import SessionMemory
+from src.memory.character import CharacterState
+from src.memory.world import WorldState
 
 
 class Orchestrator:

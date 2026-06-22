@@ -6,7 +6,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from memory.store import JSONStore
+from src.memory.store import JSONStore
 
 
 class Message(BaseModel):

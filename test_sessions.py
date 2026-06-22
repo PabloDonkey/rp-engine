@@ -7,8 +7,8 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from app.config import config
-from memory.session import SessionManager
+from src.app.config import config
+from src.memory.session import SessionManager
 
 print("Testing Session Management")
 print("=" * 60)

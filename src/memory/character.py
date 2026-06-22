@@ -13,7 +13,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from memory.store import JSONStore
+from src.memory.store import JSONStore
 
 
 class CharacterState(BaseModel):
