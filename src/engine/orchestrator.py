@@ -48,8 +48,12 @@ class Orchestrator:
         Raises:
             requests.RequestException: If LLM API call fails
         """
+        print("\n[ENGINE] step start")
+        print(f"[ENGINE] user_input: {user_input}")
+
         # Add user message to session
         self.session.add_message("user", user_input)
+        print("[ENGINE] user message stored")
 
         # Build messages for API call
         messages = self.prompt_builder.build_messages(
@@ -57,6 +61,7 @@ class Orchestrator:
             user_input,
             context_messages=10,
         )
+        print(f"[ENGINE] prompt built (messages={len(messages)})")
 
         # Get response from LLM
         response = self.llm_client.chat_completion(
@@ -65,10 +70,13 @@ class Orchestrator:
             temperature=0.7,
             max_tokens=500,
         )
+        print("[ENGINE] llm response received")
 
         # Add assistant response to session
         self.session.add_message("assistant", response)
+        print("[ENGINE] assistant message stored")
 
+        print("[ENGINE] step end")
         return response
 
     def get_session_summary(self) -> str:

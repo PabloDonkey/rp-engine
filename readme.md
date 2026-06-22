@@ -81,6 +81,11 @@ rp-engine/
    bash verify.sh
    ```
 
+4. **Run debug:**
+  ```
+  python -m app.debug_run
+  ```
+
 ### Running the Engine
 
 **Choose your interface:**
