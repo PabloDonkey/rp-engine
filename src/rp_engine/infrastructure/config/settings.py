@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     app_environment: Literal["development", "test", "production"] = "development"
     app_host: str = "0.0.0.0"
     app_port: int = Field(default=8000, ge=1, le=65535)
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     telegram_enabled: bool = False
     telegram_bot_token: str = ""
@@ -45,6 +46,11 @@ class Settings(BaseSettings):
         if not cleaned:
             raise ValueError("RP_ENGINE_LMSTUDIO_MODEL must not be empty.")
         return cleaned
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, value: str) -> str:
+        return value.upper()
 
 
 @lru_cache(maxsize=1)

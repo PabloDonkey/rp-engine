@@ -32,18 +32,22 @@ def create_lifespan(
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         container.runtime_state.app_state = "starting"
+        logger.info("Application runtime starting")
         if container.telegram_runtime is not None:
             await container.telegram_runtime.start()
             logger.info("Telegram adapter started")
 
         container.runtime_state.app_state = "running"
+        logger.info("Application ready")
 
         try:
             yield
         finally:
             container.runtime_state.app_state = "stopping"
+            logger.info("Application runtime stopping")
             if container.telegram_runtime is not None:
                 await container.telegram_runtime.stop()
             container.runtime_state.app_state = "stopped"
+            logger.info("Application stopped")
 
     return lifespan

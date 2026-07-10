@@ -95,16 +95,43 @@ docs/
 
 # Development
 
-## Install
+## Installation
 
 ```bash
 uv sync
 ```
 
-## Run
+## Environment setup
 
 ```bash
-uv run uvicorn src.app.main:app --reload
+cp .env.example .env
+```
+
+Edit `.env` and set at least these required values:
+
+* `RP_ENGINE_TELEGRAM_ENABLED` (`true` to run with Telegram, `false` for local/dev without Telegram)
+* `RP_ENGINE_TELEGRAM_BOT_TOKEN` (required when Telegram is enabled)
+* `RP_ENGINE_LMSTUDIO_API_HOST` (LM Studio API host in `host:port` format)
+* `RP_ENGINE_LMSTUDIO_MODEL` (loaded model identifier)
+
+Optional application variables:
+
+* `RP_ENGINE_APP_ENVIRONMENT` (`development`, `test`, or `production`)
+* `RP_ENGINE_LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`)
+* `RP_ENGINE_APP_HOST`
+* `RP_ENGINE_APP_PORT`
+* `RP_ENGINE_DEBUG_STATUS_ENABLED`
+
+## Run application
+
+```bash
+uv run python -m uvicorn --app-dir src rp_engine.app.main:app --host 0.0.0.0 --port 8000
+```
+
+For local development with code reload:
+
+```bash
+uv run python -m uvicorn --app-dir src rp_engine.app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ## Lint
@@ -130,6 +157,15 @@ uv run mypy .
 ```bash
 uv run pytest
 ```
+
+## First Run Test
+
+1. Start LM Studio.
+2. Load a model that matches `RP_ENGINE_LMSTUDIO_MODEL`.
+3. Set `RP_ENGINE_TELEGRAM_ENABLED=true` and configure `RP_ENGINE_TELEGRAM_BOT_TOKEN` in `.env`.
+4. Start RP Engine.
+5. Open Telegram and send a message to the bot.
+6. Confirm a response is received.
 
 ---
 

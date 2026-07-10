@@ -19,6 +19,16 @@ from rp_engine.infrastructure.llm.lmstudio_provider import LMStudioProvider
 logger = logging.getLogger(__name__)
 
 
+def configure_logging(log_level: str) -> None:
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("telegram").setLevel(logging.WARNING)
+
+
 @dataclass(slots=True)
 class AppContainer:
     settings: Settings
@@ -30,12 +40,13 @@ class AppContainer:
 
 
 def build_container(settings: Settings) -> AppContainer:
-    logger.info("Configuration loaded", extra={"app_environment": settings.app_environment})
+    logger.info("Environment loaded", extra={"app_environment": settings.app_environment})
 
     llm_provider = LMStudioProvider(
         model_name=settings.lmstudio_model,
         api_host=settings.lmstudio_api_host,
     )
+    logger.info("LM Studio provider initialized", extra={"api_host": settings.lmstudio_api_host})
     orchestrator = RPOrchestrator(llm_provider=llm_provider)
     chat_service = ChatService(orchestrator=orchestrator)
 
@@ -51,6 +62,9 @@ def build_container(settings: Settings) -> AppContainer:
             adapter=telegram_adapter,
         )
         telegram_runtime = TelegramRuntime(application=telegram_application)
+        logger.info("Telegram adapter enabled")
+    else:
+        logger.info("Telegram adapter disabled")
 
     logger.info(
         "Dependencies created",
@@ -72,7 +86,8 @@ def build_container(settings: Settings) -> AppContainer:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings if settings is not None else get_settings()
-    logger.info("Application starting")
+    configure_logging(resolved_settings.log_level)
+    logger.info("Starting RP Engine")
     container = build_container(resolved_settings)
 
     app = FastAPI(title=resolved_settings.app_name, lifespan=create_lifespan(container))

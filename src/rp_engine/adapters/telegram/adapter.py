@@ -59,6 +59,7 @@ class TelegramRuntime:
             raise RuntimeError("Telegram updater is unavailable.")
 
         await self._application.updater.start_polling()
+        logger.info("Telegram polling started")
 
     async def stop(self) -> None:
         logger.info("Stopping Telegram runtime")
