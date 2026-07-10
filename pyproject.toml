@@ -1,0 +1,44 @@
+[project]
+name = "rp-engine"
+version = "0.1.0"
+description = "A local-first roleplay engine with persistent memory and LLM provider abstraction"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.139.0",
+    "python-telegram-bot>=22.0",
+    "httpx>=0.28.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.2.0",
+    "ruff>=0.15.21",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.25.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "B",
+    "UP",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
