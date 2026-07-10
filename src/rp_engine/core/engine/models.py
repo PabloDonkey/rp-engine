@@ -1,10 +1,13 @@
 from dataclasses import dataclass
 
+from rp_engine.core.memory.models import ConversationMessage, MemoryKey
+
 
 @dataclass(frozen=True, slots=True)
 class GenerationRequest:
-    user_id: str
-    message: str
+    memory_key: MemoryKey
+    context_messages: list[ConversationMessage]
+    instruction: str
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,6 +7,8 @@ from telegram import Update
 from rp_engine.adapters.telegram.adapter import TelegramAdapter
 from rp_engine.core.engine.models import PromptPayload
 from rp_engine.core.engine.orchestrator import RPOrchestrator
+from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
+from rp_engine.core.memory.models import ConversationMessage, MemoryKey
 from rp_engine.core.services.chat_service import ChatService
 
 
@@ -19,9 +21,29 @@ class FakeLLMProvider:
         return f"echo:{prompt.user_message}"
 
 
+class InMemoryConversationStore:
+    def __init__(self) -> None:
+        self._messages: dict[str, list[ConversationMessage]] = {}
+
+    async def save_message(self, memory_key: MemoryKey, message: ConversationMessage) -> None:
+        self._messages.setdefault(memory_key.value, []).append(message)
+
+    async def load_messages(self, memory_key: MemoryKey) -> list[ConversationMessage]:
+        return list(self._messages.get(memory_key.value, []))
+
+    async def clear(self, memory_key: MemoryKey) -> None:
+        self._messages.pop(memory_key.value, None)
+
+
 @dataclass
 class FakeUser:
     id: int
+
+
+@dataclass
+class FakeChat:
+    id: int
+    type: str
 
 
 class FakeMessage:
@@ -37,17 +59,26 @@ class FakeMessage:
 class FakeUpdate:
     effective_message: FakeMessage | None
     effective_user: FakeUser | None
+    effective_chat: FakeChat | None
 
 
 @pytest.mark.asyncio
 async def test_application_smoke_flow_without_external_services() -> None:
     provider = FakeLLMProvider()
     orchestrator = RPOrchestrator(llm_provider=provider, system_prompt="smoke-system")
-    chat_service = ChatService(orchestrator=orchestrator)
+    chat_service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=InMemoryConversationStore(),
+        memory_strategy=DumpEverythingStrategy(),
+    )
     adapter = TelegramAdapter(chat_service=chat_service)
 
     message = FakeMessage(text="hello smoke test")
-    update = FakeUpdate(effective_message=message, effective_user=FakeUser(id=7))
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=7),
+        effective_chat=FakeChat(id=7, type="private"),
+    )
 
     await adapter.handle_message(cast(Update, update), cast(Any, None))
 

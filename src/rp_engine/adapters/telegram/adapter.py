@@ -5,6 +5,7 @@ from telegram import Update
 from telegram.ext import Application as TelegramApplication
 from telegram.ext import ContextTypes, MessageHandler, filters
 
+from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
@@ -21,11 +22,15 @@ class TelegramAdapter:
 
         user = update.effective_user
         user_id = str(user.id) if user is not None else "anonymous"
-        logger.info("Telegram message received", extra={"user_id": user_id})
+        conversation_identity = self._resolve_conversation_identity(update, user_id)
+        logger.info(
+            "Telegram message received",
+            extra={"memory_key": conversation_identity.to_memory_key().value},
+        )
 
         try:
             response = await self._chat_service.handle_user_message(
-                user_id=user_id,
+                conversation_identity=conversation_identity,
                 message=message.text,
             )
         except ValueError:
@@ -44,6 +49,17 @@ class TelegramAdapter:
             return
 
         await message.reply_text(response)
+
+    @staticmethod
+    def _resolve_conversation_identity(update: Update, user_id: str) -> ConversationIdentity:
+        chat = update.effective_chat
+        if chat is None:
+            return ConversationIdentity.for_private(user_id)
+
+        if chat.type in {"group", "supergroup"}:
+            return ConversationIdentity.for_group(str(chat.id))
+
+        return ConversationIdentity.for_private(user_id)
 
 
 class TelegramRuntime:
@@ -72,6 +88,6 @@ class TelegramRuntime:
 
 def create_telegram_application(token: str, adapter: TelegramAdapter) -> Any:
     application = TelegramApplication.builder().token(token).build()
-    handler = MessageHandler(filters.TEXT & ~filters.COMMAND, adapter.handle_message)
+    handler = MessageHandler(filters.TEXT, adapter.handle_message)
     application.add_handler(handler)
     return application
