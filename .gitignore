@@ -10,3 +10,5 @@ wheels/
 .venv
 .devloop
 
+# User conversation memory
+data/memory/
