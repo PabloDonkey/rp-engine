@@ -1,10 +1,13 @@
 import asyncio
+import logging
 from urllib.parse import urlparse
 
 import lmstudio as lms
 
 from rp_engine.core.engine.models import PromptPayload
 from rp_engine.core.ports import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 
 class LMStudioProvider(LLMProvider):
@@ -13,7 +16,12 @@ class LMStudioProvider(LLMProvider):
         self._api_host = _normalize_api_host(api_host)
 
     async def generate_response(self, prompt: PromptPayload) -> str:
-        return await asyncio.to_thread(self._generate_sync, prompt)
+        logger.info("LLM request sent", extra={"model_name": self._model_name})
+        try:
+            return await asyncio.to_thread(self._generate_sync, prompt)
+        except Exception:
+            logger.exception("LLM unavailable", extra={"model_name": self._model_name})
+            raise
 
     def _generate_sync(self, prompt: PromptPayload) -> str:
         lms.configure_default_client(self._api_host)

@@ -21,6 +21,7 @@ class TelegramAdapter:
 
         user = update.effective_user
         user_id = str(user.id) if user is not None else "anonymous"
+        logger.info("Telegram message received", extra={"user_id": user_id})
 
         try:
             response = await self._chat_service.handle_user_message(
@@ -28,10 +29,17 @@ class TelegramAdapter:
                 message=message.text,
             )
         except ValueError:
+            logger.warning(
+                "Telegram failure",
+                extra={"reason": "invalid_message", "user_id": user_id},
+            )
             await message.reply_text("Please send a non-empty message.")
             return
         except Exception:
-            logger.exception("Unexpected error while processing Telegram message")
+            logger.exception(
+                "Telegram failure",
+                extra={"reason": "unexpected_error", "user_id": user_id},
+            )
             await message.reply_text("Sorry, I could not process your message right now.")
             return
 
@@ -43,6 +51,7 @@ class TelegramRuntime:
         self._application = application
 
     async def start(self) -> None:
+        logger.info("Starting Telegram runtime")
         await self._application.initialize()
         await self._application.start()
 
@@ -52,6 +61,7 @@ class TelegramRuntime:
         await self._application.updater.start_polling()
 
     async def stop(self) -> None:
+        logger.info("Stopping Telegram runtime")
         if self._application.updater is not None:
             await self._application.updater.stop()
 

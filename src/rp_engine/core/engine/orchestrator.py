@@ -1,5 +1,9 @@
+import logging
+
 from rp_engine.core.engine.models import GenerationRequest, PromptPayload
 from rp_engine.core.ports import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are RP Engine, a collaborative roleplay assistant. "
@@ -17,8 +21,11 @@ class RPOrchestrator:
         self._system_prompt = system_prompt
 
     async def generate_reply(self, request: GenerationRequest) -> str:
+        logger.info("Orchestrator started", extra={"user_id": request.user_id})
         prompt = self._build_prompt(request)
-        return await self._llm_provider.generate_response(prompt)
+        response = await self._llm_provider.generate_response(prompt)
+        logger.info("Response generated", extra={"user_id": request.user_id})
+        return response
 
     def _build_prompt(self, request: GenerationRequest) -> PromptPayload:
         return PromptPayload(system_prompt=self._system_prompt, user_message=request.message)
