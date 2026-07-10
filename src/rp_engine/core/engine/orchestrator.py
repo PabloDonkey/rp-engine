@@ -1,5 +1,5 @@
-from rp_engine.core.engine.llm_provider import LLMProvider
 from rp_engine.core.engine.models import GenerationRequest, PromptPayload
+from rp_engine.core.ports import LLMProvider
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are RP Engine, a collaborative roleplay assistant. "

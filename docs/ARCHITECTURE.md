@@ -91,6 +91,16 @@ Responsibilities:
 
 The application layer does not implement domain rules.
 
+The application layer is also the composition root.
+
+Responsibilities of the composition root:
+
+* Resolve configuration
+* Create infrastructure implementations
+* Wire abstractions to concrete implementations
+* Expose application services to adapters
+* Own startup and shutdown lifecycle
+
 ---
 
 ## Engine
@@ -141,6 +151,12 @@ Examples:
 
 Infrastructure depends on the domain, never the reverse.
 
+For language model integration, infrastructure implements the provider contract defined in:
+
+```text
+core/ports/llm_provider.py
+```
+
 ---
 
 # Dependency Rules
@@ -158,6 +174,7 @@ Domain
 
 Infrastructure ─────► Domain
 Infrastructure ─────► Engine
+Infrastructure ─────► Core Ports
 ```
 
 Allowed dependencies:
@@ -166,6 +183,7 @@ Allowed dependencies:
 * Application → Engine
 * Engine → Domain
 * Infrastructure → Domain
+* Infrastructure → Core Ports
 
 Forbidden dependencies:
 
@@ -175,6 +193,31 @@ Forbidden dependencies:
 * Domain → File System
 * Engine → Telegram
 * Engine → FastAPI
+
+---
+
+# Telegram Lifecycle Ownership
+
+Telegram runtime lifecycle is owned by the application layer.
+
+Expected flow:
+
+```text
+Application lifespan
+    ├─ start Telegram runtime
+    └─ stop Telegram runtime
+
+Telegram adapter
+    └─ delegate message handling to ChatService
+```
+
+Rules:
+
+* The Telegram adapter must not create `ChatService`.
+* The Telegram adapter must not initialize infrastructure dependencies.
+* The Telegram adapter must not own startup/shutdown orchestration.
+
+This keeps adapter responsibilities focused on transport translation and preserves clean boundaries.
 
 ---
 

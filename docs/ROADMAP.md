@@ -22,6 +22,8 @@ Development follows these priorities:
 
 # Milestone 1 — Project Foundation
 
+**Status:** Completed
+
 ## Goal
 
 Establish the project's architecture, tooling, and development workflow.
@@ -36,6 +38,11 @@ Establish the project's architecture, tooling, and development workflow.
 * Configuration
 * Dependency injection
 * Testing framework
+* Telegram adapter vertical slice
+* LM Studio SDK integration
+* Core LLM provider abstraction
+* Unit and integration test coverage for Milestone 1 scope
+* Ruff and mypy quality tooling
 
 ### Success Criteria
 
@@ -43,6 +50,7 @@ Establish the project's architecture, tooling, and development workflow.
 * Static analysis passes.
 * Tests execute successfully.
 * Documentation is established.
+* Telegram adapter to core to provider flow is operational.
 
 ---
 

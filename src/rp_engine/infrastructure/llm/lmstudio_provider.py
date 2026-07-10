@@ -3,8 +3,8 @@ from urllib.parse import urlparse
 
 import lmstudio as lms
 
-from rp_engine.core.engine.llm_provider import LLMProvider
 from rp_engine.core.engine.models import PromptPayload
+from rp_engine.core.ports import LLMProvider
 
 
 class LMStudioProvider(LLMProvider):
