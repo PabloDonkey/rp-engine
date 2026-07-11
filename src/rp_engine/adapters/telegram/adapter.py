@@ -9,6 +9,7 @@ from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.adapters.telegram.commands import build_help_message, parse_transport_message
 from rp_engine.adapters.telegram.invocation_policy import should_process_message
 from rp_engine.adapters.telegram.models import TelegramCommand
+from rp_engine.adapters.telegram.splitter import split_message
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.services.chat_service import ChatService
 
@@ -21,10 +22,12 @@ class TelegramAdapter:
         chat_service: ChatService,
         authorization: TelegramAuthorization,
         unauthorized_message: str,
+        message_max_length: int,
     ) -> None:
         self._chat_service = chat_service
         self._authorization = authorization
         self._unauthorized_message = unauthorized_message
+        self._message_max_length = message_max_length
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
@@ -42,7 +45,7 @@ class TelegramAdapter:
                 "Telegram request denied",
                 extra={"user_id": user_id, "chat_type": chat_type},
             )
-            await message.reply_text(self._unauthorized_message)
+            await self._reply_with_split(message=message, text=self._unauthorized_message)
             return
 
         parsed_message = parse_transport_message(message.text)
@@ -61,7 +64,7 @@ class TelegramAdapter:
 
         try:
             if parsed_message.command == TelegramCommand.HELP:
-                await message.reply_text(build_help_message())
+                await self._reply_with_split(message=message, text=build_help_message())
                 return
 
             if parsed_message.command == TelegramCommand.CONTINUE:
@@ -69,12 +72,15 @@ class TelegramAdapter:
                     context=context,
                     update=update,
                 ):
-                    await message.reply_text("Only group administrators can use this command.")
+                    await self._reply_with_split(
+                        message=message,
+                        text="Only group administrators can use this command.",
+                    )
                     return
                 response = await self._chat_service.continue_story(
                     conversation_identity=conversation_identity,
                 )
-                await message.reply_text(response)
+                await self._reply_with_split(message=message, text=response)
                 return
 
             if parsed_message.command == TelegramCommand.CLEAR:
@@ -82,17 +88,21 @@ class TelegramAdapter:
                     context=context,
                     update=update,
                 ):
-                    await message.reply_text("Only group administrators can use this command.")
+                    await self._reply_with_split(
+                        message=message,
+                        text="Only group administrators can use this command.",
+                    )
                     return
                 await self._chat_service.clear_conversation(
                     conversation_identity=conversation_identity,
                 )
-                await message.reply_text("Conversation memory cleared.")
+                await self._reply_with_split(message=message, text="Conversation memory cleared.")
                 return
 
             if parsed_message.is_command:
-                await message.reply_text(
-                    "Unsupported command. Use /help to see available commands."
+                await self._reply_with_split(
+                    message=message,
+                    text="Unsupported command. Use /help to see available commands.",
                 )
                 return
 
@@ -108,17 +118,20 @@ class TelegramAdapter:
                 "Telegram failure",
                 extra={"reason": "invalid_message", "user_id": user_id},
             )
-            await message.reply_text("Please send a non-empty message.")
+            await self._reply_with_split(message=message, text="Please send a non-empty message.")
             return
         except Exception:
             logger.exception(
                 "Telegram failure",
                 extra={"reason": "unexpected_error", "user_id": user_id},
             )
-            await message.reply_text("Sorry, I could not process your message right now.")
+            await self._reply_with_split(
+                message=message,
+                text="Sorry, I could not process your message right now.",
+            )
             return
 
-        await message.reply_text(response)
+        await self._reply_with_split(message=message, text=response)
 
     @staticmethod
     def _resolve_conversation_identity(update: Update, user_id: str) -> ConversationIdentity:
@@ -150,6 +163,21 @@ class TelegramAdapter:
 
         member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user.id)
         return member.status in {"administrator", "creator"}
+
+    async def _reply_with_split(self, *, message: Any, text: str) -> None:
+        chunks = split_message(text, self._message_max_length)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "Telegram message split",
+                extra={
+                    "characters": len(text),
+                    "chunks": len(chunks),
+                    "chunk_sizes": [len(chunk) for chunk in chunks],
+                },
+            )
+
+        for chunk in chunks:
+            await message.reply_text(chunk)
 
 
 class TelegramRuntime:

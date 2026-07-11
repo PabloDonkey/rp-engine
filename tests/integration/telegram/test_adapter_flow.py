@@ -68,6 +68,7 @@ async def test_telegram_adapter_flow_calls_chat_service_and_replies() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
+        message_max_length=3800,
     )
 
     message = FakeMessage(text="hello")
@@ -96,6 +97,7 @@ async def test_telegram_adapter_ignores_non_text_messages() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
+        message_max_length=3800,
     )
 
     update = FakeUpdate(
@@ -116,6 +118,7 @@ async def test_help_command_is_handled_in_adapter() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
+        message_max_length=3800,
     )
 
     message = FakeMessage(text="/help")
@@ -141,6 +144,7 @@ async def test_continue_command_calls_continue_story() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
+        message_max_length=3800,
     )
 
     message = FakeMessage(text="/continue")
@@ -166,6 +170,7 @@ async def test_clear_command_calls_clear_conversation_and_confirms() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
+        message_max_length=3800,
     )
 
     message = FakeMessage(text="/clear")
@@ -193,6 +198,7 @@ async def test_unauthorized_user_gets_configured_message() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization({"123"}),
         unauthorized_message="beta closed",
+        message_max_length=3800,
     )
 
     message = FakeMessage(text="hello")
@@ -216,6 +222,7 @@ async def test_authorized_group_accepts_normal_messages() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization(set(), {"-555"}),
         unauthorized_message="not authorized",
+        message_max_length=3800,
     )
 
     message = FakeMessage(text="hello from group")
@@ -244,6 +251,7 @@ async def test_unauthorized_group_gets_configured_message() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization(set(), {"-123"}),
         unauthorized_message="group not allowed",
+        message_max_length=3800,
     )
 
     message = FakeMessage(text="hello from group")
@@ -267,6 +275,7 @@ async def test_group_chat_supported_command_still_works() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
+        message_max_length=3800,
     )
 
     message = FakeMessage(text="/continue")
@@ -294,6 +303,7 @@ async def test_group_member_cannot_continue_or_clear() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization(set(), {"-555"}),
         unauthorized_message="not authorized",
+        message_max_length=3800,
     )
 
     continue_message = FakeMessage(text="/continue")
@@ -327,6 +337,7 @@ async def test_group_creator_can_clear() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization(set(), {"-555"}),
         unauthorized_message="not authorized",
+        message_max_length=3800,
     )
 
     message = FakeMessage(text="/clear")
@@ -345,3 +356,26 @@ async def test_group_creator_can_clear() -> None:
         conversation_identity=ConversationIdentity.for_group("-555"),
     )
     assert message.responses == ["Conversation memory cleared."]
+
+
+@pytest.mark.asyncio
+async def test_long_response_is_split_and_delivered_in_multiple_messages() -> None:
+    chat_service = AsyncMock()
+    chat_service.send_message = AsyncMock(return_value="A" * 12)
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=5,
+    )
+
+    message = FakeMessage(text="hello")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=42),
+        effective_chat=FakeChat(id=42, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    assert message.responses == ["AAAAA", "AAAAA", "AA"]

@@ -74,6 +74,7 @@ def build_container(settings: Settings) -> AppContainer:
                 settings.telegram_authorization_dir
             ),
             unauthorized_message=settings.telegram_unauthorized_message,
+            message_max_length=settings.telegram_message_max_length,
         )
         telegram_application = create_telegram_application(
             token=settings.telegram_bot_token,

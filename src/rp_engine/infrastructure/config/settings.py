@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_authorization_dir: str = "data/telegram/authorization"
     telegram_unauthorized_message: str = DEFAULT_TELEGRAM_UNAUTHORIZED_MESSAGE
+    telegram_message_max_length: int = Field(default=3800, ge=1)
 
     lmstudio_api_host: str = "localhost:1234"
     lmstudio_model: str = "qwen/qwen3-4b-2507"

@@ -53,3 +53,8 @@ def test_lmstudio_max_tokens_rejects_non_positive_values() -> None:
 def test_lmstudio_temperature_rejects_negative_values() -> None:
     with pytest.raises(ValidationError):
         Settings(lmstudio_temperature=-0.1)
+
+
+def test_telegram_message_max_length_rejects_non_positive_values() -> None:
+    with pytest.raises(ValidationError):
+        Settings(telegram_message_max_length=0)

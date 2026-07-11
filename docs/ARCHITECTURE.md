@@ -88,8 +88,12 @@ For Telegram, authorization and permissions are transport concerns handled in th
 * Group chats use group-level whitelist authorization.
 * In authorized groups, all members can send normal messages.
 * Destructive/story-control commands (`/clear`, `/continue`) are restricted to Telegram chat administrators and creators.
+* Telegram message-size limits are handled by adapter-level message splitting during delivery.
 
 Adapters must not implement prompt construction, memory strategy logic, or direct LLM interaction.
+
+The RP Engine core always returns a complete response string. Adapters are responsible for platform
+delivery constraints such as maximum message length.
 
 ### Transport Commands
 

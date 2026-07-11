@@ -76,6 +76,7 @@ async def test_application_smoke_flow_without_external_services() -> None:
         chat_service=chat_service,
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
+        message_max_length=3800,
     )
 
     message = FakeMessage(text="hello smoke test")
@@ -107,6 +108,7 @@ async def test_continue_command_is_not_sent_or_saved_as_literal_command() -> Non
         chat_service=chat_service,
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
+        message_max_length=3800,
     )
 
     update = FakeUpdate(
