@@ -18,8 +18,10 @@ class FakeChat:
 class FakeModel:
     def __init__(self, responder: Callable[[FakeChat], str]) -> None:
         self._responder = responder
+        self.last_config: dict[str, object] | None = None
 
-    def respond(self, chat: FakeChat) -> str:
+    def respond(self, chat: FakeChat, *, config: dict[str, object] | None = None) -> str:
+        self.last_config = config
         return self._responder(chat)
 
 
@@ -47,7 +49,12 @@ async def test_lmstudio_provider_uses_sdk_calls(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio_provider.lms.Chat", FakeChat)
     monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
 
-    provider = LMStudioProvider(model_name="model-a", api_host="http://127.0.0.1:1234")
+    provider = LMStudioProvider(
+        model_name="model-a",
+        api_host="http://127.0.0.1:1234",
+        max_tokens=600,
+        temperature=0.8,
+    )
     result = await provider.generate_response(
         PromptPayload(system_prompt="sys", user_message="hello")
     )
@@ -77,7 +84,12 @@ async def test_lmstudio_provider_configures_client_only_once(
     monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio_provider.lms.Chat", FakeChat)
     monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
 
-    provider = LMStudioProvider(model_name="model-a", api_host="127.0.0.1:1234")
+    provider = LMStudioProvider(
+        model_name="model-a",
+        api_host="127.0.0.1:1234",
+        max_tokens=600,
+        temperature=0.8,
+    )
     first = await provider.generate_response(PromptPayload(system_prompt="sys", user_message="one"))
     second = await provider.generate_response(
         PromptPayload(system_prompt="sys", user_message="two")
@@ -86,3 +98,38 @@ async def test_lmstudio_provider_configures_client_only_once(
     assert configured_hosts == ["127.0.0.1:1234"]
     assert first == "one"
     assert second == "two"
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_provider_passes_prediction_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_instances: list[FakeModel] = []
+
+    def fake_configure_default_client(_: str) -> None:
+        return None
+
+    def fake_llm(_: str) -> FakeModel:
+        model = FakeModel(lambda _chat: "ok")
+        model_instances.append(model)
+        return model
+
+    monkeypatch.setattr(
+        "rp_engine.infrastructure.llm.lmstudio_provider.lms.configure_default_client",
+        fake_configure_default_client,
+    )
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio_provider.lms.llm", fake_llm)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio_provider.lms.Chat", FakeChat)
+    monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
+
+    provider = LMStudioProvider(
+        model_name="model-a",
+        api_host="127.0.0.1:1234",
+        max_tokens=600,
+        temperature=0.7,
+    )
+
+    result = await provider.generate_response(PromptPayload(system_prompt="sys", user_message="hi"))
+
+    assert result == "ok"
+    assert model_instances[0].last_config == {"maxTokens": 600, "temperature": 0.7}

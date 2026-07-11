@@ -31,6 +31,8 @@ class Settings(BaseSettings):
 
     lmstudio_api_host: str = "localhost:1234"
     lmstudio_model: str = "qwen/qwen3-4b-2507"
+    lmstudio_max_tokens: int = Field(default=600, ge=1)
+    lmstudio_temperature: float = Field(default=0.8, ge=0.0)
 
     debug_status_enabled: bool = False
 

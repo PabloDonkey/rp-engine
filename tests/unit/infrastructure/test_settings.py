@@ -43,3 +43,13 @@ def test_development_mode_allows_running_without_telegram() -> None:
 def test_empty_telegram_unauthorized_message_fails_validation() -> None:
     with pytest.raises(ValidationError, match="RP_ENGINE_TELEGRAM_UNAUTHORIZED_MESSAGE"):
         Settings(telegram_unauthorized_message="   ")
+
+
+def test_lmstudio_max_tokens_rejects_non_positive_values() -> None:
+    with pytest.raises(ValidationError):
+        Settings(lmstudio_max_tokens=0)
+
+
+def test_lmstudio_temperature_rejects_negative_values() -> None:
+    with pytest.raises(ValidationError):
+        Settings(lmstudio_temperature=-0.1)

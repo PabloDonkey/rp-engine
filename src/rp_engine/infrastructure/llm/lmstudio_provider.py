@@ -16,9 +16,18 @@ class LMStudioProvider(LLMProvider):
     _client_lock: ClassVar[Lock] = Lock()
     _configured_api_host: ClassVar[str | None] = None
 
-    def __init__(self, *, model_name: str, api_host: str) -> None:
+    def __init__(
+        self,
+        *,
+        model_name: str,
+        api_host: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> None:
         self._model_name = model_name
         self._api_host = _normalize_api_host(api_host)
+        self._max_tokens = max_tokens
+        self._temperature = temperature
         self._ensure_default_client_configured(self._api_host)
 
     async def generate_response(self, prompt: PromptPayload) -> str:
@@ -33,7 +42,13 @@ class LMStudioProvider(LLMProvider):
         model = lms.llm(self._model_name)
         chat = lms.Chat(prompt.system_prompt)
         chat.add_user_message(prompt.user_message)
-        result = model.respond(chat)
+        result = model.respond(
+            chat,
+            config={
+                "maxTokens": self._max_tokens,
+                "temperature": self._temperature,
+            },
+        )
         return str(result)
 
     @classmethod

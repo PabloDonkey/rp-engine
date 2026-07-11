@@ -49,6 +49,8 @@ def build_container(settings: Settings) -> AppContainer:
     llm_provider = LMStudioProvider(
         model_name=settings.lmstudio_model,
         api_host=settings.lmstudio_api_host,
+        max_tokens=settings.lmstudio_max_tokens,
+        temperature=settings.lmstudio_temperature,
     )
     conversation_store = JsonConversationStore()
     memory_strategy = DumpEverythingStrategy()
