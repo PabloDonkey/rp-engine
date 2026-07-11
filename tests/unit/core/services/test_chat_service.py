@@ -122,3 +122,39 @@ async def test_chat_service_clear_conversation_uses_store_clear() -> None:
     )
 
     conversation_store.clear.assert_awaited_once_with(MemoryKey("user_user-9"))
+
+
+@pytest.mark.asyncio
+async def test_chat_service_persists_group_user_metadata() -> None:
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(return_value="scene response")
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(return_value=[])
+    memory_strategy = Mock()
+    memory_strategy.build_context.return_value = []
+
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+    )
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_group("-555"),
+        message="I open the door",
+        user_id="123456",
+        username="alice",
+        display_name="Alice",
+    )
+
+    first_saved = conversation_store.save_message.await_args_list[0]
+    assert first_saved == call(
+        MemoryKey("group_-555"),
+        ConversationMessage(
+            role="user",
+            content="I open the door",
+            user_id="123456",
+            username="alice",
+            display_name="Alice",
+        ),
+    )

@@ -32,3 +32,6 @@ class ConversationIdentity:
 class ConversationMessage:
     role: Role
     content: str
+    user_id: str | None = None
+    username: str | None = None
+    display_name: str | None = None

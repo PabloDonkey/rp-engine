@@ -14,6 +14,8 @@ from rp_engine.core.memory.models import ConversationIdentity
 @dataclass
 class FakeUser:
     id: int
+    username: str | None = None
+    full_name: str = "Test User"
 
 
 @dataclass
@@ -38,6 +40,26 @@ class FakeUpdate:
     effective_chat: FakeChat | None
 
 
+@dataclass
+class FakeChatMember:
+    status: str
+
+
+class FakeBot:
+    def __init__(self, member_status: str = "member") -> None:
+        self._member_status = member_status
+
+    async def get_chat_member(self, *, chat_id: int, user_id: int) -> FakeChatMember:
+        del chat_id
+        del user_id
+        return FakeChatMember(status=self._member_status)
+
+
+@dataclass
+class FakeContext:
+    bot: FakeBot
+
+
 @pytest.mark.asyncio
 async def test_telegram_adapter_flow_calls_chat_service_and_replies() -> None:
     chat_service = AsyncMock()
@@ -60,6 +82,9 @@ async def test_telegram_adapter_flow_calls_chat_service_and_replies() -> None:
     chat_service.send_message.assert_awaited_once_with(
         conversation_identity=ConversationIdentity.for_private("42"),
         message="hello",
+        user_id=None,
+        username=None,
+        display_name=None,
     )
     assert message.responses == ["bot reply"]
 
@@ -150,12 +175,15 @@ async def test_clear_command_calls_clear_conversation_and_confirms() -> None:
         effective_chat=FakeChat(id=-100, type="group"),
     )
 
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    await adapter.handle_message(
+        cast(Update, update),
+        cast(Any, FakeContext(FakeBot(member_status="administrator"))),
+    )
 
     chat_service.clear_conversation.assert_awaited_once_with(
         conversation_identity=ConversationIdentity.for_group("-100"),
     )
-    assert message.responses == ["Conversation cleared."]
+    assert message.responses == ["Conversation memory cleared."]
 
 
 @pytest.mark.asyncio
@@ -181,25 +209,54 @@ async def test_unauthorized_user_gets_configured_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_group_chat_ignores_normal_messages() -> None:
+async def test_authorized_group_accepts_normal_messages() -> None:
     chat_service = AsyncMock()
+    chat_service.send_message = AsyncMock(return_value="group reply")
     adapter = TelegramAdapter(
         chat_service=chat_service,
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization(set(), {"-555"}),
         unauthorized_message="not authorized",
     )
 
     message = FakeMessage(text="hello from group")
     update = FakeUpdate(
         effective_message=message,
-        effective_user=FakeUser(id=77),
+        effective_user=FakeUser(id=77, username="alice", full_name="Alice"),
         effective_chat=FakeChat(id=-555, type="group"),
     )
 
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
+
+    chat_service.send_message.assert_awaited_once_with(
+        conversation_identity=ConversationIdentity.for_group("-555"),
+        message="hello from group",
+        user_id="77",
+        username="alice",
+        display_name="Alice",
+    )
+    assert message.responses == ["group reply"]
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_group_gets_configured_message() -> None:
+    chat_service = AsyncMock()
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        authorization=TelegramAuthorization(set(), {"-123"}),
+        unauthorized_message="group not allowed",
+    )
+
+    message = FakeMessage(text="hello from group")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=77, username="alice", full_name="Alice"),
+        effective_chat=FakeChat(id=-555, type="group"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
 
     chat_service.send_message.assert_not_awaited()
-    assert message.responses == []
+    assert message.responses == ["group not allowed"]
 
 
 @pytest.mark.asyncio
@@ -219,9 +276,72 @@ async def test_group_chat_supported_command_still_works() -> None:
         effective_chat=FakeChat(id=-555, type="group"),
     )
 
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    await adapter.handle_message(
+        cast(Update, update),
+        cast(Any, FakeContext(FakeBot(member_status="administrator"))),
+    )
 
     chat_service.continue_story.assert_awaited_once_with(
         conversation_identity=ConversationIdentity.for_group("-555"),
     )
     assert message.responses == ["continued in group"]
+
+
+@pytest.mark.asyncio
+async def test_group_member_cannot_continue_or_clear() -> None:
+    chat_service = AsyncMock()
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        authorization=TelegramAuthorization(set(), {"-555"}),
+        unauthorized_message="not authorized",
+    )
+
+    continue_message = FakeMessage(text="/continue")
+    continue_update = FakeUpdate(
+        effective_message=continue_message,
+        effective_user=FakeUser(id=77),
+        effective_chat=FakeChat(id=-555, type="group"),
+    )
+
+    clear_message = FakeMessage(text="/clear")
+    clear_update = FakeUpdate(
+        effective_message=clear_message,
+        effective_user=FakeUser(id=77),
+        effective_chat=FakeChat(id=-555, type="group"),
+    )
+
+    context = cast(Any, FakeContext(FakeBot(member_status="member")))
+    await adapter.handle_message(cast(Update, continue_update), context)
+    await adapter.handle_message(cast(Update, clear_update), context)
+
+    chat_service.continue_story.assert_not_awaited()
+    chat_service.clear_conversation.assert_not_awaited()
+    assert continue_message.responses == ["Only group administrators can use this command."]
+    assert clear_message.responses == ["Only group administrators can use this command."]
+
+
+@pytest.mark.asyncio
+async def test_group_creator_can_clear() -> None:
+    chat_service = AsyncMock()
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        authorization=TelegramAuthorization(set(), {"-555"}),
+        unauthorized_message="not authorized",
+    )
+
+    message = FakeMessage(text="/clear")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=77),
+        effective_chat=FakeChat(id=-555, type="group"),
+    )
+
+    await adapter.handle_message(
+        cast(Update, update),
+        cast(Any, FakeContext(FakeBot(member_status="creator"))),
+    )
+
+    chat_service.clear_conversation.assert_awaited_once_with(
+        conversation_identity=ConversationIdentity.for_group("-555"),
+    )
+    assert message.responses == ["Conversation memory cleared."]

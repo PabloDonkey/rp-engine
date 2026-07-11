@@ -33,3 +33,32 @@ async def test_json_store_clear_removes_memory_file(tmp_path: Path) -> None:
     loaded = await store.load_messages(key)
 
     assert loaded == []
+
+
+@pytest.mark.asyncio
+async def test_json_store_preserves_optional_user_metadata(tmp_path: Path) -> None:
+    store = JsonConversationStore(base_path=tmp_path)
+    key = MemoryKey("group_-555")
+
+    await store.save_message(
+        key,
+        ConversationMessage(
+            role="user",
+            content="I open the door",
+            user_id="123456",
+            username="alice",
+            display_name="Alice",
+        ),
+    )
+
+    loaded = await store.load_messages(key)
+
+    assert loaded == [
+        ConversationMessage(
+            role="user",
+            content="I open the door",
+            user_id="123456",
+            username="alice",
+            display_name="Alice",
+        )
+    ]

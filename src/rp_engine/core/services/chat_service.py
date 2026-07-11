@@ -26,6 +26,9 @@ class ChatService:
         *,
         conversation_identity: ConversationIdentity,
         message: str,
+        user_id: str | None = None,
+        username: str | None = None,
+        display_name: str | None = None,
     ) -> str:
         memory_key = conversation_identity.to_memory_key()
         logger.info("ChatService called", extra={"memory_key": memory_key.value})
@@ -43,7 +46,13 @@ class ChatService:
         assistant_response = await self._orchestrator.generate_reply(request)
         await self._conversation_store.save_message(
             memory_key,
-            ConversationMessage(role="user", content=cleaned_message),
+            ConversationMessage(
+                role="user",
+                content=cleaned_message,
+                user_id=user_id,
+                username=username,
+                display_name=display_name,
+            ),
         )
         await self._conversation_store.save_message(
             memory_key,

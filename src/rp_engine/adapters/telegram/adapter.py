@@ -26,21 +26,26 @@ class TelegramAdapter:
         self._authorization = authorization
         self._unauthorized_message = unauthorized_message
 
-    async def handle_message(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         if message is None or message.text is None:
             return
 
         user = update.effective_user
         user_id = str(user.id) if user is not None else "anonymous"
+        chat = update.effective_chat
+        chat_type = chat.type if chat is not None else None
         conversation_identity = self._resolve_conversation_identity(update, user_id)
-        if not self._authorization.is_authorized(user_id):
-            logger.info("Telegram request denied", extra={"user_id": user_id})
+
+        if not self._is_authorized(chat_type=chat_type, user_id=user_id, chat=chat):
+            logger.info(
+                "Telegram request denied",
+                extra={"user_id": user_id, "chat_type": chat_type},
+            )
             await message.reply_text(self._unauthorized_message)
             return
 
         parsed_message = parse_transport_message(message.text)
-        chat_type = update.effective_chat.type if update.effective_chat is not None else None
         if not should_process_message(chat_type, parsed_message):
             return
 
@@ -49,12 +54,23 @@ class TelegramAdapter:
             extra={"memory_key": conversation_identity.to_memory_key().value},
         )
 
+        is_group_chat = chat_type in {"group", "supergroup"}
+        group_user_id = user_id if is_group_chat else None
+        group_username = user.username if user is not None and is_group_chat else None
+        group_display_name = user.full_name if user is not None and is_group_chat else None
+
         try:
             if parsed_message.command == TelegramCommand.HELP:
                 await message.reply_text(build_help_message())
                 return
 
             if parsed_message.command == TelegramCommand.CONTINUE:
+                if chat_type in {"group", "supergroup"} and not await self._is_group_admin(
+                    context=context,
+                    update=update,
+                ):
+                    await message.reply_text("Only group administrators can use this command.")
+                    return
                 response = await self._chat_service.continue_story(
                     conversation_identity=conversation_identity,
                 )
@@ -62,10 +78,16 @@ class TelegramAdapter:
                 return
 
             if parsed_message.command == TelegramCommand.CLEAR:
+                if chat_type in {"group", "supergroup"} and not await self._is_group_admin(
+                    context=context,
+                    update=update,
+                ):
+                    await message.reply_text("Only group administrators can use this command.")
+                    return
                 await self._chat_service.clear_conversation(
                     conversation_identity=conversation_identity,
                 )
-                await message.reply_text("Conversation cleared.")
+                await message.reply_text("Conversation memory cleared.")
                 return
 
             if parsed_message.is_command:
@@ -77,6 +99,9 @@ class TelegramAdapter:
             response = await self._chat_service.send_message(
                 conversation_identity=conversation_identity,
                 message=parsed_message.text,
+                user_id=group_user_id,
+                username=group_username,
+                display_name=group_display_name,
             )
         except ValueError:
             logger.warning(
@@ -105,6 +130,26 @@ class TelegramAdapter:
             return ConversationIdentity.for_group(str(chat.id))
 
         return ConversationIdentity.for_private(user_id)
+
+    def _is_authorized(self, *, chat_type: str | None, user_id: str, chat: Any) -> bool:
+        if chat_type in {"group", "supergroup"}:
+            group_id = str(chat.id) if chat is not None else ""
+            return self._authorization.is_group_chat_authorized(group_id)
+        return self._authorization.is_private_chat_authorized(user_id)
+
+    async def _is_group_admin(
+        self,
+        *,
+        context: ContextTypes.DEFAULT_TYPE,
+        update: Update,
+    ) -> bool:
+        chat = update.effective_chat
+        user = update.effective_user
+        if chat is None or user is None:
+            return False
+
+        member = await context.bot.get_chat_member(chat_id=chat.id, user_id=user.id)
+        return member.status in {"administrator", "creator"}
 
 
 class TelegramRuntime:

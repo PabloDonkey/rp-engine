@@ -23,6 +23,14 @@ class TelegramAuthorization:
             return True
         return user_id in self._allowed_user_ids
 
+    def is_private_chat_authorized(self, user_id: str) -> bool:
+        return self.is_authorized(user_id)
+
+    def is_group_chat_authorized(self, group_id: str) -> bool:
+        if not self._allowed_group_ids:
+            return True
+        return group_id in self._allowed_group_ids
+
     @staticmethod
     def _load_ids(file_path: Path, expected_key: str) -> set[str]:
         if not file_path.exists():

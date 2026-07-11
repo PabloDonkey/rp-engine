@@ -43,6 +43,14 @@ class RPOrchestrator:
     def _format_history(messages: list[ConversationMessage]) -> str:
         lines: list[str] = []
         for message in messages:
-            speaker = "User" if message.role == "user" else "Assistant"
-            lines.append(f"{speaker}: {message.content}")
-        return "\n".join(lines)
+            if message.role == "assistant":
+                lines.append(f"Assistant: {message.content}")
+                continue
+
+            speaker_name = message.display_name or message.username
+            if speaker_name is None:
+                lines.append(f"User: {message.content}")
+                continue
+
+            lines.append(f"{speaker_name} said:\n{message.content}")
+        return "\n\n".join(lines)

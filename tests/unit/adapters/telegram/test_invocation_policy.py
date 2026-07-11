@@ -11,7 +11,7 @@ def test_private_chat_processes_normal_messages() -> None:
 def test_group_chat_ignores_normal_messages() -> None:
     parsed = ParsedTransportMessage(text="hello", is_command=False, command=None)
 
-    assert should_process_message("group", parsed) is False
+    assert should_process_message("group", parsed) is True
 
 
 def test_group_chat_processes_supported_commands() -> None:

@@ -824,6 +824,107 @@ By localizing transport syntax in adapters and exposing explicit use-case method
 
 ---
 
+# ADR-014 — Group Authorization Uses Conversation Identity
+
+**Status:** Accepted
+
+**Date:** 2026-07-10
+
+---
+
+## Context
+
+Milestone 2B introduces Telegram group support with independent authorization behavior.
+
+Private chats and group chats have different trust boundaries:
+
+* private chats are controlled by user-level allowlists
+* group chats are controlled by group-level allowlists
+
+If group access is decided per user in group chats, adapter behavior becomes inconsistent and harder to reason about.
+
+## Decision
+
+For Telegram group conversations, authorization is performed at the group identity level.
+
+Rules:
+
+* private chat authorization checks `user_id`
+* group chat authorization checks `group_id`
+* users in authorized groups inherit access from the group authorization state
+
+Conversation identity resolution remains adapter-owned and maps:
+
+* private chat → user memory identity
+* group chat → group memory identity
+
+## Rationale
+
+Group chats are shared conversation spaces.
+
+Authorizing by group identity aligns access control with the same identity used for memory isolation and keeps the core layer transport-agnostic.
+
+## Consequences
+
+### Positive
+
+* Consistent policy for all members in an authorized group.
+* Cleaner adapter logic for group conversations.
+* Clear mapping between authorization boundary and conversation storage identity.
+
+### Negative
+
+* Group-level authorization grants access to all members, not selected individuals.
+
+
+---
+
+# ADR-015 — Store User Metadata Separately From Message Content
+
+**Status:** Accepted
+
+**Date:** 2026-07-10
+
+---
+
+## Context
+
+Group conversations require multi-user attribution for prompt construction.
+
+Injecting names directly into stored text couples storage format to prompt rendering style and makes future formatting changes brittle.
+
+## Decision
+
+Conversation messages store speaker metadata in separate fields from text content.
+
+Stored user messages may include:
+
+* `user_id`
+* `username`
+* `display_name`
+* `content`
+
+Prompt rendering decides how to represent speaker attribution at generation time.
+
+## Rationale
+
+Separating identity data from content preserves clean memory records and allows multiple rendering strategies without rewriting history.
+
+## Consequences
+
+### Positive
+
+* Message content remains clean and reusable.
+* Prompt formatting can evolve independently.
+* Better support for group and private prompt styles.
+
+### Negative
+
+* Storage and model types include additional optional fields.
+
+
+---
+
 # Future Decisions
 
 Future ADRs should follow this template.

@@ -30,7 +30,18 @@ class JsonConversationStore(ConversationStore):
             role = raw.get("role")
             content = raw.get("content")
             if role in {"user", "assistant"} and isinstance(content, str):
-                messages.append(ConversationMessage(role=role, content=content))
+                user_id = raw.get("user_id")
+                username = raw.get("username")
+                display_name = raw.get("display_name")
+                messages.append(
+                    ConversationMessage(
+                        role=role,
+                        content=content,
+                        user_id=user_id if isinstance(user_id, str) else None,
+                        username=username if isinstance(username, str) else None,
+                        display_name=display_name if isinstance(display_name, str) else None,
+                    )
+                )
         return messages
 
     async def clear(self, memory_key: MemoryKey) -> None:
@@ -48,14 +59,25 @@ class JsonConversationStore(ConversationStore):
         file_path.parent.mkdir(parents=True, exist_ok=True)
         payload: dict[str, object] = {
             "messages": [
-                {
-                    "role": message.role,
-                    "content": message.content,
-                }
+                self._serialize_message(message)
                 for message in messages
             ]
         }
         await asyncio.to_thread(self._write_payload, file_path, payload)
+
+    @staticmethod
+    def _serialize_message(message: ConversationMessage) -> dict[str, str]:
+        payload: dict[str, str] = {
+            "role": message.role,
+            "content": message.content,
+        }
+        if message.user_id is not None:
+            payload["user_id"] = message.user_id
+        if message.username is not None:
+            payload["username"] = message.username
+        if message.display_name is not None:
+            payload["display_name"] = message.display_name
+        return payload
 
     def _file_path(self, memory_key: MemoryKey) -> Path:
         return self._base_path / f"{memory_key.value}.json"

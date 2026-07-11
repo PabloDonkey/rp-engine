@@ -7,14 +7,14 @@ from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 def test_authorization_allows_everyone_when_whitelist_is_empty() -> None:
     auth = TelegramAuthorization(allowed_user_ids=set())
 
-    assert auth.is_authorized("123") is True
+    assert auth.is_private_chat_authorized("123") is True
 
 
 def test_authorization_denies_users_not_in_whitelist() -> None:
     auth = TelegramAuthorization(allowed_user_ids={"123"})
 
-    assert auth.is_authorized("999") is False
-    assert auth.is_authorized("123") is True
+    assert auth.is_private_chat_authorized("999") is False
+    assert auth.is_private_chat_authorized("123") is True
 
 
 def test_authorization_loads_users_from_json_directory(tmp_path: Path) -> None:
@@ -33,9 +33,9 @@ def test_authorization_loads_users_from_json_directory(tmp_path: Path) -> None:
 
     auth = TelegramAuthorization.from_directory(auth_dir)
 
-    assert auth.is_authorized("124105002") is True
-    assert auth.is_authorized("7881079571") is True
-    assert auth.is_authorized("999") is False
+    assert auth.is_private_chat_authorized("124105002") is True
+    assert auth.is_private_chat_authorized("7881079571") is True
+    assert auth.is_private_chat_authorized("999") is False
 
 
 def test_authorization_defaults_to_allow_all_when_users_file_missing(tmp_path: Path) -> None:
@@ -44,4 +44,23 @@ def test_authorization_defaults_to_allow_all_when_users_file_missing(tmp_path: P
 
     auth = TelegramAuthorization.from_directory(auth_dir)
 
-    assert auth.is_authorized("any-user") is True
+    assert auth.is_private_chat_authorized("any-user") is True
+
+
+def test_group_authorization_uses_group_whitelist() -> None:
+    auth = TelegramAuthorization(
+        allowed_user_ids=set(),
+        allowed_group_ids={"-1001"},
+    )
+
+    assert auth.is_group_chat_authorized("-1001") is True
+    assert auth.is_group_chat_authorized("-1002") is False
+
+
+def test_group_authorization_allows_all_when_whitelist_is_empty() -> None:
+    auth = TelegramAuthorization(
+        allowed_user_ids={"123"},
+        allowed_group_ids=set(),
+    )
+
+    assert auth.is_group_chat_authorized("-999") is True

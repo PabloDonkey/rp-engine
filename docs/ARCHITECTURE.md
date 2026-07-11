@@ -82,6 +82,13 @@ Adapter-specific responsibilities:
 * Translate transport actions into application use cases
 * Return transport-appropriate responses
 
+For Telegram, authorization and permissions are transport concerns handled in the adapter:
+
+* Private chats use user-level whitelist authorization.
+* Group chats use group-level whitelist authorization.
+* In authorized groups, all members can send normal messages.
+* Destructive/story-control commands (`/clear`, `/continue`) are restricted to Telegram chat administrators and creators.
+
 Adapters must not implement prompt construction, memory strategy logic, or direct LLM interaction.
 
 ### Transport Commands
@@ -249,6 +256,11 @@ Rules:
 * The Telegram adapter must not create `ChatService`.
 * The Telegram adapter must not initialize infrastructure dependencies.
 * The Telegram adapter must not own startup/shutdown orchestration.
+
+Telegram conversation identity resolution is also adapter-owned:
+
+* Private chat messages map to a user memory identity.
+* Group chat messages map to a group memory identity.
 
 This keeps adapter responsibilities focused on transport translation and preserves clean boundaries.
 
