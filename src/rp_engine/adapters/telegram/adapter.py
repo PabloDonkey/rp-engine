@@ -5,6 +5,10 @@ from telegram import Update
 from telegram.ext import Application as TelegramApplication
 from telegram.ext import ContextTypes, MessageHandler, filters
 
+from rp_engine.adapters.telegram.authorization import TelegramAuthorization
+from rp_engine.adapters.telegram.commands import build_help_message, parse_transport_message
+from rp_engine.adapters.telegram.invocation_policy import should_process_message
+from rp_engine.adapters.telegram.models import TelegramCommand
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.services.chat_service import ChatService
 
@@ -12,8 +16,15 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramAdapter:
-    def __init__(self, chat_service: ChatService) -> None:
+    def __init__(
+        self,
+        chat_service: ChatService,
+        authorization: TelegramAuthorization,
+        unauthorized_message: str,
+    ) -> None:
         self._chat_service = chat_service
+        self._authorization = authorization
+        self._unauthorized_message = unauthorized_message
 
     async def handle_message(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
@@ -23,15 +34,49 @@ class TelegramAdapter:
         user = update.effective_user
         user_id = str(user.id) if user is not None else "anonymous"
         conversation_identity = self._resolve_conversation_identity(update, user_id)
+        if not self._authorization.is_authorized(user_id):
+            logger.info("Telegram request denied", extra={"user_id": user_id})
+            await message.reply_text(self._unauthorized_message)
+            return
+
+        parsed_message = parse_transport_message(message.text)
+        chat_type = update.effective_chat.type if update.effective_chat is not None else None
+        if not should_process_message(chat_type, parsed_message):
+            return
+
         logger.info(
             "Telegram message received",
             extra={"memory_key": conversation_identity.to_memory_key().value},
         )
 
         try:
-            response = await self._chat_service.handle_user_message(
+            if parsed_message.command == TelegramCommand.HELP:
+                await message.reply_text(build_help_message())
+                return
+
+            if parsed_message.command == TelegramCommand.CONTINUE:
+                response = await self._chat_service.continue_story(
+                    conversation_identity=conversation_identity,
+                )
+                await message.reply_text(response)
+                return
+
+            if parsed_message.command == TelegramCommand.CLEAR:
+                await self._chat_service.clear_conversation(
+                    conversation_identity=conversation_identity,
+                )
+                await message.reply_text("Conversation cleared.")
+                return
+
+            if parsed_message.is_command:
+                await message.reply_text(
+                    "Unsupported command. Use /help to see available commands."
+                )
+                return
+
+            response = await self._chat_service.send_message(
                 conversation_identity=conversation_identity,
-                message=message.text,
+                message=parsed_message.text,
             )
         except ValueError:
             logger.warning(

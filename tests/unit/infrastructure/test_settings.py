@@ -38,3 +38,8 @@ def test_development_mode_allows_running_without_telegram() -> None:
     container = build_container(settings)
 
     assert container.telegram_runtime is None
+
+
+def test_empty_telegram_unauthorized_message_fails_validation() -> None:
+    with pytest.raises(ValidationError, match="RP_ENGINE_TELEGRAM_UNAUTHORIZED_MESSAGE"):
+        Settings(telegram_unauthorized_message="   ")

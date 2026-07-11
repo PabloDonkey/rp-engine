@@ -5,6 +5,7 @@ import pytest
 from telegram import Update
 
 from rp_engine.adapters.telegram.adapter import TelegramAdapter
+from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.core.engine.models import PromptPayload
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
@@ -71,7 +72,11 @@ async def test_application_smoke_flow_without_external_services() -> None:
         conversation_store=InMemoryConversationStore(),
         memory_strategy=DumpEverythingStrategy(),
     )
-    adapter = TelegramAdapter(chat_service=chat_service)
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+    )
 
     message = FakeMessage(text="hello smoke test")
     update = FakeUpdate(
@@ -86,3 +91,36 @@ async def test_application_smoke_flow_without_external_services() -> None:
         PromptPayload(system_prompt="smoke-system", user_message="hello smoke test")
     ]
     assert message.responses == ["echo:hello smoke test"]
+
+
+@pytest.mark.asyncio
+async def test_continue_command_is_not_sent_or_saved_as_literal_command() -> None:
+    provider = FakeLLMProvider()
+    store = InMemoryConversationStore()
+    orchestrator = RPOrchestrator(llm_provider=provider, system_prompt="smoke-system")
+    chat_service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=store,
+        memory_strategy=DumpEverythingStrategy(),
+    )
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+    )
+
+    update = FakeUpdate(
+        effective_message=FakeMessage(text="/continue"),
+        effective_user=FakeUser(id=7),
+        effective_chat=FakeChat(id=7, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    assert provider.prompts
+    assert "/continue" not in provider.prompts[0].user_message
+
+    saved_messages = await store.load_messages(MemoryKey("user_7"))
+    assert saved_messages
+    assert all(message.role == "assistant" for message in saved_messages)
+    assert all("/continue" not in message.content for message in saved_messages)

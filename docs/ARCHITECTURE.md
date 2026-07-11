@@ -75,6 +75,27 @@ Responsibilities:
 
 Adapters contain no business logic.
 
+Adapter-specific responsibilities:
+
+* Parse transport syntax (for example, Telegram slash commands)
+* Enforce transport-level authorization and invocation policy
+* Translate transport actions into application use cases
+* Return transport-appropriate responses
+
+Adapters must not implement prompt construction, memory strategy logic, or direct LLM interaction.
+
+### Transport Commands
+
+Transport commands belong to adapters.
+
+Example for Telegram:
+
+* `/help` is handled entirely by the Telegram adapter
+* `/continue` is translated to `ChatService.continue_story(...)`
+* `/clear` is translated to `ChatService.clear_conversation(...)`
+
+The engine and application services never parse Telegram command syntax.
+
 ---
 
 ## Application
@@ -90,6 +111,18 @@ Responsibilities:
 * Error handling
 
 The application layer does not implement domain rules.
+
+The application layer exposes explicit, transport-agnostic use cases.
+
+Current use-case API:
+
+* `ChatService.send_message(...)`
+* `ChatService.continue_story(...)`
+* `ChatService.clear_conversation(...)`
+
+Adapters call these use cases directly.
+
+FastAPI and Telegram are both adapters over the same application API.
 
 The application layer is also the composition root.
 
@@ -309,6 +342,45 @@ Application-->>Adapter: Response
 
 Adapter-->>User: Message
 ```
+
+Telegram command flow:
+
+```text
+/continue
+    ↓
+Telegram Adapter
+    ↓
+ChatService.continue_story(...)
+    ↓
+RP Engine
+```
+
+```text
+/clear
+    ↓
+Telegram Adapter
+    ↓
+ChatService.clear_conversation(...)
+```
+
+```text
+/help
+    ↓
+Telegram Adapter
+    ↓
+Telegram reply
+```
+
+Invocation policy for Telegram:
+
+* Private chats: normal messages and supported commands are processed.
+* Group chats: normal messages are ignored; only supported commands are processed.
+
+Authorization flow:
+
+* Adapter checks whitelist authorization before use-case invocation.
+* Unauthorized users receive a configured transport message.
+* Authorized users continue through normal adapter translation.
 
 ---
 

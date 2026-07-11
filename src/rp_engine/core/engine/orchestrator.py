@@ -36,12 +36,7 @@ class RPOrchestrator:
             )
 
         history = self._format_history(request.context_messages)
-        user_message = (
-            "Conversation history:\n"
-            f"{history}\n\n"
-            "Next input:\n"
-            f"{request.instruction}"
-        )
+        user_message = f"Conversation history:\n{history}\n\nNext input:\n{request.instruction}"
         return PromptPayload(system_prompt=self._system_prompt, user_message=user_message)
 
     @staticmethod

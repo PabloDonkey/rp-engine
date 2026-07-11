@@ -3,11 +3,13 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI
 
+from rp_engine.adapters.api import create_router as create_api_router
 from rp_engine.adapters.telegram.adapter import (
     TelegramAdapter,
     TelegramRuntime,
     create_telegram_application,
 )
+from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.app.lifespan import create_lifespan
 from rp_engine.app.runtime_state import RuntimeState
 from rp_engine.core.engine.orchestrator import RPOrchestrator
@@ -64,7 +66,13 @@ def build_container(settings: Settings) -> AppContainer:
             logger.error("Configuration error", extra={"field": "telegram_bot_token"})
             raise ValueError("RP_ENGINE_TELEGRAM_BOT_TOKEN must be set when Telegram is enabled.")
 
-        telegram_adapter = TelegramAdapter(chat_service=chat_service)
+        telegram_adapter = TelegramAdapter(
+            chat_service=chat_service,
+            authorization=TelegramAuthorization.from_directory(
+                settings.telegram_authorization_dir
+            ),
+            unauthorized_message=settings.telegram_unauthorized_message,
+        )
         telegram_application = create_telegram_application(
             token=settings.telegram_bot_token,
             adapter=telegram_adapter,
@@ -100,6 +108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title=resolved_settings.app_name, lifespan=create_lifespan(container))
     app.state.container = container
+    app.include_router(create_api_router(container.chat_service))
 
     @app.get("/health")
     async def health() -> dict[str, object]:

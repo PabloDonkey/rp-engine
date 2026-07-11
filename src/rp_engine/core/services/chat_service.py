@@ -7,7 +7,6 @@ from rp_engine.core.ports import ConversationStore, MemoryStrategy
 
 logger = logging.getLogger(__name__)
 
-CONTINUE_COMMAND = "/continue"
 CONTINUE_INSTRUCTION = "Continue the narration naturally from the current context."
 
 
@@ -22,7 +21,7 @@ class ChatService:
         self._conversation_store = conversation_store
         self._memory_strategy = memory_strategy
 
-    async def handle_user_message(
+    async def send_message(
         self,
         *,
         conversation_identity: ConversationIdentity,
@@ -36,20 +35,6 @@ class ChatService:
 
         history = await self._conversation_store.load_messages(memory_key)
         context_messages = self._memory_strategy.build_context(history)
-
-        if self._is_continue_command(cleaned_message):
-            request = GenerationRequest(
-                memory_key=memory_key,
-                context_messages=context_messages,
-                instruction=CONTINUE_INSTRUCTION,
-            )
-            assistant_response = await self._orchestrator.generate_reply(request)
-            await self._conversation_store.save_message(
-                memory_key,
-                ConversationMessage(role="assistant", content=assistant_response),
-            )
-            return assistant_response
-
         request = GenerationRequest(
             memory_key=memory_key,
             context_messages=context_messages,
@@ -66,8 +51,32 @@ class ChatService:
         )
         return assistant_response
 
-    @staticmethod
-    def _is_continue_command(message: str) -> bool:
-        first_token = message.split(maxsplit=1)[0].lower()
-        command = first_token.split("@", maxsplit=1)[0]
-        return command == CONTINUE_COMMAND
+    async def continue_story(
+        self,
+        *,
+        conversation_identity: ConversationIdentity,
+    ) -> str:
+        memory_key = conversation_identity.to_memory_key()
+        logger.info("ChatService continue called", extra={"memory_key": memory_key.value})
+        history = await self._conversation_store.load_messages(memory_key)
+        context_messages = self._memory_strategy.build_context(history)
+        request = GenerationRequest(
+            memory_key=memory_key,
+            context_messages=context_messages,
+            instruction=CONTINUE_INSTRUCTION,
+        )
+        assistant_response = await self._orchestrator.generate_reply(request)
+        await self._conversation_store.save_message(
+            memory_key,
+            ConversationMessage(role="assistant", content=assistant_response),
+        )
+        return assistant_response
+
+    async def clear_conversation(
+        self,
+        *,
+        conversation_identity: ConversationIdentity,
+    ) -> None:
+        memory_key = conversation_identity.to_memory_key()
+        logger.info("ChatService clear called", extra={"memory_key": memory_key.value})
+        await self._conversation_store.clear(memory_key)

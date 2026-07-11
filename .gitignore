@@ -11,4 +11,4 @@ wheels/
 .devloop
 
 # User conversation memory
-data/memory/
+data/

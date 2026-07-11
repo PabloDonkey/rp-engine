@@ -26,7 +26,7 @@ async def test_chat_service_builds_request_and_calls_orchestrator() -> None:
         memory_strategy=memory_strategy,
     )
 
-    response = await service.handle_user_message(
+    response = await service.send_message(
         conversation_identity=ConversationIdentity.for_private("user-1"),
         message="  hello there  ",
     )
@@ -65,7 +65,7 @@ async def test_chat_service_rejects_empty_message() -> None:
     )
 
     with pytest.raises(ValueError, match="Message must not be empty"):
-        await service.handle_user_message(
+        await service.send_message(
             conversation_identity=ConversationIdentity.for_private("user-1"),
             message="   ",
         )
@@ -91,9 +91,8 @@ async def test_chat_service_continue_saves_only_assistant_message() -> None:
         memory_strategy=memory_strategy,
     )
 
-    response = await service.handle_user_message(
+    response = await service.continue_story(
         conversation_identity=ConversationIdentity.for_group("-98765"),
-        message="/continue",
     )
 
     assert response == "continued scene"
@@ -105,3 +104,21 @@ async def test_chat_service_continue_saves_only_assistant_message() -> None:
             ConversationMessage(role="assistant", content="continued scene"),
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_chat_service_clear_conversation_uses_store_clear() -> None:
+    orchestrator = AsyncMock()
+    conversation_store = AsyncMock()
+    memory_strategy = Mock()
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+    )
+
+    await service.clear_conversation(
+        conversation_identity=ConversationIdentity.for_private("user-9"),
+    )
+
+    conversation_store.clear.assert_awaited_once_with(MemoryKey("user_user-9"))

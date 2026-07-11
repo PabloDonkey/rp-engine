@@ -4,6 +4,11 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_TELEGRAM_UNAUTHORIZED_MESSAGE = (
+    "Hi! \U0001f44b This bot is currently in a private beta and isn't accepting new users yet. "
+    "If you'd like access, please contact @pablodonkey on Telegram. Thanks for your interest!"
+)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -21,6 +26,8 @@ class Settings(BaseSettings):
 
     telegram_enabled: bool = False
     telegram_bot_token: str = ""
+    telegram_authorization_dir: str = "data/telegram/authorization"
+    telegram_unauthorized_message: str = DEFAULT_TELEGRAM_UNAUTHORIZED_MESSAGE
 
     lmstudio_api_host: str = "localhost:1234"
     lmstudio_model: str = "qwen/qwen3-4b-2507"
@@ -51,6 +58,14 @@ class Settings(BaseSettings):
     @classmethod
     def validate_log_level(cls, value: str) -> str:
         return value.upper()
+
+    @field_validator("telegram_unauthorized_message")
+    @classmethod
+    def validate_telegram_unauthorized_message(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("RP_ENGINE_TELEGRAM_UNAUTHORIZED_MESSAGE must not be empty.")
+        return cleaned
 
 
 @lru_cache(maxsize=1)
