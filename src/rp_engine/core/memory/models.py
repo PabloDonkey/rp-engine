@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 Role = Literal["user", "assistant"]
-MemoryOwnerKind = Literal["user", "group"]
+MemoryOwnerKind = Literal["user", "group", "session"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,8 +23,17 @@ class ConversationIdentity:
     def for_group(cls, group_id: str) -> "ConversationIdentity":
         return cls(owner_kind="group", owner_id=group_id)
 
+    @classmethod
+    def for_session(cls, session_id: str) -> "ConversationIdentity":
+        return cls(owner_kind="session", owner_id=session_id)
+
     def to_memory_key(self) -> MemoryKey:
-        prefix = "user" if self.owner_kind == "user" else "group"
+        if self.owner_kind == "user":
+            prefix = "user"
+        elif self.owner_kind == "group":
+            prefix = "group"
+        else:
+            prefix = "session"
         return MemoryKey(value=f"{prefix}_{self.owner_id}")
 
 

@@ -3,13 +3,13 @@ from rp_engine.adapters.telegram.models import ParsedTransportMessage, TelegramC
 
 
 def test_private_chat_processes_normal_messages() -> None:
-    parsed = ParsedTransportMessage(text="hello", is_command=False, command=None)
+    parsed = ParsedTransportMessage(text="hello", is_command=False, command=None, argument=None)
 
     assert should_process_message("private", parsed) is True
 
 
 def test_group_chat_ignores_normal_messages() -> None:
-    parsed = ParsedTransportMessage(text="hello", is_command=False, command=None)
+    parsed = ParsedTransportMessage(text="hello", is_command=False, command=None, argument=None)
 
     assert should_process_message("group", parsed) is True
 
@@ -19,6 +19,7 @@ def test_group_chat_processes_supported_commands() -> None:
         text="/continue",
         is_command=True,
         command=TelegramCommand.CONTINUE,
+        argument=None,
     )
 
     assert should_process_message("group", parsed) is True

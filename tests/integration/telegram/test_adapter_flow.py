@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -10,9 +11,13 @@ from rp_engine.adapters.telegram.adapter import TelegramAdapter
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.adapters.telegram.commands import HELP_MESSAGE
 from rp_engine.core.memory.models import ConversationIdentity
+from rp_engine.core.services.commands import SelectCharacterCommand
+from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
 
 FIXED_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
+FIXED_SESSION_ID = UUID("00000000-0000-0000-0000-000000000099")
+FIXED_CREATED_AT = datetime(2026, 7, 12, 0, 0, tzinfo=UTC)
 
 
 class FakeIdentityResolver:
@@ -28,6 +33,29 @@ class FakeIdentityResolver:
         del external_id
         del metadata
         return User(id=FIXED_USER_ID, display_name=display_name)
+
+
+class FakeCharacterService:
+    async def ensure_active_session(self, *, user_id: UUID) -> Session:
+        del user_id
+        return Session(
+            id=FIXED_SESSION_ID,
+            user_id=FIXED_USER_ID,
+            character_id="default",
+            world_id="default",
+            created_at=FIXED_CREATED_AT,
+        )
+
+    async def select_character(self, *, user_id: UUID, command: SelectCharacterCommand) -> Session:
+        del user_id
+        character_id = command.character_name.lower()
+        return Session(
+            id=FIXED_SESSION_ID,
+            user_id=FIXED_USER_ID,
+            character_id=character_id,
+            world_id="default",
+            created_at=FIXED_CREATED_AT,
+        )
 
 
 @dataclass
@@ -88,6 +116,7 @@ async def test_telegram_adapter_flow_calls_chat_service_and_replies() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -103,7 +132,7 @@ async def test_telegram_adapter_flow_calls_chat_service_and_replies() -> None:
     await adapter.handle_message(cast(Update, update), cast(Any, None))
 
     chat_service.send_message.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_private(str(FIXED_USER_ID)),
+        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
         message="hello",
         user_id=None,
         username=None,
@@ -118,6 +147,7 @@ async def test_telegram_adapter_ignores_non_text_messages() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -140,6 +170,7 @@ async def test_help_command_is_handled_in_adapter() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -167,6 +198,7 @@ async def test_continue_command_calls_continue_story() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -182,7 +214,7 @@ async def test_continue_command_calls_continue_story() -> None:
     await adapter.handle_message(cast(Update, update), cast(Any, None))
 
     chat_service.continue_story.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_private(str(FIXED_USER_ID)),
+        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
     )
     chat_service.send_message.assert_not_awaited()
     assert message.responses == ["continued"]
@@ -194,6 +226,7 @@ async def test_clear_command_calls_clear_conversation_and_confirms() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -212,7 +245,7 @@ async def test_clear_command_calls_clear_conversation_and_confirms() -> None:
     )
 
     chat_service.clear_conversation.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_group("-100"),
+        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
     )
     assert message.responses == ["Conversation memory cleared."]
 
@@ -223,6 +256,7 @@ async def test_unauthorized_user_gets_configured_message() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization({"123"}),
         unauthorized_message="beta closed",
         message_max_length=3800,
@@ -248,6 +282,7 @@ async def test_authorized_group_accepts_normal_messages() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set(), {"-555"}),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -263,7 +298,7 @@ async def test_authorized_group_accepts_normal_messages() -> None:
     await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
 
     chat_service.send_message.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_group("-555"),
+        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
         message="hello from group",
         user_id=str(FIXED_USER_ID),
         username="alice",
@@ -278,6 +313,7 @@ async def test_unauthorized_group_gets_configured_message() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set(), {"-123"}),
         unauthorized_message="group not allowed",
         message_max_length=3800,
@@ -303,6 +339,7 @@ async def test_group_chat_supported_command_still_works() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -321,7 +358,7 @@ async def test_group_chat_supported_command_still_works() -> None:
     )
 
     chat_service.continue_story.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_group("-555"),
+        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
     )
     assert message.responses == ["continued in group"]
 
@@ -332,6 +369,7 @@ async def test_group_member_cannot_continue_or_clear() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set(), {"-555"}),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -367,6 +405,7 @@ async def test_group_creator_can_clear() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set(), {"-555"}),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -385,7 +424,7 @@ async def test_group_creator_can_clear() -> None:
     )
 
     chat_service.clear_conversation.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_group("-555"),
+        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
     )
     assert message.responses == ["Conversation memory cleared."]
 
@@ -397,6 +436,7 @@ async def test_long_response_is_split_and_delivered_in_multiple_messages() -> No
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=5,
@@ -412,3 +452,28 @@ async def test_long_response_is_split_and_delivered_in_multiple_messages() -> No
     await adapter.handle_message(cast(Update, update), cast(Any, None))
 
     assert message.responses == ["AAAAA", "AAAAA", "AA"]
+
+
+@pytest.mark.asyncio
+async def test_character_command_selects_active_character() -> None:
+    chat_service = AsyncMock()
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+    )
+
+    message = FakeMessage(text="/character Belzebuth")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=42),
+        effective_chat=FakeChat(id=42, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    assert message.responses == ["Active character set to 'belzebuth' in world 'default'."]
+    chat_service.send_message.assert_not_awaited()

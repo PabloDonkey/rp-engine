@@ -8,6 +8,7 @@ def test_parse_transport_message_for_plain_text() -> None:
     assert parsed.text == "hello world"
     assert parsed.is_command is False
     assert parsed.command is None
+    assert parsed.argument is None
 
 
 def test_parse_transport_message_for_supported_command_with_bot_mention() -> None:
@@ -15,6 +16,7 @@ def test_parse_transport_message_for_supported_command_with_bot_mention() -> Non
 
     assert parsed.is_command is True
     assert parsed.command == TelegramCommand.CONTINUE
+    assert parsed.argument == "now"
 
 
 def test_parse_transport_message_for_unsupported_command() -> None:
@@ -22,6 +24,14 @@ def test_parse_transport_message_for_unsupported_command() -> None:
 
     assert parsed.is_command is True
     assert parsed.command is None
+    assert parsed.argument is None
+
+
+def test_parse_transport_message_for_character_command_argument() -> None:
+    parsed = parse_transport_message("/character Belzebuth")
+
+    assert parsed.command == TelegramCommand.CHARACTER
+    assert parsed.argument == "Belzebuth"
 
 
 def test_build_help_message_lists_supported_commands() -> None:
@@ -30,3 +40,4 @@ def test_build_help_message_lists_supported_commands() -> None:
     assert "/help" in help_message
     assert "/continue" in help_message
     assert "/clear" in help_message
+    assert "/character" in help_message

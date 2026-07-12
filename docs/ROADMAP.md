@@ -114,7 +114,29 @@ The engine recalls relevant past information across long conversations.
 
 ---
 
-# Milestone 5 — Characters
+# Milestone 5 — Character / World / Session Model
+
+## Goal
+
+Introduce reusable roleplay assets and session-owned roleplay context.
+
+### Deliverables
+
+* Character model
+* World model
+* Session model (`user_id` + `character_id` + `world_id`)
+* Character selection use case
+* Session-based conversation ownership
+
+### Success Criteria
+
+* One user can maintain multiple sessions.
+* Sessions reference characters and worlds.
+* Conversation persistence is session-scoped.
+
+---
+
+# Milestone 6 — Characters
 
 ## Goal
 
@@ -133,7 +155,7 @@ Characters remain consistent across conversations.
 
 ---
 
-# Milestone 6 — World State
+# Milestone 7 — World State
 
 ## Goal
 
@@ -153,7 +175,7 @@ The world evolves consistently across sessions.
 
 ---
 
-# Milestone 7 — Multiple Providers
+# Milestone 8 — Multiple Providers
 
 ## Goal
 
@@ -171,7 +193,7 @@ Changing providers requires configuration only.
 
 ---
 
-# Milestone 8 — Additional Adapters
+# Milestone 9 — Additional Adapters
 
 ## Goal
 
@@ -190,7 +212,7 @@ New adapters require no changes to the domain.
 
 ---
 
-# Milestone 9 — Tool Ecosystem
+# Milestone 10 — Tool Ecosystem
 
 ## Goal
 
@@ -210,7 +232,7 @@ Tools integrate without changing the core architecture.
 
 ---
 
-# Milestone 10 — Production Readiness
+# Milestone 11 — Production Readiness
 
 ## Goal
 

@@ -12,6 +12,8 @@ from rp_engine.adapters.telegram.models import TelegramCommand
 from rp_engine.adapters.telegram.splitter import split_message
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.services.chat_service import ChatService
+from rp_engine.core.services.commands import SelectCharacterCommand
+from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
 
 logger = logging.getLogger(__name__)
@@ -28,17 +30,30 @@ class IdentityResolverPort(Protocol):
     ) -> User: ...
 
 
+class CharacterServicePort(Protocol):
+    async def select_character(
+        self,
+        *,
+        user_id: Any,
+        command: SelectCharacterCommand,
+    ) -> Session: ...
+
+    async def ensure_active_session(self, *, user_id: Any) -> Session: ...
+
+
 class TelegramAdapter:
     def __init__(
         self,
         chat_service: ChatService,
         identity_resolver: IdentityResolverPort,
+        character_service: CharacterServicePort,
         authorization: TelegramAuthorization,
         unauthorized_message: str,
         message_max_length: int,
     ) -> None:
         self._chat_service = chat_service
         self._identity_resolver = identity_resolver
+        self._character_service = character_service
         self._authorization = authorization
         self._unauthorized_message = unauthorized_message
         self._message_max_length = message_max_length
@@ -73,14 +88,42 @@ class TelegramAdapter:
             if user is not None
             else {},
         )
-        conversation_identity = self._resolve_conversation_identity(
-            update,
-            user_id=str(resolved_user.id),
-        )
 
         parsed_message = parse_transport_message(message.text)
         if not should_process_message(chat_type, parsed_message):
             return
+
+        if parsed_message.command == TelegramCommand.CHARACTER:
+            character_name = parsed_message.argument
+            if character_name is None:
+                await self._reply_with_split(
+                    message=message,
+                    text="Usage: /character <name>",
+                )
+                return
+
+            try:
+                selected_session = await self._character_service.select_character(
+                    user_id=resolved_user.id,
+                    command=SelectCharacterCommand(character_name=character_name),
+                )
+            except ValueError as exc:
+                await self._reply_with_split(message=message, text=str(exc))
+                return
+
+            await self._reply_with_split(
+                message=message,
+                text=(
+                    f"Active character set to '{selected_session.character_id}' in "
+                    f"world '{selected_session.world_id}'."
+                ),
+            )
+            return
+
+        active_session = await self._character_service.ensure_active_session(
+            user_id=resolved_user.id
+        )
+        conversation_identity = ConversationIdentity.for_session(str(active_session.id))
 
         logger.info(
             "Telegram message received",
@@ -162,17 +205,6 @@ class TelegramAdapter:
             return
 
         await self._reply_with_split(message=message, text=response)
-
-    @staticmethod
-    def _resolve_conversation_identity(update: Update, user_id: str) -> ConversationIdentity:
-        chat = update.effective_chat
-        if chat is None:
-            return ConversationIdentity.for_private(user_id)
-
-        if chat.type in {"group", "supergroup"}:
-            return ConversationIdentity.for_group(str(chat.id))
-
-        return ConversationIdentity.for_private(user_id)
 
     def _is_authorized(self, *, chat_type: str | None, user_id: str, chat: Any) -> bool:
         if chat_type in {"group", "supergroup"}:

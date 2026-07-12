@@ -134,6 +134,8 @@ Current use-case API:
 * `ChatService.send_message(...)`
 * `ChatService.continue_story(...)`
 * `ChatService.clear_conversation(...)`
+* `CharacterService.select_character(...)`
+* `CharacterService.ensure_active_session(...)`
 
 Adapters call these use cases directly.
 
@@ -180,6 +182,12 @@ Examples:
 * World
 * Memory
 * Message
+
+Session is the roleplay ownership boundary:
+
+* Users own one active session at a time.
+* Sessions bind user + character + world.
+* Conversation memory is keyed by session identity, not external adapter IDs.
 
 The domain should contain no framework dependencies.
 

@@ -30,3 +30,45 @@ External platforms are represented as linked identities.
 * Core domain and services do not depend on Telegram-specific types.
 * Adapters resolve external identities into `User` before invoking use cases.
 * External identifiers are never used as primary user IDs inside the engine.
+
+## Character
+
+Roleplay personas are represented as reusable `Character` entities.
+
+`Character` fields:
+
+* `id` (`str`) - stable application-owned identifier (slug or UUID).
+* `name` (`str`) - display name.
+* `description` (`str`) - high-level identity description.
+* `personality` (`str`) - behavior profile.
+* `greeting` (`str`) - optional opening text.
+* `metadata` (`dict[str, str]`) - optional structured tags.
+
+Character static definition is stored separately from mutable runtime state.
+
+## World
+
+Roleplay environments are represented as reusable `World` entities.
+
+`World` fields:
+
+* `id` (`str`) - stable application-owned identifier.
+* `name` (`str`) - display name.
+* `description` (`str`) - environment summary.
+* `rules` (`tuple[str, ...]`) - optional world constraints.
+* `metadata` (`dict[str, str]`) - optional world tags.
+
+## Session
+
+Roleplay context is owned by `Session`, not directly by adapter identities.
+
+`Session` fields:
+
+* `id` (`UUID`) - canonical session key.
+* `user_id` (`UUID`) - internal engine user owner.
+* `character_id` (`str`) - selected character.
+* `world_id` (`str`) - selected world.
+* `created_at` (`datetime`) - creation timestamp.
+* `metadata` (`dict[str, str]`) - optional session metadata.
+
+Session-scoped conversation persistence and memory keys are derived from `Session.id`.

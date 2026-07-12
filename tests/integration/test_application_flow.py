@@ -12,6 +12,8 @@ from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.memory.models import ConversationMessage, MemoryKey
 from rp_engine.core.services.chat_service import ChatService
+from rp_engine.core.services.commands import SelectCharacterCommand
+from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
 
 FIXED_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
@@ -30,6 +32,20 @@ class FakeIdentityResolver:
         del external_id
         del metadata
         return User(id=FIXED_USER_ID, display_name=display_name)
+
+
+class FakeCharacterService:
+    async def ensure_active_session(self, *, user_id: UUID) -> Session:
+        del user_id
+        return Session.create(user_id=FIXED_USER_ID, character_id="default", world_id="default")
+
+    async def select_character(self, *, user_id: UUID, command: SelectCharacterCommand) -> Session:
+        del user_id
+        return Session.create(
+            user_id=FIXED_USER_ID,
+            character_id=command.character_name.lower(),
+            world_id="default",
+        )
 
 
 class FakeLLMProvider:
@@ -98,6 +114,7 @@ async def test_application_smoke_flow_without_external_services() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -131,6 +148,7 @@ async def test_continue_command_is_not_sent_or_saved_as_literal_command() -> Non
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -147,7 +165,9 @@ async def test_continue_command_is_not_sent_or_saved_as_literal_command() -> Non
     assert provider.prompts
     assert "/continue" not in provider.prompts[0].user_message
 
-    saved_messages = await store.load_messages(MemoryKey(f"user_{FIXED_USER_ID}"))
+    keys = list(store._messages.keys())
+    assert keys
+    saved_messages = await store.load_messages(MemoryKey(keys[0]))
     assert saved_messages
     assert all(message.role == "assistant" for message in saved_messages)
     assert all("/continue" not in message.content for message in saved_messages)

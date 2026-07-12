@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     lmstudio_min_p_sampling: float = Field(default=0.05, ge=0.0, le=1.0)
 
     debug_status_enabled: bool = False
+    default_world_id: str = "default"
 
     @field_validator("lmstudio_api_host")
     @classmethod
@@ -72,6 +73,14 @@ class Settings(BaseSettings):
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("RP_ENGINE_TELEGRAM_UNAUTHORIZED_MESSAGE must not be empty.")
+        return cleaned
+
+    @field_validator("default_world_id")
+    @classmethod
+    def validate_default_world_id(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if not cleaned:
+            raise ValueError("RP_ENGINE_DEFAULT_WORLD_ID must not be empty.")
         return cleaned
 
 

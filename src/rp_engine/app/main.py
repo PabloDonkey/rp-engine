@@ -15,11 +15,18 @@ from rp_engine.app.runtime_state import RuntimeState
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.ports import LLMProvider
+from rp_engine.core.services.character_service import CharacterService
 from rp_engine.core.services.chat_service import ChatService
 from rp_engine.core.services.identity_resolver import IdentityResolver
 from rp_engine.infrastructure.config.settings import Settings, get_settings
 from rp_engine.infrastructure.llm.lmstudio_provider import LMStudioProvider
-from rp_engine.infrastructure.storage import JsonConversationStore, JsonUserIdentityStore
+from rp_engine.infrastructure.storage import (
+    JsonCharacterStore,
+    JsonConversationStore,
+    JsonSessionStore,
+    JsonUserIdentityStore,
+    JsonWorldStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +48,7 @@ class AppContainer:
     orchestrator: RPOrchestrator
     chat_service: ChatService
     identity_resolver: IdentityResolver
+    character_service: CharacterService
     telegram_runtime: TelegramRuntime | None
     runtime_state: RuntimeState
 
@@ -56,7 +64,16 @@ def build_container(settings: Settings) -> AppContainer:
     )
     conversation_store = JsonConversationStore()
     user_identity_store = JsonUserIdentityStore()
+    character_store = JsonCharacterStore()
+    world_store = JsonWorldStore()
+    session_store = JsonSessionStore()
     identity_resolver = IdentityResolver(store=user_identity_store)
+    character_service = CharacterService(
+        character_store=character_store,
+        world_store=world_store,
+        session_store=session_store,
+        default_world_id=settings.default_world_id,
+    )
     memory_strategy = DumpEverythingStrategy()
     logger.info("LM Studio provider initialized", extra={"api_host": settings.lmstudio_api_host})
     orchestrator = RPOrchestrator(llm_provider=llm_provider)
@@ -75,6 +92,7 @@ def build_container(settings: Settings) -> AppContainer:
         telegram_adapter = TelegramAdapter(
             chat_service=chat_service,
             identity_resolver=identity_resolver,
+            character_service=character_service,
             authorization=TelegramAuthorization.from_directory(
                 settings.telegram_authorization_dir
             ),
@@ -104,6 +122,7 @@ def build_container(settings: Settings) -> AppContainer:
         orchestrator=orchestrator,
         chat_service=chat_service,
         identity_resolver=identity_resolver,
+        character_service=character_service,
         telegram_runtime=telegram_runtime,
         runtime_state=RuntimeState(),
     )
