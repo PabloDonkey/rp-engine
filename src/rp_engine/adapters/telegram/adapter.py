@@ -7,6 +7,7 @@ from telegram.ext import ContextTypes, MessageHandler, filters
 
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.adapters.telegram.commands import build_help_message, parse_transport_message
+from rp_engine.adapters.telegram.feedback import TelegramProcessingFeedbackFactory
 from rp_engine.adapters.telegram.invocation_policy import should_process_message
 from rp_engine.adapters.telegram.models import TelegramCommand
 from rp_engine.adapters.telegram.splitter import split_message
@@ -50,6 +51,7 @@ class TelegramAdapter:
         authorization: TelegramAuthorization,
         unauthorized_message: str,
         message_max_length: int,
+        processing_feedback_factory: TelegramProcessingFeedbackFactory | None = None,
     ) -> None:
         self._chat_service = chat_service
         self._identity_resolver = identity_resolver
@@ -57,6 +59,9 @@ class TelegramAdapter:
         self._authorization = authorization
         self._unauthorized_message = unauthorized_message
         self._message_max_length = message_max_length
+        self._processing_feedback_factory = (
+            processing_feedback_factory or TelegramProcessingFeedbackFactory()
+        )
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
@@ -152,6 +157,10 @@ class TelegramAdapter:
                     return
                 response = await self._chat_service.continue_story(
                     conversation_identity=conversation_identity,
+                    processing_feedback=self._processing_feedback_factory.create(
+                        context=context,
+                        source_message=message,
+                    ),
                 )
                 await self._reply_with_split(message=message, text=response)
                 return
@@ -185,6 +194,10 @@ class TelegramAdapter:
                 user_id=group_user_id,
                 username=group_username,
                 display_name=group_display_name,
+                processing_feedback=self._processing_feedback_factory.create(
+                    context=context,
+                    source_message=message,
+                ),
             )
         except ValueError:
             logger.warning(

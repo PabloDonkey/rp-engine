@@ -131,13 +131,16 @@ async def test_telegram_adapter_flow_calls_chat_service_and_replies() -> None:
 
     await adapter.handle_message(cast(Update, update), cast(Any, None))
 
-    chat_service.send_message.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
-        message="hello",
-        user_id=None,
-        username=None,
-        display_name=None,
+    chat_service.send_message.assert_awaited_once()
+    send_kwargs = chat_service.send_message.await_args.kwargs
+    assert send_kwargs["conversation_identity"] == ConversationIdentity.for_session(
+        str(FIXED_SESSION_ID)
     )
+    assert send_kwargs["message"] == "hello"
+    assert send_kwargs["user_id"] is None
+    assert send_kwargs["username"] is None
+    assert send_kwargs["display_name"] is None
+    assert "processing_feedback" in send_kwargs
     assert message.responses == ["bot reply"]
 
 
@@ -213,9 +216,12 @@ async def test_continue_command_calls_continue_story() -> None:
 
     await adapter.handle_message(cast(Update, update), cast(Any, None))
 
-    chat_service.continue_story.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
+    chat_service.continue_story.assert_awaited_once()
+    continue_kwargs = chat_service.continue_story.await_args.kwargs
+    assert continue_kwargs["conversation_identity"] == ConversationIdentity.for_session(
+        str(FIXED_SESSION_ID)
     )
+    assert "processing_feedback" in continue_kwargs
     chat_service.send_message.assert_not_awaited()
     assert message.responses == ["continued"]
 
@@ -297,13 +303,16 @@ async def test_authorized_group_accepts_normal_messages() -> None:
 
     await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
 
-    chat_service.send_message.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
-        message="hello from group",
-        user_id=str(FIXED_USER_ID),
-        username="alice",
-        display_name="Alice",
+    chat_service.send_message.assert_awaited_once()
+    send_kwargs = chat_service.send_message.await_args.kwargs
+    assert send_kwargs["conversation_identity"] == ConversationIdentity.for_session(
+        str(FIXED_SESSION_ID)
     )
+    assert send_kwargs["message"] == "hello from group"
+    assert send_kwargs["user_id"] == str(FIXED_USER_ID)
+    assert send_kwargs["username"] == "alice"
+    assert send_kwargs["display_name"] == "Alice"
+    assert "processing_feedback" in send_kwargs
     assert message.responses == ["group reply"]
 
 
@@ -357,9 +366,12 @@ async def test_group_chat_supported_command_still_works() -> None:
         cast(Any, FakeContext(FakeBot(member_status="administrator"))),
     )
 
-    chat_service.continue_story.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
+    chat_service.continue_story.assert_awaited_once()
+    continue_kwargs = chat_service.continue_story.await_args.kwargs
+    assert continue_kwargs["conversation_identity"] == ConversationIdentity.for_session(
+        str(FIXED_SESSION_ID)
     )
+    assert "processing_feedback" in continue_kwargs
     assert message.responses == ["continued in group"]
 
 

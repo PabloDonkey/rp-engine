@@ -12,10 +12,14 @@ from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.ports import (
     CharacterStore,
     ConversationStore,
+    FeedbackContext,
     MemoryStrategy,
+    NoOpProcessingFeedback,
+    ProcessingFeedback,
     SessionStore,
     UserIdentityStore,
     WorldStore,
+    processing_feedback_scope,
 )
 from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
@@ -54,6 +58,7 @@ class ChatService:
         user_id: str | None = None,
         username: str | None = None,
         display_name: str | None = None,
+        processing_feedback: ProcessingFeedback | None = None,
     ) -> str:
         session_id = self._require_session_identity(conversation_identity)
         memory_key = conversation_identity.to_memory_key()
@@ -68,25 +73,34 @@ class ChatService:
         session, user, character, world = await self._load_conversation_context(
             session_id=session_id
         )
-        history = await self._conversation_store.load_messages(memory_key)
-        context_messages = self._memory_strategy.build_context(history)
-        conversation = self._conversation_builder.build(
-            ConversationBuilderInput(
-                session=session,
-                user=user,
-                character=character,
-                world=world,
-                memory_messages=context_messages,
-                user_message=cleaned_message,
+        feedback = processing_feedback or NoOpProcessingFeedback()
+        feedback_context = FeedbackContext(
+            conversation_owner_id=str(session.id),
+            character_id=character.id,
+            character_name=character.name,
+            user_display_name=user.display_name,
+            world_id=world.id,
+        )
+        async with processing_feedback_scope(feedback, context=feedback_context):
+            history = await self._conversation_store.load_messages(memory_key)
+            context_messages = self._memory_strategy.build_context(history)
+            conversation = self._conversation_builder.build(
+                ConversationBuilderInput(
+                    session=session,
+                    user=user,
+                    character=character,
+                    world=world,
+                    memory_messages=context_messages,
+                    user_message=cleaned_message,
+                )
             )
-        )
-        request = GenerationRequest(
-            memory_key=memory_key,
-            conversation=conversation,
-            settings=self._generation_settings,
-        )
-        llm_response = await self._orchestrator.generate_reply(request)
-        character_response = llm_response.content
+            request = GenerationRequest(
+                memory_key=memory_key,
+                conversation=conversation,
+                settings=self._generation_settings,
+            )
+            llm_response = await self._orchestrator.generate_reply(request)
+            character_response = llm_response.content
         await self._conversation_store.save_message(
             memory_key,
             ConversationMessage(
@@ -113,6 +127,7 @@ class ChatService:
         self,
         *,
         conversation_identity: ConversationIdentity,
+        processing_feedback: ProcessingFeedback | None = None,
     ) -> str:
         session_id = self._require_session_identity(conversation_identity)
         memory_key = conversation_identity.to_memory_key()
@@ -123,25 +138,34 @@ class ChatService:
         session, user, character, world = await self._load_conversation_context(
             session_id=session_id
         )
-        history = await self._conversation_store.load_messages(memory_key)
-        context_messages = self._memory_strategy.build_context(history)
-        conversation = self._conversation_builder.build_continue(
-            ConversationBuilderInput(
-                session=session,
-                user=user,
-                character=character,
-                world=world,
-                memory_messages=context_messages,
-                user_message="continue",
+        feedback = processing_feedback or NoOpProcessingFeedback()
+        feedback_context = FeedbackContext(
+            conversation_owner_id=str(session.id),
+            character_id=character.id,
+            character_name=character.name,
+            user_display_name=user.display_name,
+            world_id=world.id,
+        )
+        async with processing_feedback_scope(feedback, context=feedback_context):
+            history = await self._conversation_store.load_messages(memory_key)
+            context_messages = self._memory_strategy.build_context(history)
+            conversation = self._conversation_builder.build_continue(
+                ConversationBuilderInput(
+                    session=session,
+                    user=user,
+                    character=character,
+                    world=world,
+                    memory_messages=context_messages,
+                    user_message="continue",
+                )
             )
-        )
-        request = GenerationRequest(
-            memory_key=memory_key,
-            conversation=conversation,
-            settings=self._generation_settings,
-        )
-        llm_response = await self._orchestrator.generate_reply(request)
-        character_response = llm_response.content
+            request = GenerationRequest(
+                memory_key=memory_key,
+                conversation=conversation,
+                settings=self._generation_settings,
+            )
+            llm_response = await self._orchestrator.generate_reply(request)
+            character_response = llm_response.content
         await self._conversation_store.save_message(
             memory_key,
             ConversationMessage(role=ConversationRole.CHARACTER, content=character_response),

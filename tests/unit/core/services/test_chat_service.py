@@ -247,3 +247,45 @@ async def test_chat_service_persists_user_metadata(
             },
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_chat_service_starts_and_stops_processing_feedback(
+    session_context: tuple[Session, User, Character, World],
+) -> None:
+    service, _, _ = _build_service(session_context=session_context)
+    feedback = AsyncMock()
+    feedback.start = AsyncMock()
+    feedback.update = AsyncMock()
+    feedback.stop = AsyncMock()
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello",
+        processing_feedback=feedback,
+    )
+
+    feedback.start.assert_awaited_once()
+    feedback.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_service_stops_processing_feedback_when_generation_fails(
+    session_context: tuple[Session, User, Character, World],
+) -> None:
+    service, orchestrator, _ = _build_service(session_context=session_context)
+    orchestrator.generate_reply = AsyncMock(side_effect=RuntimeError("provider down"))
+    feedback = AsyncMock()
+    feedback.start = AsyncMock()
+    feedback.update = AsyncMock()
+    feedback.stop = AsyncMock()
+
+    with pytest.raises(RuntimeError, match="provider down"):
+        await service.send_message(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+            message="hello",
+            processing_feedback=feedback,
+        )
+
+    feedback.start.assert_awaited_once()
+    feedback.stop.assert_awaited_once()
