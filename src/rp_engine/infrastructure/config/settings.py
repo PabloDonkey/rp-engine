@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     lmstudio_model: str = "qwen/qwen3-4b-2507"
     lmstudio_max_tokens: int = Field(default=600, ge=1)
     lmstudio_temperature: float = Field(default=0.8, ge=0.0)
+    lmstudio_top_k_sampling: int = Field(default=40, ge=1)
+    lmstudio_repeat_penalty: float = Field(default=1.1, ge=0.0)
+    lmstudio_top_p_sampling: float = Field(default=0.95, ge=0.0, le=1.0)
+    lmstudio_min_p_sampling: float = Field(default=0.05, ge=0.0, le=1.0)
 
     debug_status_enabled: bool = False
 

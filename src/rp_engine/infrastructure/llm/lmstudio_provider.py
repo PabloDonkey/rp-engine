@@ -23,11 +23,19 @@ class LMStudioProvider(LLMProvider):
         api_host: str,
         max_tokens: int,
         temperature: float,
+        top_k_sampling: int = 40,
+        repeat_penalty: float = 1.1,
+        top_p_sampling: float = 0.95,
+        min_p_sampling: float = 0.05,
     ) -> None:
         self._model_name = model_name
         self._api_host = _normalize_api_host(api_host)
         self._max_tokens = max_tokens
         self._temperature = temperature
+        self._top_k_sampling = top_k_sampling
+        self._repeat_penalty = repeat_penalty
+        self._top_p_sampling = top_p_sampling
+        self._min_p_sampling = min_p_sampling
         self._ensure_default_client_configured(self._api_host)
 
     async def generate_response(self, prompt: PromptPayload) -> str:
@@ -42,14 +50,24 @@ class LMStudioProvider(LLMProvider):
         model = lms.llm(self._model_name)
         chat = lms.Chat(prompt.system_prompt)
         chat.add_user_message(prompt.user_message)
+        config = self._get_config()
+        logger.info(f"LmStudio.generate_response \r\nmessage: {prompt.user_message} \r\nconfig: {config}")
         result = model.respond(
             chat,
-            config={
-                "maxTokens": self._max_tokens,
-                "temperature": self._temperature,
-            },
+            config=config,
         )
+        logger.info(f"Response statistics: {result.stats}")
         return str(result)
+
+    def _get_config(self) -> lms.LlmPredictionConfig:
+        return lms.LlmPredictionConfig(   
+            max_tokens=self._max_tokens,
+            temperature=self._temperature,
+            top_k_sampling=self._top_k_sampling,
+            repeat_penalty=self._repeat_penalty,
+            top_p_sampling=self._top_p_sampling,
+            min_p_sampling=self._min_p_sampling,
+        )
 
     @classmethod
     def _ensure_default_client_configured(cls, api_host: str) -> None:

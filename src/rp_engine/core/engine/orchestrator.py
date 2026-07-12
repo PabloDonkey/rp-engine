@@ -10,6 +10,11 @@ DEFAULT_SYSTEM_PROMPT = (
     "You are RP Engine, a collaborative roleplay assistant. "
     "Generate concise, immersive responses that continue the scene."
     "Write one reply only. Write at least one paragraph, up to four paragraphs."
+    "Response budget: approximately 250 tokens."
+    "Always finish with a complete sentence. "
+    "If necessary, shorten descriptions or summarize events. "
+    "Do not leave a sentence unfinished."
+    "Use last sentence to invite users to continue the story, but do not ask questions or provide options. "
 )
 
 #https://www.reddit.com/r/SillyTavernAI/comments/1i8z6j9/whats_your_favorite_custom_system_prompt_for_rp/
@@ -31,7 +36,7 @@ class RPOrchestrator:
     def __init__(
         self,
         llm_provider: LLMProvider,
-        system_prompt: str = CUSTOM_SYSTEM_PROMPT,
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     ) -> None:
         self._llm_provider = llm_provider
         self._system_prompt = system_prompt
