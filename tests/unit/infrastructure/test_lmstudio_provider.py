@@ -6,7 +6,8 @@ import pytest
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
-from rp_engine.infrastructure.llm.lmstudio_provider import LMStudioProvider
+from rp_engine.core.llm.generation import GenerationSettings
+from rp_engine.infrastructure.llm.lmstudio.provider import LMStudioProvider
 
 
 class FakeChat:
@@ -23,13 +24,22 @@ class FakeChat:
 
 
 class FakeModel:
-    def __init__(self, responder: Callable[[FakeChat], str]) -> None:
+    def __init__(self, responder: Callable[[FakeChat], Any]) -> None:
         self._responder = responder
         self.last_config: Any = None
 
-    def respond(self, chat: FakeChat, *, config: Any = None) -> str:
+    def respond(self, chat: FakeChat, *, config: Any = None) -> Any:
         self.last_config = config
         return self._responder(chat)
+
+
+class FakeResult:
+    def __init__(self, content: str, *, finish_reason: str = "stop") -> None:
+        self.content = content
+        self.finish_reason = finish_reason
+
+    def __str__(self) -> str:
+        return self.content
 
 
 def _conversation() -> Conversation:
@@ -54,17 +64,19 @@ async def test_lmstudio_provider_uses_sdk_calls(monkeypatch: pytest.MonkeyPatch)
     def fake_llm(name: str) -> FakeModel:
         model_names.append(name)
 
-        def respond(chat: FakeChat) -> str:
-            return f"{chat.system_prompt}|{chat.user_messages[0]}|{chat.assistant_messages[0]}"
+        def respond(chat: FakeChat) -> FakeResult:
+            return FakeResult(
+                f"{chat.system_prompt}|{chat.user_messages[0]}|{chat.assistant_messages[0]}"
+            )
 
         return FakeModel(respond)
 
     monkeypatch.setattr(
-        "rp_engine.infrastructure.llm.lmstudio_provider.lms.configure_default_client",
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.configure_default_client",
         fake_configure_default_client,
     )
-    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio_provider.lms.llm", fake_llm)
-    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio_provider.lms.Chat", FakeChat)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.llm", fake_llm)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.Chat", FakeChat)
     monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
 
     provider = LMStudioProvider(
@@ -73,11 +85,15 @@ async def test_lmstudio_provider_uses_sdk_calls(monkeypatch: pytest.MonkeyPatch)
         max_tokens=600,
         temperature=0.8,
     )
-    result = await provider.generate_response(_conversation())
+    result = await provider.generate(
+        _conversation(),
+        GenerationSettings(temperature=0.9, max_tokens=222),
+    )
 
     assert configured_hosts == ["127.0.0.1:1234"]
     assert model_names == ["model-a"]
-    assert result == "sys-a\n\nsys-b|hello|prior response"
+    assert result.content == "sys-a\n\nsys-b|hello|prior response"
+    assert result.finish_reason == "stop"
 
 
 @pytest.mark.asyncio
@@ -93,11 +109,11 @@ async def test_lmstudio_provider_configures_client_only_once(
         return FakeModel(lambda chat: chat.user_messages[0])
 
     monkeypatch.setattr(
-        "rp_engine.infrastructure.llm.lmstudio_provider.lms.configure_default_client",
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.configure_default_client",
         fake_configure_default_client,
     )
-    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio_provider.lms.llm", fake_llm)
-    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio_provider.lms.Chat", FakeChat)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.llm", fake_llm)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.Chat", FakeChat)
     monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
 
     provider = LMStudioProvider(
@@ -106,16 +122,18 @@ async def test_lmstudio_provider_configures_client_only_once(
         max_tokens=600,
         temperature=0.8,
     )
-    first = await provider.generate_response(
-        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="one")])
+    first = await provider.generate(
+        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="one")]),
+        GenerationSettings(),
     )
-    second = await provider.generate_response(
-        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="two")])
+    second = await provider.generate(
+        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="two")]),
+        GenerationSettings(),
     )
 
     assert configured_hosts == ["127.0.0.1:1234"]
-    assert first == "one"
-    assert second == "two"
+    assert first.content == "one"
+    assert second.content == "two"
 
 
 @pytest.mark.asyncio
@@ -133,11 +151,11 @@ async def test_lmstudio_provider_passes_prediction_config(
         return model
 
     monkeypatch.setattr(
-        "rp_engine.infrastructure.llm.lmstudio_provider.lms.configure_default_client",
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.configure_default_client",
         fake_configure_default_client,
     )
-    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio_provider.lms.llm", fake_llm)
-    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio_provider.lms.Chat", FakeChat)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.llm", fake_llm)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.Chat", FakeChat)
     monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
 
     provider = LMStudioProvider(
@@ -147,12 +165,48 @@ async def test_lmstudio_provider_passes_prediction_config(
         temperature=0.7,
     )
 
-    result = await provider.generate_response(
-        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="hi")])
+    result = await provider.generate(
+        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="hi")]),
+        GenerationSettings(max_tokens=600, temperature=0.7, top_p=0.9),
     )
 
-    assert result == "ok"
+    assert result.content == "ok"
     last_config = model_instances[0].last_config
     assert last_config is not None
     assert last_config.max_tokens == 600
     assert last_config.temperature == 0.7
+    assert last_config.top_p_sampling == 0.9
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_provider_maps_length_finish_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_configure_default_client(_: str) -> None:
+        return None
+
+    def fake_llm(_: str) -> FakeModel:
+        return FakeModel(lambda _chat: FakeResult("partial", finish_reason="max_tokens"))
+
+    monkeypatch.setattr(
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.configure_default_client",
+        fake_configure_default_client,
+    )
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.llm", fake_llm)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.Chat", FakeChat)
+    monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
+
+    provider = LMStudioProvider(
+        model_name="model-a",
+        api_host="127.0.0.1:1234",
+        max_tokens=600,
+        temperature=0.7,
+    )
+
+    result = await provider.generate(
+        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="hi")]),
+        GenerationSettings(max_tokens=128, temperature=0.3),
+    )
+
+    assert result.content == "partial"
+    assert result.finish_reason == "length"

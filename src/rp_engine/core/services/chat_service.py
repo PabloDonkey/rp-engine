@@ -7,6 +7,7 @@ from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.engine.models import GenerationRequest
 from rp_engine.core.engine.orchestrator import RPOrchestrator
+from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.ports import (
     CharacterStore,
@@ -33,6 +34,7 @@ class ChatService:
         session_store: SessionStore,
         character_store: CharacterStore,
         world_store: WorldStore,
+        generation_settings: GenerationSettings,
     ) -> None:
         self._orchestrator = orchestrator
         self._conversation_store = conversation_store
@@ -41,6 +43,7 @@ class ChatService:
         self._session_store = session_store
         self._character_store = character_store
         self._world_store = world_store
+        self._generation_settings = generation_settings
         self._conversation_builder = ConversationBuilder()
 
     async def send_message(
@@ -80,8 +83,10 @@ class ChatService:
         request = GenerationRequest(
             memory_key=memory_key,
             conversation=conversation,
+            settings=self._generation_settings,
         )
-        character_response = await self._orchestrator.generate_reply(request)
+        llm_response = await self._orchestrator.generate_reply(request)
+        character_response = llm_response.content
         await self._conversation_store.save_message(
             memory_key,
             ConversationMessage(
@@ -133,8 +138,10 @@ class ChatService:
         request = GenerationRequest(
             memory_key=memory_key,
             conversation=conversation,
+            settings=self._generation_settings,
         )
-        character_response = await self._orchestrator.generate_reply(request)
+        llm_response = await self._orchestrator.generate_reply(request)
+        character_response = llm_response.content
         await self._conversation_store.save_message(
             memory_key,
             ConversationMessage(role=ConversationRole.CHARACTER, content=character_response),

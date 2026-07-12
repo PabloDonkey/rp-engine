@@ -1113,3 +1113,57 @@ Why was this option selected?
 Each ADR should describe a single architectural decision.
 
 If a decision changes in the future, create a new ADR that supersedes the previous one rather than rewriting history.
+
+---
+
+# ADR-018 — Provider Owns Conversation Serialization
+
+**Status:** Accepted
+
+**Date:** 2026-07-12
+
+## Context
+
+The engine now builds structured domain conversations and must remain provider-agnostic.
+
+If core services serialize provider payloads directly, provider-specific roles and SDK concepts leak
+into domain and application layers.
+
+## Decision
+
+Provider adapters own translation from domain conversation models to provider SDK chat payloads.
+
+The provider interface operates on provider-independent models:
+
+* input: `Conversation`
+* input: `GenerationSettings`
+* output: `LLMResponse`
+
+Provider adapters normalize completion semantics into `LLMResponse.finish_reason`, including
+`length` for token-limit completions.
+
+Provider adapters must convert provider exceptions into provider-independent errors:
+
+* `LLMConnectionError`
+* `LLMTimeoutError`
+* `LLMGenerationError`
+
+## Rationale
+
+* Preserves clean architecture boundaries.
+* Keeps domain language roleplay-first (`character`) instead of provider-first (`assistant`).
+* Supports adding future providers without changing core orchestration.
+* Improves testability through provider-independent contracts.
+
+## Consequences
+
+### Positive
+
+* SDK-specific chat/message types stay inside infrastructure.
+* Core tests no longer need provider SDK imports.
+* Completion behavior is explicit through normalized finish reasons.
+
+### Negative
+
+* Provider adapters require explicit mapper and error-conversion code.
+* New providers must implement serialization and normalization logic.

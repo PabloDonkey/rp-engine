@@ -7,14 +7,17 @@ from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.engine.models import GenerationRequest
 from rp_engine.core.engine.orchestrator import RPOrchestrator
+from rp_engine.core.llm.generation import GenerationSettings
+from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.models import MemoryKey
 
 
 @pytest.mark.asyncio
 async def test_orchestrator_calls_provider_with_conversation() -> None:
     provider = AsyncMock()
-    provider.generate_response = AsyncMock(return_value="generated")
+    provider.generate = AsyncMock(return_value=LLMResponse(content="generated"))
     orchestrator = RPOrchestrator(llm_provider=provider)
+    generation_settings = GenerationSettings(temperature=0.4, max_tokens=256)
     conversation = Conversation(
         messages=[
             ConversationMessage(role=ConversationRole.SYSTEM, content="system prompt"),
@@ -26,18 +29,20 @@ async def test_orchestrator_calls_provider_with_conversation() -> None:
         GenerationRequest(
             memory_key=MemoryKey("session_abc"),
             conversation=conversation,
+            settings=generation_settings,
         )
     )
 
-    assert result == "generated"
-    provider.generate_response.assert_awaited_once_with(conversation)
+    assert result == LLMResponse(content="generated")
+    provider.generate.assert_awaited_once_with(conversation, generation_settings)
 
 
 @pytest.mark.asyncio
 async def test_orchestrator_propagates_provider_errors() -> None:
     provider = AsyncMock()
-    provider.generate_response = AsyncMock(side_effect=RuntimeError("provider down"))
+    provider.generate = AsyncMock(side_effect=RuntimeError("provider down"))
     orchestrator = RPOrchestrator(llm_provider=provider)
+    generation_settings = GenerationSettings()
     conversation = Conversation(
         messages=[ConversationMessage(role=ConversationRole.USER, content="hello")]
     )
@@ -47,5 +52,6 @@ async def test_orchestrator_propagates_provider_errors() -> None:
             GenerationRequest(
                 memory_key=MemoryKey("session_abc"),
                 conversation=conversation,
+                settings=generation_settings,
             )
         )

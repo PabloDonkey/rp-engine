@@ -13,13 +13,14 @@ from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.app.lifespan import create_lifespan
 from rp_engine.app.runtime_state import RuntimeState
 from rp_engine.core.engine.orchestrator import RPOrchestrator
+from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.ports import LLMProvider
 from rp_engine.core.services.character_service import CharacterService
 from rp_engine.core.services.chat_service import ChatService
 from rp_engine.core.services.identity_resolver import IdentityResolver
 from rp_engine.infrastructure.config.settings import Settings, get_settings
-from rp_engine.infrastructure.llm.lmstudio_provider import LMStudioProvider
+from rp_engine.infrastructure.llm.lmstudio.provider import LMStudioProvider
 from rp_engine.infrastructure.storage import (
     JsonCharacterStore,
     JsonConversationStore,
@@ -75,6 +76,11 @@ def build_container(settings: Settings) -> AppContainer:
         default_world_id=settings.default_world_id,
     )
     memory_strategy = DumpEverythingStrategy()
+    generation_settings = GenerationSettings(
+        temperature=settings.lmstudio_temperature,
+        max_tokens=settings.lmstudio_max_tokens,
+        top_p=settings.lmstudio_top_p_sampling,
+    )
     logger.info("LM Studio provider initialized", extra={"api_host": settings.lmstudio_api_host})
     orchestrator = RPOrchestrator(llm_provider=llm_provider)
     chat_service = ChatService(
@@ -85,6 +91,7 @@ def build_container(settings: Settings) -> AppContainer:
         session_store=session_store,
         character_store=character_store,
         world_store=world_store,
+        generation_settings=generation_settings,
     )
 
     telegram_runtime: TelegramRuntime | None = None

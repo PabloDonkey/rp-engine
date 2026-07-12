@@ -13,6 +13,8 @@ from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.engine.orchestrator import RPOrchestrator
+from rp_engine.core.llm.generation import GenerationSettings
+from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.memory.models import MemoryKey
 from rp_engine.core.services.chat_service import ChatService
@@ -66,9 +68,15 @@ class FakeCharacterService:
 class FakeLLMProvider:
     def __init__(self) -> None:
         self.conversations: list[Conversation] = []
+        self.settings: list[GenerationSettings] = []
 
-    async def generate_response(self, conversation: Conversation) -> str:
+    async def generate(
+        self,
+        conversation: Conversation,
+        settings: GenerationSettings,
+    ) -> LLMResponse:
         self.conversations.append(conversation)
+        self.settings.append(settings)
         last_user = next(
             (
                 message.content
@@ -77,7 +85,7 @@ class FakeLLMProvider:
             ),
             "",
         )
-        return f"echo:{last_user}"
+        return LLMResponse(content=f"echo:{last_user}", finish_reason="stop")
 
 
 class InMemoryConversationStore:
@@ -238,6 +246,7 @@ async def test_application_smoke_flow_without_external_services() -> None:
         session_store=FakeSessionStore(),
         character_store=FakeCharacterStore(),
         world_store=FakeWorldStore(),
+        generation_settings=GenerationSettings(),
     )
     adapter = TelegramAdapter(
         chat_service=chat_service,
@@ -275,6 +284,7 @@ async def test_continue_command_is_not_saved_as_literal_command() -> None:
         session_store=FakeSessionStore(),
         character_store=FakeCharacterStore(),
         world_store=FakeWorldStore(),
+        generation_settings=GenerationSettings(),
     )
     adapter = TelegramAdapter(
         chat_service=chat_service,

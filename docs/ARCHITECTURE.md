@@ -347,6 +347,27 @@ The engine communicates only through this abstraction.
 
 Provider contract input is a structured `Conversation`, not a pre-formatted prompt string.
 
+Provider contract shape:
+
+* input: `Conversation`
+* input: `GenerationSettings`
+* output: `LLMResponse`
+
+`LLMResponse` is provider-independent and contains generated content, finish reason, and optional
+metadata.
+
+### Provider Translation Boundary
+
+Provider adapters own conversation serialization into SDK-native chat objects.
+
+For LM Studio:
+
+* domain role `system` -> LM Studio `system`
+* domain role `user` -> LM Studio `user`
+* domain role `character` -> LM Studio `assistant`
+
+Role translation is not allowed in core services or domain models.
+
 ---
 
 # Request Flow

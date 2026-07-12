@@ -123,3 +123,28 @@ Responsibilities:
 * enforce message ordering
 * resolve `{{char}}` and `{{user}}` templates
 * produce final structured conversation payload without unresolved templates
+
+## GenerationSettings
+
+Generation parameters are represented separately from conversation data.
+
+`GenerationSettings` fields:
+
+* `temperature` (`float`) - sampling temperature.
+* `max_tokens` (`int`) - generation token limit.
+* `top_p` (`float | None`) - optional nucleus sampling value.
+* `stop_sequences` (`tuple[str, ...]`) - optional provider-agnostic stop markers.
+
+These settings are translated by provider adapters into provider-native SDK configuration objects.
+
+## LLMResponse
+
+Provider output is represented by a provider-independent `LLMResponse` model.
+
+`LLMResponse` fields:
+
+* `content` (`str`) - generated text.
+* `finish_reason` (`"stop" | "length" | "unknown"`) - normalized completion reason.
+* `metadata` (`dict[str, str]`) - optional provider metadata.
+
+Application services receive `LLMResponse`, never SDK-specific response objects.

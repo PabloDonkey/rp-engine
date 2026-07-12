@@ -9,6 +9,8 @@ from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.engine.models import GenerationRequest
+from rp_engine.core.llm.generation import GenerationSettings
+from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
 from rp_engine.core.services.chat_service import ChatService
 from rp_engine.core.session.session import Session
@@ -17,6 +19,7 @@ from rp_engine.core.world.world import World
 
 SESSION_ID = UUID("00000000-0000-0000-0000-000000000111")
 USER_ID = UUID("00000000-0000-0000-0000-000000000042")
+GENERATION_SETTINGS = GenerationSettings(temperature=0.8, max_tokens=600, top_p=0.95)
 
 
 @pytest.fixture
@@ -50,7 +53,7 @@ def _build_service(
     session_context: tuple[Session, User, Character, World],
 ) -> tuple[ChatService, AsyncMock, AsyncMock]:
     orchestrator = AsyncMock()
-    orchestrator.generate_reply = AsyncMock(return_value="scene response")
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="scene response"))
     conversation_store = AsyncMock()
     conversation_store.load_messages = AsyncMock(
         return_value=[ConversationMessage(role=ConversationRole.USER, content="previous")]
@@ -82,6 +85,7 @@ def _build_service(
         session_store=session_store,
         character_store=character_store,
         world_store=world_store,
+        generation_settings=GENERATION_SETTINGS,
     )
     return service, orchestrator, conversation_store
 
@@ -102,6 +106,7 @@ async def test_chat_service_builds_conversation_and_calls_orchestrator(
     assert request == GenerationRequest(
         memory_key=MemoryKey(f"session_{SESSION_ID}"),
         conversation=request.conversation,
+        settings=GENERATION_SETTINGS,
     )
 
     assert isinstance(request.conversation, Conversation)
@@ -170,7 +175,7 @@ async def test_chat_service_continue_saves_character_message(
     session_context: tuple[Session, User, Character, World],
 ) -> None:
     service, orchestrator, conversation_store = _build_service(session_context=session_context)
-    orchestrator.generate_reply = AsyncMock(return_value="continued scene")
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="continued scene"))
 
     response = await service.continue_story(
         conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
@@ -205,6 +210,7 @@ async def test_chat_service_clear_conversation_uses_store_clear() -> None:
         session_store=session_store,
         character_store=character_store,
         world_store=world_store,
+        generation_settings=GENERATION_SETTINGS,
     )
 
     await service.clear_conversation(
