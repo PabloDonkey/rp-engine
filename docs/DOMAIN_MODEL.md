@@ -72,3 +72,54 @@ Roleplay context is owned by `Session`, not directly by adapter identities.
 * `metadata` (`dict[str, str]`) - optional session metadata.
 
 Session-scoped conversation persistence and memory keys are derived from `Session.id`.
+
+## ConversationRole
+
+The conversation domain uses roleplay-first roles:
+
+* `system`
+* `user`
+* `character`
+
+The domain model does not use provider-specific roles such as `assistant`.
+
+## ConversationMessage
+
+Structured conversation history entries are represented by `ConversationMessage`.
+
+`ConversationMessage` fields:
+
+* `role` (`ConversationRole`) - the domain speaker role.
+* `content` (`str`) - message text.
+* `metadata` (`dict[str, str]`) - optional extensible attributes.
+
+Examples of metadata keys include origin identifiers, visibility controls, or future
+tool-related annotations.
+
+## Conversation
+
+The provider input boundary is `Conversation`.
+
+`Conversation` fields:
+
+* `messages` (`list[ConversationMessage]`) - ordered sequence passed to the provider adapter.
+* `metadata` (`dict[str, str]`) - optional conversation-level attributes.
+
+## ConversationBuilder
+
+`ConversationBuilder` assembles provider-independent conversations from domain context.
+
+Input context includes:
+
+* `Session`
+* `User`
+* `Character`
+* `World`
+* structured memory history
+* current user instruction
+
+Responsibilities:
+
+* enforce message ordering
+* resolve `{{char}}` and `{{user}}` templates
+* produce final structured conversation payload without unresolved templates

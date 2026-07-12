@@ -418,6 +418,66 @@ Selected approach.
 * Allows future providers.
 * Provides access to LM Studio features.
 
+---
+
+# ADR-011 — Conversation Model As Provider Boundary
+
+**Status:** Accepted
+
+**Date:** 2026-07-12
+
+## Context
+
+The prior generation flow used a string-based prompt payload.
+
+That flattened conversation structure and mixed domain semantics with provider formatting.
+
+The roleplay engine requires a provider-independent, structured boundary that preserves message
+roles and ordering.
+
+## Decision
+
+Adopt a structured domain conversation model as the generation boundary.
+
+Core constructs:
+
+* `ConversationRole` with domain roles `system`, `user`, `character`
+* `ConversationMessage`
+* `Conversation`
+* `ConversationBuilder`
+
+Provider interface update:
+
+* before: `generate_response(prompt: PromptPayload)`
+* after: `generate_response(conversation: Conversation)`
+
+Role translation is provider adapter responsibility. The domain does not use provider-specific
+roles such as `assistant`.
+
+Structured history persistence for session conversations uses JSONL at:
+
+* `data/sessions/<session_id>/history.jsonl`
+
+## Rationale
+
+* preserves conversation semantics across providers
+* supports native chat APIs without prompt re-formatting in domain services
+* keeps domain language aligned with roleplay concepts
+* simplifies future provider additions and testing
+
+## Consequences
+
+### Positive
+
+* Core no longer depends on prompt-string assembly.
+* Provider adapters become explicit translation boundaries.
+* History storage remains structured and append-friendly.
+
+### Negative
+
+* Requires coordinated refactor across service, orchestrator, provider, and tests.
+* Existing string-prompt tests and assumptions must be updated.
+
 ### Disadvantages
 
 * Requires maintaining an abstraction layer.

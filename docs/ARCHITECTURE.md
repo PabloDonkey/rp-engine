@@ -159,7 +159,7 @@ The engine contains the orchestration logic for roleplay interactions.
 
 Responsibilities include:
 
-* Prompt construction
+* Conversation construction
 * Memory retrieval
 * Character loading
 * World loading
@@ -305,9 +305,9 @@ Responsible for:
 
 ---
 
-## Prompt Builder
+## Conversation Builder
 
-Responsible for assembling model input.
+Responsible for assembling provider-independent model input.
 
 Possible inputs include:
 
@@ -315,7 +315,20 @@ Possible inputs include:
 * Character information
 * World information
 * Memory retrieval
-* System prompts
+* System context messages
+
+Output:
+
+* Structured `Conversation` containing ordered `ConversationMessage` entries.
+
+Domain conversation roles are:
+
+* `system`
+* `user`
+* `character`
+
+Provider adapters translate these roles to provider-native roles when required
+(for example `character -> assistant`).
 
 ---
 
@@ -331,6 +344,8 @@ Example implementations:
 * OpenAI-compatible APIs
 
 The engine communicates only through this abstraction.
+
+Provider contract input is a structured `Conversation`, not a pre-formatted prompt string.
 
 ---
 

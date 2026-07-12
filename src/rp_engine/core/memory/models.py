@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Literal
 
-Role = Literal["user", "assistant"]
 MemoryOwnerKind = Literal["user", "group", "session"]
 
 
@@ -35,12 +34,3 @@ class ConversationIdentity:
         else:
             prefix = "session"
         return MemoryKey(value=f"{prefix}_{self.owner_id}")
-
-
-@dataclass(frozen=True, slots=True)
-class ConversationMessage:
-    role: Role
-    content: str
-    user_id: str | None = None
-    username: str | None = None
-    display_name: str | None = None

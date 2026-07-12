@@ -1,4 +1,4 @@
-from rp_engine.core.memory.models import ConversationMessage
+from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.ports.memory_strategy import MemoryStrategy
 
 

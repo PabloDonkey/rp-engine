@@ -6,7 +6,9 @@ from urllib.parse import urlparse
 
 import lmstudio as lms
 
-from rp_engine.core.engine.models import PromptPayload
+from rp_engine.core.conversation.conversation import Conversation
+from rp_engine.core.conversation.message import ConversationMessage
+from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.ports import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -38,18 +40,26 @@ class LMStudioProvider(LLMProvider):
         self._min_p_sampling = min_p_sampling
         self._ensure_default_client_configured(self._api_host)
 
-    async def generate_response(self, prompt: PromptPayload) -> str:
+    async def generate_response(self, conversation: Conversation) -> str:
         logger.info("LLM request sent", extra={"model_name": self._model_name})
         try:
-            return await asyncio.to_thread(self._generate_sync, prompt)
+            return await asyncio.to_thread(self._generate_sync, conversation)
         except Exception:
             logger.exception("LLM unavailable", extra={"model_name": self._model_name})
             raise
 
-    def _generate_sync(self, prompt: PromptPayload) -> str:
+    def _generate_sync(self, conversation: Conversation) -> str:
         model = lms.llm(self._model_name)
-        chat = lms.Chat(prompt.system_prompt)
-        chat.add_user_message(prompt.user_message)
+        system_prompt = self._build_system_prompt(conversation.messages)
+        chat = lms.Chat(system_prompt)
+        for message in conversation.messages:
+            if message.role == ConversationRole.SYSTEM:
+                continue
+            if message.role == ConversationRole.USER:
+                chat.add_user_message(message.content)
+                continue
+            self._add_character_message(chat=chat, content=message.content)
+
         config = self._get_config()
         logger.info(
             "LmStudio.generate_response",
@@ -63,6 +73,31 @@ class LMStudioProvider(LLMProvider):
         if stats is not None:
             logger.info("Response statistics", extra={"stats": str(stats)})
         return str(result)
+
+    @staticmethod
+    def _build_system_prompt(messages: list[ConversationMessage]) -> str:
+        system_parts = [
+            message.content.strip()
+            for message in messages
+            if message.role == ConversationRole.SYSTEM and message.content.strip()
+        ]
+        if not system_parts:
+            return "You are a roleplay character."
+        return "\n\n".join(system_parts)
+
+    @staticmethod
+    def _add_character_message(*, chat: object, content: str) -> None:
+        add_assistant = getattr(chat, "add_assistant_message", None)
+        if callable(add_assistant):
+            add_assistant(content)
+            return
+
+        add_user = getattr(chat, "add_user_message", None)
+        if callable(add_user):
+            add_user(f"Character: {content}")
+            return
+
+        raise TypeError("LM Studio chat object does not support adding messages.")
 
     def _get_config(self) -> lms.LlmPredictionConfig:
         return lms.LlmPredictionConfig(   

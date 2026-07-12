@@ -58,8 +58,8 @@ def test_chat_endpoint_calls_send_message_use_case() -> None:
         response = client.post(
             "/chat",
             json={
-                "owner_kind": "user",
-                "owner_id": "42",
+                "owner_kind": "session",
+                "owner_id": "00000000-0000-0000-0000-000000000001",
                 "message": "hi",
             },
         )
@@ -78,8 +78,8 @@ def test_continue_endpoint_calls_continue_story_use_case() -> None:
         response = client.post(
             "/continue",
             json={
-                "owner_kind": "group",
-                "owner_id": "-100",
+                "owner_kind": "session",
+                "owner_id": "00000000-0000-0000-0000-000000000001",
             },
         )
 
@@ -97,8 +97,8 @@ def test_memory_clear_endpoint_calls_clear_conversation_use_case() -> None:
         response = client.post(
             "/memory/clear",
             json={
-                "owner_kind": "user",
-                "owner_id": "42",
+                "owner_kind": "session",
+                "owner_id": "00000000-0000-0000-0000-000000000001",
             },
         )
 

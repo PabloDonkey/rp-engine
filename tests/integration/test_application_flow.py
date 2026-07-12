@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -7,16 +8,22 @@ from telegram import Update
 
 from rp_engine.adapters.telegram.adapter import TelegramAdapter
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
-from rp_engine.core.engine.models import PromptPayload
+from rp_engine.core.character.character import Character
+from rp_engine.core.conversation.conversation import Conversation
+from rp_engine.core.conversation.message import ConversationMessage
+from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
-from rp_engine.core.memory.models import ConversationMessage, MemoryKey
+from rp_engine.core.memory.models import MemoryKey
 from rp_engine.core.services.chat_service import ChatService
 from rp_engine.core.services.commands import SelectCharacterCommand
 from rp_engine.core.session.session import Session
+from rp_engine.core.user.identity import UserIdentity
 from rp_engine.core.user.user import User
+from rp_engine.core.world.world import World
 
 FIXED_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
+FIXED_SESSION_ID = UUID("00000000-0000-0000-0000-000000000999")
 
 
 class FakeIdentityResolver:
@@ -37,24 +44,40 @@ class FakeIdentityResolver:
 class FakeCharacterService:
     async def ensure_active_session(self, *, user_id: UUID) -> Session:
         del user_id
-        return Session.create(user_id=FIXED_USER_ID, character_id="default", world_id="default")
+        return Session(
+            id=FIXED_SESSION_ID,
+            user_id=FIXED_USER_ID,
+            character_id="default",
+            world_id="default",
+            created_at=datetime.now(UTC),
+        )
 
     async def select_character(self, *, user_id: UUID, command: SelectCharacterCommand) -> Session:
         del user_id
-        return Session.create(
+        return Session(
+            id=FIXED_SESSION_ID,
             user_id=FIXED_USER_ID,
             character_id=command.character_name.lower(),
             world_id="default",
+            created_at=datetime.now(UTC),
         )
 
 
 class FakeLLMProvider:
     def __init__(self) -> None:
-        self.prompts: list[PromptPayload] = []
+        self.conversations: list[Conversation] = []
 
-    async def generate_response(self, prompt: PromptPayload) -> str:
-        self.prompts.append(prompt)
-        return f"echo:{prompt.user_message}"
+    async def generate_response(self, conversation: Conversation) -> str:
+        self.conversations.append(conversation)
+        last_user = next(
+            (
+                message.content
+                for message in reversed(conversation.messages)
+                if message.role == ConversationRole.USER
+            ),
+            "",
+        )
+        return f"echo:{last_user}"
 
 
 class InMemoryConversationStore:
@@ -69,6 +92,107 @@ class InMemoryConversationStore:
 
     async def clear(self, memory_key: MemoryKey) -> None:
         self._messages.pop(memory_key.value, None)
+
+
+class FakeSessionStore:
+    async def get_by_id(self, session_id: UUID) -> Session | None:
+        if session_id != FIXED_SESSION_ID:
+            return None
+        return Session(
+            id=FIXED_SESSION_ID,
+            user_id=FIXED_USER_ID,
+            character_id="default",
+            world_id="default",
+            created_at=datetime.now(UTC),
+        )
+
+    async def find_by_relationship(
+        self,
+        *,
+        user_id: UUID,
+        character_id: str,
+        world_id: str,
+    ) -> Session | None:
+        del user_id
+        del character_id
+        del world_id
+        return None
+
+    async def save(self, session: Session) -> Session:
+        return session
+
+    async def set_active_for_user(self, *, user_id: UUID, session_id: UUID) -> None:
+        del user_id
+        del session_id
+
+    async def get_active_for_user(self, *, user_id: UUID) -> Session | None:
+        del user_id
+        return None
+
+
+class FakeUserStore:
+    async def get_user_by_identity(self, *, provider: str, external_id: str) -> User | None:
+        del provider
+        del external_id
+        return None
+
+    async def create_user_with_identity(
+        self,
+        *,
+        display_name: str,
+        identity: UserIdentity,
+    ) -> User:
+        del identity
+        return User(id=FIXED_USER_ID, display_name=display_name)
+
+    async def get_by_id(self, user_id: UUID) -> User | None:
+        if user_id != FIXED_USER_ID:
+            return None
+        return User(id=FIXED_USER_ID, display_name="Pablo")
+
+
+class FakeCharacterStore:
+    async def get_by_id(self, character_id: str) -> Character | None:
+        if character_id != "default":
+            return None
+        return Character(
+            id="default",
+            name="Belzebuth",
+            description="{{char}} is a dragon companion of {{user}}.",
+            personality="Protective and witty.",
+            greeting="Welcome back, {{user}}.",
+        )
+
+    async def find_by_name(self, name: str) -> Character | None:
+        del name
+        return None
+
+    async def create_minimal(self, *, character_id: str, name: str) -> Character:
+        return Character(
+            id=character_id,
+            name=name,
+            description=f"Character profile for {name}.",
+            personality="Open-ended roleplay persona.",
+        )
+
+
+class FakeWorldStore:
+    async def get_by_id(self, world_id: str) -> World | None:
+        if world_id != "default":
+            return None
+        return World(
+            id="default",
+            name="Main World",
+            description="{{user}} explores a realm with {{char}}.",
+            rules=("Stay in character.",),
+        )
+
+    async def create_default(self, *, world_id: str) -> World:
+        return World(
+            id=world_id,
+            name="Default World",
+            description="A flexible world with minimal predefined constraints.",
+        )
 
 
 @dataclass
@@ -105,11 +229,15 @@ class FakeUpdate:
 @pytest.mark.asyncio
 async def test_application_smoke_flow_without_external_services() -> None:
     provider = FakeLLMProvider()
-    orchestrator = RPOrchestrator(llm_provider=provider, system_prompt="smoke-system")
+    orchestrator = RPOrchestrator(llm_provider=provider)
     chat_service = ChatService(
         orchestrator=orchestrator,
         conversation_store=InMemoryConversationStore(),
         memory_strategy=DumpEverythingStrategy(),
+        user_identity_store=FakeUserStore(),
+        session_store=FakeSessionStore(),
+        character_store=FakeCharacterStore(),
+        world_store=FakeWorldStore(),
     )
     adapter = TelegramAdapter(
         chat_service=chat_service,
@@ -129,21 +257,24 @@ async def test_application_smoke_flow_without_external_services() -> None:
 
     await adapter.handle_message(cast(Update, update), cast(Any, None))
 
-    assert provider.prompts == [
-        PromptPayload(system_prompt="smoke-system", user_message="hello smoke test")
-    ]
+    assert provider.conversations
+    assert provider.conversations[0].messages[-1].content == "hello smoke test"
     assert message.responses == ["echo:hello smoke test"]
 
 
 @pytest.mark.asyncio
-async def test_continue_command_is_not_sent_or_saved_as_literal_command() -> None:
+async def test_continue_command_is_not_saved_as_literal_command() -> None:
     provider = FakeLLMProvider()
     store = InMemoryConversationStore()
-    orchestrator = RPOrchestrator(llm_provider=provider, system_prompt="smoke-system")
+    orchestrator = RPOrchestrator(llm_provider=provider)
     chat_service = ChatService(
         orchestrator=orchestrator,
         conversation_store=store,
         memory_strategy=DumpEverythingStrategy(),
+        user_identity_store=FakeUserStore(),
+        session_store=FakeSessionStore(),
+        character_store=FakeCharacterStore(),
+        world_store=FakeWorldStore(),
     )
     adapter = TelegramAdapter(
         chat_service=chat_service,
@@ -162,12 +293,12 @@ async def test_continue_command_is_not_sent_or_saved_as_literal_command() -> Non
 
     await adapter.handle_message(cast(Update, update), cast(Any, None))
 
-    assert provider.prompts
-    assert "/continue" not in provider.prompts[0].user_message
+    assert provider.conversations
+    assert "/continue" not in provider.conversations[0].messages[-1].content
 
     keys = list(store._messages.keys())
     assert keys
     saved_messages = await store.load_messages(MemoryKey(keys[0]))
     assert saved_messages
-    assert all(message.role == "assistant" for message in saved_messages)
+    assert all(message.role == ConversationRole.CHARACTER for message in saved_messages)
     assert all("/continue" not in message.content for message in saved_messages)

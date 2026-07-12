@@ -27,6 +27,9 @@ class JsonUserIdentityStore:
 
         return await self._load_user_by_id(user_id)
 
+    async def get_by_id(self, user_id: UUID) -> User | None:
+        return await self._load_user_by_id(str(user_id))
+
     async def create_user_with_identity(
         self,
         *,

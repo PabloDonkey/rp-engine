@@ -3,12 +3,14 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-from rp_engine.core.memory.models import ConversationMessage, MemoryKey
+from rp_engine.core.conversation.builder import ConversationBuilder
+from rp_engine.core.conversation.message import ConversationMessage
+from rp_engine.core.memory.models import MemoryKey
 from rp_engine.core.ports.conversation_store import ConversationStore
 
 
 class JsonConversationStore(ConversationStore):
-    def __init__(self, base_path: Path | str = "data/memory") -> None:
+    def __init__(self, base_path: Path | str = "data/sessions") -> None:
         self._base_path = Path(base_path)
         self._lock = asyncio.Lock()
 
@@ -23,25 +25,31 @@ class JsonConversationStore(ConversationStore):
         if not file_path.exists():
             return []
 
-        payload = await asyncio.to_thread(self._read_payload, file_path)
-        raw_messages = cast(list[dict[str, Any]], payload.get("messages", []))
+        raw_messages = await asyncio.to_thread(self._read_jsonl_messages, file_path)
         messages: list[ConversationMessage] = []
         for raw in raw_messages:
             role = raw.get("role")
             content = raw.get("content")
-            if role in {"user", "assistant"} and isinstance(content, str):
-                user_id = raw.get("user_id")
-                username = raw.get("username")
-                display_name = raw.get("display_name")
-                messages.append(
-                    ConversationMessage(
-                        role=role,
-                        content=content,
-                        user_id=user_id if isinstance(user_id, str) else None,
-                        username=username if isinstance(username, str) else None,
-                        display_name=display_name if isinstance(display_name, str) else None,
-                    )
-                )
+            metadata = raw.get("metadata", {})
+            if not isinstance(content, str):
+                continue
+            if not isinstance(role, str):
+                continue
+            if not isinstance(metadata, dict):
+                metadata = {}
+
+            normalized_metadata = {
+                key: value
+                for key, value in cast(dict[str, Any], metadata).items()
+                if isinstance(key, str) and isinstance(value, str)
+            }
+            converted = ConversationBuilder.message_from_storage(
+                role=role,
+                content=content,
+                metadata=normalized_metadata,
+            )
+            if converted is not None:
+                messages.append(converted)
         return messages
 
     async def clear(self, memory_key: MemoryKey) -> None:
@@ -58,40 +66,43 @@ class JsonConversationStore(ConversationStore):
         file_path = self._file_path(memory_key)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         payload: dict[str, object] = {
-            "messages": [
-                self._serialize_message(message)
-                for message in messages
-            ]
+            "messages": [self._serialize_message(message) for message in messages]
         }
-        await asyncio.to_thread(self._write_payload, file_path, payload)
+        await asyncio.to_thread(self._write_jsonl_payload, file_path, payload)
 
     @staticmethod
-    def _serialize_message(message: ConversationMessage) -> dict[str, str]:
-        payload: dict[str, str] = {
-            "role": message.role,
+    def _serialize_message(message: ConversationMessage) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "role": message.role.value,
             "content": message.content,
+            "metadata": message.metadata,
         }
-        if message.user_id is not None:
-            payload["user_id"] = message.user_id
-        if message.username is not None:
-            payload["username"] = message.username
-        if message.display_name is not None:
-            payload["display_name"] = message.display_name
         return payload
 
     def _file_path(self, memory_key: MemoryKey) -> Path:
-        return self._base_path / f"{memory_key.value}.json"
+        if memory_key.value.startswith("session_"):
+            session_id = memory_key.value.removeprefix("session_")
+            return self._base_path / session_id / "history.jsonl"
+        return self._base_path / memory_key.value / "history.jsonl"
 
     @staticmethod
-    def _read_payload(file_path: Path) -> dict[str, object]:
+    def _read_jsonl_messages(file_path: Path) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
         with file_path.open("r", encoding="utf-8") as file:
-            loaded = json.load(file)
-
-        if isinstance(loaded, dict):
-            return loaded
-        return {"messages": []}
+            for line in file:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                loaded = json.loads(stripped)
+                if isinstance(loaded, dict):
+                    records.append(loaded)
+        return records
 
     @staticmethod
-    def _write_payload(file_path: Path, payload: dict[str, object]) -> None:
+    def _write_jsonl_payload(file_path: Path, payload: dict[str, object]) -> None:
+        raw_messages = payload.get("messages", [])
+        messages = cast(list[dict[str, object]], raw_messages)
         with file_path.open("w", encoding="utf-8") as file:
-            json.dump(payload, file, ensure_ascii=True, indent=2)
+            for message in messages:
+                file.write(json.dumps(message, ensure_ascii=True))
+                file.write("\n")

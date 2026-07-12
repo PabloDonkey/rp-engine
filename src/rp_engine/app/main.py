@@ -81,6 +81,10 @@ def build_container(settings: Settings) -> AppContainer:
         orchestrator=orchestrator,
         conversation_store=conversation_store,
         memory_strategy=memory_strategy,
+        user_identity_store=user_identity_store,
+        session_store=session_store,
+        character_store=character_store,
+        world_store=world_store,
     )
 
     telegram_runtime: TelegramRuntime | None = None

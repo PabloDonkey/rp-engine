@@ -1,4 +1,5 @@
 import asyncio
+from uuid import UUID
 
 from rp_engine.core.services.identity_resolver import IdentityResolver
 from rp_engine.core.user.identity import UserIdentity
@@ -13,6 +14,10 @@ class FakeIdentityStore:
     async def get_user_by_identity(self, *, provider: str, external_id: str) -> User | None:
         del provider
         del external_id
+        return self._existing
+
+    async def get_by_id(self, user_id: UUID) -> User | None:
+        del user_id
         return self._existing
 
     async def create_user_with_identity(

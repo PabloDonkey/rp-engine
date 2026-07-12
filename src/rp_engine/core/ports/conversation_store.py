@@ -1,6 +1,7 @@
 from typing import Protocol
 
-from rp_engine.core.memory.models import ConversationMessage, MemoryKey
+from rp_engine.core.conversation.message import ConversationMessage
+from rp_engine.core.memory.models import MemoryKey
 
 
 class ConversationStore(Protocol):

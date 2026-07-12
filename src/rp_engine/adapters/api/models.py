@@ -6,7 +6,7 @@ from rp_engine.core.memory.models import ConversationIdentity
 
 
 class IdentityPayload(BaseModel):
-    owner_kind: Literal["user", "group"]
+    owner_kind: Literal["session"]
     owner_id: str = Field(min_length=1)
 
     @field_validator("owner_id")
@@ -18,9 +18,7 @@ class IdentityPayload(BaseModel):
         return cleaned
 
     def to_identity(self) -> ConversationIdentity:
-        if self.owner_kind == "group":
-            return ConversationIdentity.for_group(self.owner_id)
-        return ConversationIdentity.for_private(self.owner_id)
+        return ConversationIdentity.for_session(self.owner_id)
 
 
 class ChatRequest(IdentityPayload):

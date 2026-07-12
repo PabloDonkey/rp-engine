@@ -1,7 +1,7 @@
 from typing import Protocol
 
-from rp_engine.core.engine.models import PromptPayload
+from rp_engine.core.conversation.conversation import Conversation
 
 
 class LLMProvider(Protocol):
-    async def generate_response(self, prompt: PromptPayload) -> str: ...
+    async def generate_response(self, conversation: Conversation) -> str: ...
