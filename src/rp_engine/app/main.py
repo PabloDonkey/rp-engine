@@ -16,9 +16,10 @@ from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.ports import LLMProvider
 from rp_engine.core.services.chat_service import ChatService
+from rp_engine.core.services.identity_resolver import IdentityResolver
 from rp_engine.infrastructure.config.settings import Settings, get_settings
 from rp_engine.infrastructure.llm.lmstudio_provider import LMStudioProvider
-from rp_engine.infrastructure.storage import JsonConversationStore
+from rp_engine.infrastructure.storage import JsonConversationStore, JsonUserIdentityStore
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class AppContainer:
     llm_provider: LLMProvider
     orchestrator: RPOrchestrator
     chat_service: ChatService
+    identity_resolver: IdentityResolver
     telegram_runtime: TelegramRuntime | None
     runtime_state: RuntimeState
 
@@ -53,6 +55,8 @@ def build_container(settings: Settings) -> AppContainer:
         temperature=settings.lmstudio_temperature,
     )
     conversation_store = JsonConversationStore()
+    user_identity_store = JsonUserIdentityStore()
+    identity_resolver = IdentityResolver(store=user_identity_store)
     memory_strategy = DumpEverythingStrategy()
     logger.info("LM Studio provider initialized", extra={"api_host": settings.lmstudio_api_host})
     orchestrator = RPOrchestrator(llm_provider=llm_provider)
@@ -70,6 +74,7 @@ def build_container(settings: Settings) -> AppContainer:
 
         telegram_adapter = TelegramAdapter(
             chat_service=chat_service,
+            identity_resolver=identity_resolver,
             authorization=TelegramAuthorization.from_directory(
                 settings.telegram_authorization_dir
             ),
@@ -98,6 +103,7 @@ def build_container(settings: Settings) -> AppContainer:
         llm_provider=llm_provider,
         orchestrator=orchestrator,
         chat_service=chat_service,
+        identity_resolver=identity_resolver,
         telegram_runtime=telegram_runtime,
         runtime_state=RuntimeState(),
     )

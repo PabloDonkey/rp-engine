@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, cast
+from uuid import UUID
 
 import pytest
 from telegram import Update
@@ -11,6 +12,24 @@ from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.memory.models import ConversationMessage, MemoryKey
 from rp_engine.core.services.chat_service import ChatService
+from rp_engine.core.user.user import User
+
+FIXED_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
+
+
+class FakeIdentityResolver:
+    async def resolve_identity(
+        self,
+        *,
+        provider: str,
+        external_id: str,
+        display_name: str,
+        metadata: dict[str, str] | None = None,
+    ) -> User:
+        del provider
+        del external_id
+        del metadata
+        return User(id=FIXED_USER_ID, display_name=display_name)
 
 
 class FakeLLMProvider:
@@ -39,6 +58,10 @@ class InMemoryConversationStore:
 @dataclass
 class FakeUser:
     id: int
+    username: str | None = None
+    full_name: str = "Test User"
+    first_name: str | None = "Test"
+    last_name: str | None = "User"
 
 
 @dataclass
@@ -74,6 +97,7 @@ async def test_application_smoke_flow_without_external_services() -> None:
     )
     adapter = TelegramAdapter(
         chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -106,6 +130,7 @@ async def test_continue_command_is_not_sent_or_saved_as_literal_command() -> Non
     )
     adapter = TelegramAdapter(
         chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -122,7 +147,7 @@ async def test_continue_command_is_not_sent_or_saved_as_literal_command() -> Non
     assert provider.prompts
     assert "/continue" not in provider.prompts[0].user_message
 
-    saved_messages = await store.load_messages(MemoryKey("user_7"))
+    saved_messages = await store.load_messages(MemoryKey(f"user_{FIXED_USER_ID}"))
     assert saved_messages
     assert all(message.role == "assistant" for message in saved_messages)
     assert all("/continue" not in message.content for message in saved_messages)

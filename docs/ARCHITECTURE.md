@@ -89,11 +89,15 @@ For Telegram, authorization and permissions are transport concerns handled in th
 * In authorized groups, all members can send normal messages.
 * Destructive/story-control commands (`/clear`, `/continue`) are restricted to Telegram chat administrators and creators.
 * Telegram message-size limits are handled by adapter-level message splitting during delivery.
+* Telegram external identities are resolved into internal engine users before calling use cases.
 
 Adapters must not implement prompt construction, memory strategy logic, or direct LLM interaction.
 
 The RP Engine core always returns a complete response string. Adapters are responsible for platform
 delivery constraints such as maximum message length.
+
+The RP Engine core uses internal collision-resistant user identifiers. External platform identifiers
+are adapter metadata and are never used as core primary user IDs.
 
 ### Transport Commands
 

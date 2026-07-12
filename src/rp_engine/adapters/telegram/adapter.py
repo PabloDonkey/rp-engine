@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 from telegram import Update
 from telegram.ext import Application as TelegramApplication
@@ -12,19 +12,33 @@ from rp_engine.adapters.telegram.models import TelegramCommand
 from rp_engine.adapters.telegram.splitter import split_message
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.services.chat_service import ChatService
+from rp_engine.core.user.user import User
 
 logger = logging.getLogger(__name__)
+
+
+class IdentityResolverPort(Protocol):
+    async def resolve_identity(
+        self,
+        *,
+        provider: str,
+        external_id: str,
+        display_name: str,
+        metadata: dict[str, str] | None = None,
+    ) -> User: ...
 
 
 class TelegramAdapter:
     def __init__(
         self,
         chat_service: ChatService,
+        identity_resolver: IdentityResolverPort,
         authorization: TelegramAuthorization,
         unauthorized_message: str,
         message_max_length: int,
     ) -> None:
         self._chat_service = chat_service
+        self._identity_resolver = identity_resolver
         self._authorization = authorization
         self._unauthorized_message = unauthorized_message
         self._message_max_length = message_max_length
@@ -38,7 +52,6 @@ class TelegramAdapter:
         user_id = str(user.id) if user is not None else "anonymous"
         chat = update.effective_chat
         chat_type = chat.type if chat is not None else None
-        conversation_identity = self._resolve_conversation_identity(update, user_id)
 
         if not self._is_authorized(chat_type=chat_type, user_id=user_id, chat=chat):
             logger.info(
@@ -47,6 +60,23 @@ class TelegramAdapter:
             )
             await self._reply_with_split(message=message, text=self._unauthorized_message)
             return
+
+        resolved_user = await self._identity_resolver.resolve_identity(
+            provider="telegram",
+            external_id=user_id,
+            display_name=user.full_name if user is not None else "Anonymous",
+            metadata={
+                "username": user.username or "",
+                "first_name": user.first_name or "",
+                "last_name": user.last_name or "",
+            }
+            if user is not None
+            else {},
+        )
+        conversation_identity = self._resolve_conversation_identity(
+            update,
+            user_id=str(resolved_user.id),
+        )
 
         parsed_message = parse_transport_message(message.text)
         if not should_process_message(chat_type, parsed_message):
@@ -58,7 +88,7 @@ class TelegramAdapter:
         )
 
         is_group_chat = chat_type in {"group", "supergroup"}
-        group_user_id = user_id if is_group_chat else None
+        group_user_id = str(resolved_user.id) if is_group_chat else None
         group_username = user.username if user is not None and is_group_chat else None
         group_display_name = user.full_name if user is not None and is_group_chat else None
 

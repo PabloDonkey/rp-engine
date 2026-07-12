@@ -51,12 +51,17 @@ class LMStudioProvider(LLMProvider):
         chat = lms.Chat(prompt.system_prompt)
         chat.add_user_message(prompt.user_message)
         config = self._get_config()
-        logger.info(f"LmStudio.generate_response \r\nmessage: {prompt.user_message} \r\nconfig: {config}")
+        logger.info(
+            "LmStudio.generate_response",
+            extra={"config": str(config)},
+        )
         result = model.respond(
             chat,
             config=config,
         )
-        logger.info(f"Response statistics: {result.stats}")
+        stats = getattr(result, "stats", None)
+        if stats is not None:
+            logger.info("Response statistics", extra={"stats": str(stats)})
         return str(result)
 
     def _get_config(self) -> lms.LlmPredictionConfig:

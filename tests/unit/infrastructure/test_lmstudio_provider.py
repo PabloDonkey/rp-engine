@@ -132,4 +132,7 @@ async def test_lmstudio_provider_passes_prediction_config(
     result = await provider.generate_response(PromptPayload(system_prompt="sys", user_message="hi"))
 
     assert result == "ok"
-    assert model_instances[0].last_config == {"maxTokens": 600, "temperature": 0.7}
+    last_config = model_instances[0].last_config
+    assert last_config is not None
+    assert last_config.max_tokens == 600
+    assert last_config.temperature == 0.7
