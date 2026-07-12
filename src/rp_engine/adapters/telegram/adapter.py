@@ -11,6 +11,7 @@ from rp_engine.adapters.telegram.feedback import TelegramProcessingFeedbackFacto
 from rp_engine.adapters.telegram.invocation_policy import should_process_message
 from rp_engine.adapters.telegram.models import TelegramCommand
 from rp_engine.adapters.telegram.splitter import split_message
+from rp_engine.core.group.group import Group
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.services.chat_service import ChatService
 from rp_engine.core.services.commands import SelectCharacterCommand
@@ -32,14 +33,34 @@ class IdentityResolverPort(Protocol):
 
 
 class CharacterServicePort(Protocol):
-    async def select_character(
+    async def select_character_for_user(
         self,
         *,
         user_id: Any,
         command: SelectCharacterCommand,
     ) -> Session: ...
 
-    async def ensure_active_session(self, *, user_id: Any) -> Session: ...
+    async def select_character_for_group(
+        self,
+        *,
+        group_id: Any,
+        command: SelectCharacterCommand,
+    ) -> Session: ...
+
+    async def ensure_active_session_for_user(self, *, user_id: Any) -> Session: ...
+
+    async def ensure_active_session_for_group(self, *, group_id: Any) -> Session: ...
+
+
+class GroupIdentityResolverPort(Protocol):
+    async def resolve_identity(
+        self,
+        *,
+        provider: str,
+        external_id: str,
+        display_name: str,
+        metadata: dict[str, str] | None = None,
+    ) -> Group: ...
 
 
 class TelegramAdapter:
@@ -47,6 +68,7 @@ class TelegramAdapter:
         self,
         chat_service: ChatService,
         identity_resolver: IdentityResolverPort,
+        group_identity_resolver: GroupIdentityResolverPort,
         character_service: CharacterServicePort,
         authorization: TelegramAuthorization,
         unauthorized_message: str,
@@ -55,6 +77,7 @@ class TelegramAdapter:
     ) -> None:
         self._chat_service = chat_service
         self._identity_resolver = identity_resolver
+        self._group_identity_resolver = group_identity_resolver
         self._character_service = character_service
         self._authorization = authorization
         self._unauthorized_message = unauthorized_message
@@ -98,6 +121,17 @@ class TelegramAdapter:
         if not should_process_message(chat_type, parsed_message):
             return
 
+        is_group_chat = chat_type in {"group", "supergroup"}
+        resolved_group: Group | None = None
+        if is_group_chat:
+            group_external_id = str(chat.id) if chat is not None else ""
+            resolved_group = await self._group_identity_resolver.resolve_identity(
+                provider="telegram",
+                external_id=group_external_id,
+                display_name=self._resolve_group_display_name(chat=chat),
+                metadata={"chat_type": chat_type or "unknown"},
+            )
+
         if parsed_message.command == TelegramCommand.CHARACTER:
             character_name = parsed_message.argument
             if character_name is None:
@@ -108,10 +142,16 @@ class TelegramAdapter:
                 return
 
             try:
-                selected_session = await self._character_service.select_character(
-                    user_id=resolved_user.id,
-                    command=SelectCharacterCommand(character_name=character_name),
-                )
+                if resolved_group is None:
+                    selected_session = await self._character_service.select_character_for_user(
+                        user_id=resolved_user.id,
+                        command=SelectCharacterCommand(character_name=character_name),
+                    )
+                else:
+                    selected_session = await self._character_service.select_character_for_group(
+                        group_id=resolved_group.id,
+                        command=SelectCharacterCommand(character_name=character_name),
+                    )
             except ValueError as exc:
                 await self._reply_with_split(message=message, text=str(exc))
                 return
@@ -125,9 +165,14 @@ class TelegramAdapter:
             )
             return
 
-        active_session = await self._character_service.ensure_active_session(
-            user_id=resolved_user.id
-        )
+        if resolved_group is None:
+            active_session = await self._character_service.ensure_active_session_for_user(
+                user_id=resolved_user.id
+            )
+        else:
+            active_session = await self._character_service.ensure_active_session_for_group(
+                group_id=resolved_group.id
+            )
         conversation_identity = ConversationIdentity.for_session(str(active_session.id))
 
         logger.info(
@@ -135,7 +180,6 @@ class TelegramAdapter:
             extra={"memory_key": conversation_identity.to_memory_key().value},
         )
 
-        is_group_chat = chat_type in {"group", "supergroup"}
         group_user_id = str(resolved_user.id) if is_group_chat else None
         group_username = user.username if user is not None and is_group_chat else None
         group_display_name = user.full_name if user is not None and is_group_chat else None
@@ -253,6 +297,17 @@ class TelegramAdapter:
 
         for chunk in chunks:
             await message.reply_text(chunk)
+
+    @staticmethod
+    def _resolve_group_display_name(*, chat: Any) -> str:
+        if chat is not None:
+            title = getattr(chat, "title", None)
+            if isinstance(title, str) and title.strip():
+                return title.strip()
+            chat_id = getattr(chat, "id", None)
+            if chat_id is not None:
+                return f"Group {chat_id}"
+        return "Group"
 
 
 class TelegramRuntime:

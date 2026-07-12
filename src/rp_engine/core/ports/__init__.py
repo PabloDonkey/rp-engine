@@ -1,5 +1,6 @@
 from rp_engine.core.ports.character_store import CharacterStore
 from rp_engine.core.ports.conversation_store import ConversationStore
+from rp_engine.core.ports.group_identity_store import GroupIdentityStore
 from rp_engine.core.ports.identity_resolver import IdentityResolverPort
 from rp_engine.core.ports.llm_provider import LLMProvider
 from rp_engine.core.ports.memory_strategy import MemoryStrategy
@@ -16,6 +17,7 @@ from rp_engine.core.ports.world_store import WorldStore
 __all__ = [
 	"CharacterStore",
 	"ConversationStore",
+	"GroupIdentityStore",
 	"IdentityResolverPort",
 	"LLMProvider",
 	"MemoryStrategy",

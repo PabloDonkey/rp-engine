@@ -553,7 +553,7 @@ If replaced, create a new ADR that supersedes this decision rather than modifyin
 
 ---
 
-# ADR-011 — Application Composition Root
+# ADR-012 — Application Composition Root
 
 **Status:** Accepted
 
@@ -670,7 +670,7 @@ This aligns with the project's dependency direction and keeps adapters thin.
 
 ---
 
-# ADR-012 — Separate Conversation Storage and Memory Strategy
+# ADR-013 — Separate Conversation Storage and Memory Strategy
 
 **Status:** Accepted
 
@@ -793,7 +793,7 @@ This avoids premature coupling and keeps architectural options open for later mi
 
 ---
 
-# ADR-013 — Transport Commands Belong to Adapters
+# ADR-014 — Transport Commands Belong to Adapters
 
 **Status:** Accepted
 
@@ -884,9 +884,9 @@ By localizing transport syntax in adapters and exposing explicit use-case method
 
 ---
 
-# ADR-014 — Group Authorization Uses Conversation Identity
+# ADR-015 — Group Authorization Uses Conversation Identity
 
-**Status:** Accepted
+**Status:** Superseded
 
 **Date:** 2026-07-10
 
@@ -913,10 +913,7 @@ Rules:
 * group chat authorization checks `group_id`
 * users in authorized groups inherit access from the group authorization state
 
-Conversation identity resolution remains adapter-owned and maps:
-
-* private chat → user memory identity
-* group chat → group memory identity
+Conversation identity resolution remains adapter-owned.
 
 ## Rationale
 
@@ -930,7 +927,7 @@ Authorizing by group identity aligns access control with the same identity used 
 
 * Consistent policy for all members in an authorized group.
 * Cleaner adapter logic for group conversations.
-* Clear mapping between authorization boundary and conversation storage identity.
+* Clear mapping between authorization boundary and adapter-level group identity.
 
 ### Negative
 
@@ -939,7 +936,7 @@ Authorizing by group identity aligns access control with the same identity used 
 
 ---
 
-# ADR-015 — Store User Metadata Separately From Message Content
+# ADR-016 — Store User Metadata Separately From Message Content
 
 **Status:** Accepted
 
@@ -985,7 +982,7 @@ Separating identity data from content preserves clean memory records and allows 
 
 ---
 
-# ADR-016 — Transport Adapters Handle Message Size Limits
+# ADR-017 — Transport Adapters Handle Message Size Limits
 
 **Status:** Accepted
 
@@ -1032,7 +1029,7 @@ apply its own strategy without changing core components.
 
 ---
 
-# ADR-017 — Internal User Identity
+# ADR-018 — Internal User Identity
 
 **Status:** Accepted
 
@@ -1116,7 +1113,7 @@ If a decision changes in the future, create a new ADR that supersedes the previo
 
 ---
 
-# ADR-018 — Provider Owns Conversation Serialization
+# ADR-019 — Provider Owns Conversation Serialization
 
 **Status:** Accepted
 
@@ -1167,3 +1164,59 @@ Provider adapters must convert provider exceptions into provider-independent err
 
 * Provider adapters require explicit mapper and error-conversion code.
 * New providers must implement serialization and normalization logic.
+
+
+---
+
+# ADR-020 — Conversation Ownership and Identity Scope
+
+**Status:** Accepted
+
+**Date:** 2026-07-12
+
+## Context
+
+Previous iterations mixed transport identity (Telegram user/chat IDs) with roleplay ownership and
+conversation state boundaries.
+
+That created model drift between documentation and runtime behavior and made adapter expansion riskier.
+
+## Decision
+
+Adopt session ownership as the canonical identity scope:
+
+* A `Conversation` belongs to a `Session`.
+* A `Session` is owned by one domain owner context:
+        * `user` owner
+        * `group` owner
+* Adapters map external identities into domain identities before session lookup/creation.
+
+Core/domain/application layers reason about `User`, `Group`, `Session`, and `Conversation`.
+
+Core/domain/application layers do not reason about Telegram-specific identifiers.
+
+## Rationale
+
+* Keeps ownership and memory boundaries inside the domain model.
+* Prevents adapter/platform identifiers from leaking into core business rules.
+* Supports future adapters (Discord, web, CLI) without domain changes.
+* Enables separate roleplay contexts for the same owner by session.
+
+## Consequences
+
+### Positive
+
+* Private flows resolve to user-owned sessions.
+* Group flows resolve to group-owned sessions.
+* Session memory and conversation history are consistently session-scoped.
+* Group and user isolation rules are explicit and testable.
+
+### Negative
+
+* Additional identity mapping and persistence components are required.
+* Existing session-store indices and tests must support owner-scoped keys.
+
+## Supersedes
+
+* ADR-015 (Group Authorization Uses Conversation Identity) is superseded where it tied
+        conversation storage identity directly to transport private/group identity.

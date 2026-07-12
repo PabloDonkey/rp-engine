@@ -13,6 +13,7 @@ from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.engine.orchestrator import RPOrchestrator
+from rp_engine.core.group.group import Group
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
@@ -25,6 +26,7 @@ from rp_engine.core.user.user import User
 from rp_engine.core.world.world import World
 
 FIXED_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
+FIXED_GROUP_ID = UUID("00000000-0000-0000-0000-000000000333")
 FIXED_SESSION_ID = UUID("00000000-0000-0000-0000-000000000999")
 
 
@@ -44,25 +46,74 @@ class FakeIdentityResolver:
 
 
 class FakeCharacterService:
-    async def ensure_active_session(self, *, user_id: UUID) -> Session:
+    async def ensure_active_session_for_user(self, *, user_id: UUID) -> Session:
         del user_id
         return Session(
             id=FIXED_SESSION_ID,
-            user_id=FIXED_USER_ID,
+            owner_kind="user",
+            owner_id=FIXED_USER_ID,
             character_id="default",
             world_id="default",
             created_at=datetime.now(UTC),
         )
 
-    async def select_character(self, *, user_id: UUID, command: SelectCharacterCommand) -> Session:
+    async def ensure_active_session_for_group(self, *, group_id: UUID) -> Session:
+        del group_id
+        return Session(
+            id=FIXED_SESSION_ID,
+            owner_kind="group",
+            owner_id=FIXED_GROUP_ID,
+            character_id="default",
+            world_id="default",
+            created_at=datetime.now(UTC),
+        )
+
+    async def select_character_for_user(
+        self,
+        *,
+        user_id: UUID,
+        command: SelectCharacterCommand,
+    ) -> Session:
         del user_id
         return Session(
             id=FIXED_SESSION_ID,
-            user_id=FIXED_USER_ID,
+            owner_kind="user",
+            owner_id=FIXED_USER_ID,
             character_id=command.character_name.lower(),
             world_id="default",
             created_at=datetime.now(UTC),
         )
+
+    async def select_character_for_group(
+        self,
+        *,
+        group_id: UUID,
+        command: SelectCharacterCommand,
+    ) -> Session:
+        del group_id
+        return Session(
+            id=FIXED_SESSION_ID,
+            owner_kind="group",
+            owner_id=FIXED_GROUP_ID,
+            character_id=command.character_name.lower(),
+            world_id="default",
+            created_at=datetime.now(UTC),
+        )
+
+
+class FakeGroupIdentityResolver:
+    async def resolve_identity(
+        self,
+        *,
+        provider: str,
+        external_id: str,
+        display_name: str,
+        metadata: dict[str, str] | None = None,
+    ) -> Group:
+        del provider
+        del external_id
+        del metadata
+        return Group(id=FIXED_GROUP_ID, display_name=display_name)
 
 
 class FakeLLMProvider:
@@ -108,7 +159,8 @@ class FakeSessionStore:
             return None
         return Session(
             id=FIXED_SESSION_ID,
-            user_id=FIXED_USER_ID,
+            owner_kind="user",
+            owner_id=FIXED_USER_ID,
             character_id="default",
             world_id="default",
             created_at=datetime.now(UTC),
@@ -117,11 +169,13 @@ class FakeSessionStore:
     async def find_by_relationship(
         self,
         *,
-        user_id: UUID,
+        owner_kind: str,
+        owner_id: UUID,
         character_id: str,
         world_id: str,
     ) -> Session | None:
-        del user_id
+        del owner_kind
+        del owner_id
         del character_id
         del world_id
         return None
@@ -129,12 +183,20 @@ class FakeSessionStore:
     async def save(self, session: Session) -> Session:
         return session
 
-    async def set_active_for_user(self, *, user_id: UUID, session_id: UUID) -> None:
-        del user_id
+    async def set_active_for_owner(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: UUID,
+        session_id: UUID,
+    ) -> None:
+        del owner_kind
+        del owner_id
         del session_id
 
-    async def get_active_for_user(self, *, user_id: UUID) -> Session | None:
-        del user_id
+    async def get_active_for_owner(self, *, owner_kind: str, owner_id: UUID) -> Session | None:
+        del owner_kind
+        del owner_id
         return None
 
 
@@ -157,6 +219,22 @@ class FakeUserStore:
         if user_id != FIXED_USER_ID:
             return None
         return User(id=FIXED_USER_ID, display_name="Pablo")
+
+
+class FakeGroupStore:
+    async def get_group_by_identity(self, *, provider: str, external_id: str) -> Group | None:
+        del provider
+        del external_id
+        return None
+
+    async def create_group_with_identity(self, *, display_name: str, identity: Any) -> Group:
+        del identity
+        return Group(id=FIXED_GROUP_ID, display_name=display_name)
+
+    async def get_by_id(self, group_id: UUID) -> Group | None:
+        if group_id != FIXED_GROUP_ID:
+            return None
+        return Group(id=FIXED_GROUP_ID, display_name="Test Group")
 
 
 class FakeCharacterStore:
@@ -243,6 +321,7 @@ async def test_application_smoke_flow_without_external_services() -> None:
         conversation_store=InMemoryConversationStore(),
         memory_strategy=DumpEverythingStrategy(),
         user_identity_store=FakeUserStore(),
+        group_identity_store=FakeGroupStore(),
         session_store=FakeSessionStore(),
         character_store=FakeCharacterStore(),
         world_store=FakeWorldStore(),
@@ -251,6 +330,7 @@ async def test_application_smoke_flow_without_external_services() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
         character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
@@ -281,6 +361,7 @@ async def test_continue_command_is_not_saved_as_literal_command() -> None:
         conversation_store=store,
         memory_strategy=DumpEverythingStrategy(),
         user_identity_store=FakeUserStore(),
+        group_identity_store=FakeGroupStore(),
         session_store=FakeSessionStore(),
         character_store=FakeCharacterStore(),
         world_store=FakeWorldStore(),
@@ -289,6 +370,7 @@ async def test_continue_command_is_not_saved_as_literal_command() -> None:
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
         character_service=FakeCharacterService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",

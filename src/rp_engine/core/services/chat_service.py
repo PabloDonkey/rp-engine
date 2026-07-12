@@ -7,12 +7,14 @@ from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.engine.models import GenerationRequest
 from rp_engine.core.engine.orchestrator import RPOrchestrator
+from rp_engine.core.group.group import Group
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.ports import (
     CharacterStore,
     ConversationStore,
     FeedbackContext,
+    GroupIdentityStore,
     MemoryStrategy,
     NoOpProcessingFeedback,
     ProcessingFeedback,
@@ -35,6 +37,7 @@ class ChatService:
         conversation_store: ConversationStore,
         memory_strategy: MemoryStrategy,
         user_identity_store: UserIdentityStore,
+        group_identity_store: GroupIdentityStore,
         session_store: SessionStore,
         character_store: CharacterStore,
         world_store: WorldStore,
@@ -44,6 +47,7 @@ class ChatService:
         self._conversation_store = conversation_store
         self._memory_strategy = memory_strategy
         self._user_identity_store = user_identity_store
+        self._group_identity_store = group_identity_store
         self._session_store = session_store
         self._character_store = character_store
         self._world_store = world_store
@@ -70,7 +74,7 @@ class ChatService:
         if not cleaned_message:
             raise ValueError("Message must not be empty.")
 
-        session, user, character, world = await self._load_conversation_context(
+        session, owner_user, character, world = await self._load_conversation_context(
             session_id=session_id
         )
         feedback = processing_feedback or NoOpProcessingFeedback()
@@ -78,7 +82,7 @@ class ChatService:
             conversation_owner_id=str(session.id),
             character_id=character.id,
             character_name=character.name,
-            user_display_name=user.display_name,
+            user_display_name=owner_user.display_name,
             world_id=world.id,
         )
         async with processing_feedback_scope(feedback, context=feedback_context):
@@ -87,7 +91,7 @@ class ChatService:
             conversation = self._conversation_builder.build(
                 ConversationBuilderInput(
                     session=session,
-                    user=user,
+                    user=owner_user,
                     character=character,
                     world=world,
                     memory_messages=context_messages,
@@ -135,7 +139,7 @@ class ChatService:
             "ChatService continue called",
             extra={"memory_key": memory_key.value, "session_id": str(session_id)},
         )
-        session, user, character, world = await self._load_conversation_context(
+        session, owner_user, character, world = await self._load_conversation_context(
             session_id=session_id
         )
         feedback = processing_feedback or NoOpProcessingFeedback()
@@ -143,7 +147,7 @@ class ChatService:
             conversation_owner_id=str(session.id),
             character_id=character.id,
             character_name=character.name,
-            user_display_name=user.display_name,
+            user_display_name=owner_user.display_name,
             world_id=world.id,
         )
         async with processing_feedback_scope(feedback, context=feedback_context):
@@ -152,7 +156,7 @@ class ChatService:
             conversation = self._conversation_builder.build_continue(
                 ConversationBuilderInput(
                     session=session,
-                    user=user,
+                    user=owner_user,
                     character=character,
                     world=world,
                     memory_messages=context_messages,
@@ -199,9 +203,17 @@ class ChatService:
         if session is None:
             raise ValueError("Session not found for conversation identity.")
 
-        user = await self._user_identity_store.get_by_id(session.user_id)
-        if user is None:
-            raise ValueError("User not found for session.")
+        if session.owner_kind == "user":
+            user = await self._user_identity_store.get_by_id(session.owner_id)
+            if user is None:
+                raise ValueError("User not found for session.")
+        elif session.owner_kind == "group":
+            group = await self._group_identity_store.get_by_id(session.owner_id)
+            if group is None:
+                raise ValueError("Group not found for session.")
+            user = self._group_to_user(group)
+        else:
+            raise ValueError("Session has an unsupported owner kind.")
 
         character = await self._character_store.get_by_id(session.character_id)
         if character is None:
@@ -212,3 +224,7 @@ class ChatService:
             raise ValueError("World not found for session.")
 
         return session, user, character, world
+
+    @staticmethod
+    def _group_to_user(group: Group) -> User:
+        return User(id=group.id, display_name=group.display_name)

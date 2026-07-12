@@ -66,13 +66,15 @@ class InMemorySessionStore:
     async def find_by_relationship(
         self,
         *,
-        user_id: UUID,
+        owner_kind: str,
+        owner_id: UUID,
         character_id: str,
         world_id: str,
     ) -> Session | None:
         for session in self._items.values():
             if (
-                session.user_id == user_id
+                session.owner_kind == owner_kind
+                and session.owner_id == owner_id
                 and session.character_id == character_id
                 and session.world_id == world_id
             ):
@@ -83,11 +85,19 @@ class InMemorySessionStore:
         self._items[session.id] = session
         return session
 
-    async def set_active_for_user(self, *, user_id: UUID, session_id: UUID) -> None:
-        self._active_by_user[user_id] = session_id
+    async def set_active_for_owner(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: UUID,
+        session_id: UUID,
+    ) -> None:
+        del owner_kind
+        self._active_by_user[owner_id] = session_id
 
-    async def get_active_for_user(self, *, user_id: UUID) -> Session | None:
-        active_id = self._active_by_user.get(user_id)
+    async def get_active_for_owner(self, *, owner_kind: str, owner_id: UUID) -> Session | None:
+        del owner_kind
+        active_id = self._active_by_user.get(owner_id)
         if active_id is None:
             return None
         return self._items.get(active_id)
@@ -106,11 +116,11 @@ async def test_select_character_reuses_existing_session() -> None:
         default_world_id="default",
     )
 
-    first = await service.select_character(
+    first = await service.select_character_for_user(
         user_id=user_id,
         command=SelectCharacterCommand(character_name="Belzebuth"),
     )
-    second = await service.select_character(
+    second = await service.select_character_for_user(
         user_id=user_id,
         command=SelectCharacterCommand(character_name="belzebuth"),
     )
@@ -128,8 +138,51 @@ async def test_ensure_active_session_creates_default_context() -> None:
         default_world_id="default",
     )
 
-    session = await service.ensure_active_session(user_id=user_id)
+    session = await service.ensure_active_session_for_user(user_id=user_id)
 
-    assert session.user_id == user_id
+    assert session.owner_kind == "user"
+    assert session.owner_id == user_id
     assert session.character_id == "default"
     assert session.world_id == "default"
+
+
+@pytest.mark.asyncio
+async def test_different_users_do_not_share_sessions() -> None:
+    service = CharacterService(
+        character_store=InMemoryCharacterStore(),
+        world_store=InMemoryWorldStore(),
+        session_store=InMemorySessionStore(),
+        default_world_id="default",
+    )
+    user_a = UUID("00000000-0000-0000-0000-000000000101")
+    user_b = UUID("00000000-0000-0000-0000-000000000102")
+
+    session_a = await service.ensure_active_session_for_user(user_id=user_a)
+    session_b = await service.ensure_active_session_for_user(user_id=user_b)
+
+    assert session_a.id != session_b.id
+    assert session_a.owner_kind == "user"
+    assert session_b.owner_kind == "user"
+    assert session_a.owner_id == user_a
+    assert session_b.owner_id == user_b
+
+
+@pytest.mark.asyncio
+async def test_different_groups_do_not_share_sessions() -> None:
+    service = CharacterService(
+        character_store=InMemoryCharacterStore(),
+        world_store=InMemoryWorldStore(),
+        session_store=InMemorySessionStore(),
+        default_world_id="default",
+    )
+    group_a = UUID("00000000-0000-0000-0000-000000000201")
+    group_b = UUID("00000000-0000-0000-0000-000000000202")
+
+    session_a = await service.ensure_active_session_for_group(group_id=group_a)
+    session_b = await service.ensure_active_session_for_group(group_id=group_b)
+
+    assert session_a.id != session_b.id
+    assert session_a.owner_kind == "group"
+    assert session_b.owner_kind == "group"
+    assert session_a.owner_id == group_a
+    assert session_b.owner_id == group_b

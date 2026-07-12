@@ -14,12 +14,13 @@ def test_builder_resolves_templates_and_orders_messages() -> None:
     builder = ConversationBuilder()
     session = Session(
         id=UUID("00000000-0000-0000-0000-000000000001"),
-        user_id=UUID("00000000-0000-0000-0000-000000000002"),
+        owner_kind="user",
+        owner_id=UUID("00000000-0000-0000-0000-000000000002"),
         character_id="belzebuth",
         world_id="default",
         created_at=datetime.now(UTC),
     )
-    user = User(id=session.user_id, display_name="Pablo")
+    user = User(id=session.owner_id, display_name="Pablo")
     character = Character(
         id="belzebuth",
         name="Belzebuth",

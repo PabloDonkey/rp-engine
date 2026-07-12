@@ -9,6 +9,7 @@ from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.engine.models import GenerationRequest
+from rp_engine.core.group.group import Group
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
@@ -19,6 +20,7 @@ from rp_engine.core.world.world import World
 
 SESSION_ID = UUID("00000000-0000-0000-0000-000000000111")
 USER_ID = UUID("00000000-0000-0000-0000-000000000042")
+GROUP_ID = UUID("00000000-0000-0000-0000-000000000314")
 GENERATION_SETTINGS = GenerationSettings(temperature=0.8, max_tokens=600, top_p=0.95)
 
 
@@ -26,7 +28,8 @@ GENERATION_SETTINGS = GenerationSettings(temperature=0.8, max_tokens=600, top_p=
 def session_context() -> tuple[Session, User, Character, World]:
     session = Session(
         id=SESSION_ID,
-        user_id=USER_ID,
+        owner_kind="user",
+        owner_id=USER_ID,
         character_id="belzebuth",
         world_id="default",
         created_at=datetime.now(UTC),
@@ -71,6 +74,9 @@ def _build_service(
     user_store = AsyncMock()
     user_store.get_by_id = AsyncMock(return_value=user)
 
+    group_store = AsyncMock()
+    group_store.get_by_id = AsyncMock(return_value=None)
+
     character_store = AsyncMock()
     character_store.get_by_id = AsyncMock(return_value=character)
 
@@ -82,6 +88,7 @@ def _build_service(
         conversation_store=conversation_store,
         memory_strategy=memory_strategy,
         user_identity_store=user_store,
+        group_identity_store=group_store,
         session_store=session_store,
         character_store=character_store,
         world_store=world_store,
@@ -156,14 +163,14 @@ async def test_chat_service_rejects_empty_message(
 
 
 @pytest.mark.asyncio
-async def test_chat_service_requires_session_identity(
+async def test_chat_service_rejects_invalid_session_identity(
     session_context: tuple[Session, User, Character, World],
 ) -> None:
     service, orchestrator, _ = _build_service(session_context=session_context)
 
-    with pytest.raises(ValueError, match="session-scoped"):
+    with pytest.raises(ValueError, match="invalid session id"):
         await service.send_message(
-            conversation_identity=ConversationIdentity.for_private("user-1"),
+            conversation_identity=ConversationIdentity.for_session("not-a-uuid"),
             message="hello",
         )
 
@@ -207,6 +214,7 @@ async def test_chat_service_clear_conversation_uses_store_clear() -> None:
         conversation_store=conversation_store,
         memory_strategy=memory_strategy,
         user_identity_store=user_store,
+        group_identity_store=AsyncMock(),
         session_store=session_store,
         character_store=character_store,
         world_store=world_store,
@@ -218,6 +226,72 @@ async def test_chat_service_clear_conversation_uses_store_clear() -> None:
     )
 
     conversation_store.clear.assert_awaited_once_with(MemoryKey(f"session_{SESSION_ID}"))
+
+
+@pytest.mark.asyncio
+async def test_chat_service_uses_group_owner_as_template_user() -> None:
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="scene response"))
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(return_value=[])
+    memory_strategy = Mock()
+    memory_strategy.build_context.return_value = []
+
+    group_session = Session(
+        id=SESSION_ID,
+        owner_kind="group",
+        owner_id=GROUP_ID,
+        character_id="belzebuth",
+        world_id="default",
+        created_at=datetime.now(UTC),
+    )
+    session_store = AsyncMock()
+    session_store.get_by_id = AsyncMock(return_value=group_session)
+
+    group_store = AsyncMock()
+    group_store.get_by_id = AsyncMock(return_value=Group(id=GROUP_ID, display_name="Raid Party"))
+
+    character_store = AsyncMock()
+    character_store.get_by_id = AsyncMock(
+        return_value=Character(
+            id="belzebuth",
+            name="Belzebuth",
+            description="{{char}} guards {{user}}.",
+            personality="Protective and witty.",
+            greeting="Welcome back, {{user}}.",
+        )
+    )
+
+    world_store = AsyncMock()
+    world_store.get_by_id = AsyncMock(
+        return_value=World(
+            id="default",
+            name="Main World",
+            description="{{user}} explores a realm with {{char}}.",
+            rules=("Stay in character.",),
+        )
+    )
+
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+        user_identity_store=AsyncMock(),
+        group_identity_store=group_store,
+        session_store=session_store,
+        character_store=character_store,
+        world_store=world_store,
+        generation_settings=GENERATION_SETTINGS,
+    )
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello",
+    )
+
+    request = orchestrator.generate_reply.await_args.args[0]
+    serialized = "\n".join(message.content for message in request.conversation.messages)
+    assert "Raid Party" in serialized
 
 
 @pytest.mark.asyncio

@@ -134,8 +134,10 @@ Current use-case API:
 * `ChatService.send_message(...)`
 * `ChatService.continue_story(...)`
 * `ChatService.clear_conversation(...)`
-* `CharacterService.select_character(...)`
-* `CharacterService.ensure_active_session(...)`
+* `CharacterService.select_character_for_user(...)`
+* `CharacterService.select_character_for_group(...)`
+* `CharacterService.ensure_active_session_for_user(...)`
+* `CharacterService.ensure_active_session_for_group(...)`
 
 Adapters call these use cases directly.
 
@@ -185,8 +187,8 @@ Examples:
 
 Session is the roleplay ownership boundary:
 
-* Users own one active session at a time.
-* Sessions bind user + character + world.
+* Sessions are owned by a domain owner context (`user` or `group`).
+* Sessions bind owner + character + world.
 * Conversation memory is keyed by session identity, not external adapter IDs.
 
 The domain should contain no framework dependencies.
@@ -275,8 +277,10 @@ Rules:
 
 Telegram conversation identity resolution is also adapter-owned:
 
-* Private chat messages map to a user memory identity.
-* Group chat messages map to a group memory identity.
+* Private chat messages map Telegram user identity to internal `User` identity.
+* Group chat messages map Telegram group identity to internal `Group` identity.
+* After identity mapping, adapters resolve/create the active `Session`.
+* Core conversation memory remains session-scoped.
 
 This keeps adapter responsibilities focused on transport translation and preserves clean boundaries.
 
@@ -438,7 +442,8 @@ Telegram reply
 Invocation policy for Telegram:
 
 * Private chats: normal messages and supported commands are processed.
-* Group chats: normal messages are ignored; only supported commands are processed.
+* Group chats: normal messages and supported commands are processed.
+* In groups, destructive/story-control commands are restricted to administrators/creators.
 
 Authorization flow:
 

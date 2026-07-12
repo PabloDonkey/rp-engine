@@ -24,7 +24,7 @@ The system exposes its functionality through one or more adapters (Telegram, RES
 
 ### FR-001 — Conversations
 
-The system shall maintain independent conversations for each user.
+The system shall maintain independent conversations for each session.
 
 Each conversation shall preserve its own context and state.
 
