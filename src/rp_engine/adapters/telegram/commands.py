@@ -3,6 +3,7 @@ from rp_engine.adapters.telegram.models import ParsedTransportMessage, TelegramC
 SUPPORTED_COMMANDS: dict[str, TelegramCommand] = {
     TelegramCommand.HELP.value: TelegramCommand.HELP,
     TelegramCommand.CONTINUE.value: TelegramCommand.CONTINUE,
+    TelegramCommand.REGENERATE.value: TelegramCommand.REGENERATE,
     TelegramCommand.CLEAR.value: TelegramCommand.CLEAR,
     TelegramCommand.CHARACTER.value: TelegramCommand.CHARACTER,
 }
@@ -11,6 +12,7 @@ HELP_MESSAGE = (
     "Available commands:\n"
     "/help - Show this help message\n"
     "/continue - Continue the scene\n"
+    "/regenerate - Replace the last character reply\n"
     "/clear - Clear the current conversation\n"
     "/character <name> - Select or create your active character"
 )

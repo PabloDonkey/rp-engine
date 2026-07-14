@@ -200,6 +200,101 @@ async def test_chat_service_continue_saves_character_message(
 
 
 @pytest.mark.asyncio
+async def test_chat_service_regenerate_replaces_last_character_message(
+    session_context: tuple[Session, User, Character, World],
+) -> None:
+    service, orchestrator, conversation_store = _build_service(session_context=session_context)
+    conversation_store.load_messages = AsyncMock(
+        return_value=[
+            ConversationMessage(role=ConversationRole.USER, content="hello", metadata={}),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="old reply", metadata={}),
+        ]
+    )
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="new reply"))
+
+    response = await service.regenerate_last_response(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+
+    assert response == "new reply"
+    conversation_store.clear.assert_awaited_once_with(MemoryKey(f"session_{SESSION_ID}"))
+    conversation_store.save_message.assert_has_awaits(
+        [
+            call(
+                MemoryKey(f"session_{SESSION_ID}"),
+                ConversationMessage(role=ConversationRole.USER, content="hello", metadata={}),
+            ),
+            call(
+                MemoryKey(f"session_{SESSION_ID}"),
+                ConversationMessage(
+                    role=ConversationRole.CHARACTER,
+                    content="new reply",
+                    metadata={},
+                ),
+            ),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_service_regenerate_requires_latest_character_message(
+    session_context: tuple[Session, User, Character, World],
+) -> None:
+    service, orchestrator, conversation_store = _build_service(session_context=session_context)
+    conversation_store.load_messages = AsyncMock(
+        return_value=[ConversationMessage(role=ConversationRole.USER, content="hello", metadata={})]
+    )
+
+    with pytest.raises(ValueError, match="Last message is not a character reply"):
+        await service.regenerate_last_response(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        )
+
+    orchestrator.generate_reply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chat_service_regenerate_can_run_multiple_times(
+    session_context: tuple[Session, User, Character, World],
+) -> None:
+    service, orchestrator, conversation_store = _build_service(session_context=session_context)
+    conversation_store.load_messages = AsyncMock(
+        side_effect=[
+            [
+                ConversationMessage(role=ConversationRole.USER, content="hello", metadata={}),
+                ConversationMessage(
+                    role=ConversationRole.CHARACTER,
+                    content="old reply",
+                    metadata={},
+                ),
+            ],
+            [
+                ConversationMessage(role=ConversationRole.USER, content="hello", metadata={}),
+                ConversationMessage(
+                    role=ConversationRole.CHARACTER,
+                    content="first regen",
+                    metadata={},
+                ),
+            ],
+        ]
+    )
+    orchestrator.generate_reply = AsyncMock(
+        side_effect=[LLMResponse(content="first regen"), LLMResponse(content="second regen")]
+    )
+
+    first = await service.regenerate_last_response(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+    second = await service.regenerate_last_response(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+
+    assert first == "first regen"
+    assert second == "second regen"
+    assert orchestrator.generate_reply.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_chat_service_clear_conversation_uses_store_clear() -> None:
     orchestrator = AsyncMock()
     conversation_store = AsyncMock()

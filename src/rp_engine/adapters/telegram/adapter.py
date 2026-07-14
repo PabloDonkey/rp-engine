@@ -209,6 +209,26 @@ class TelegramAdapter:
                 await self._reply_with_split(message=message, text=response)
                 return
 
+            if parsed_message.command == TelegramCommand.REGENERATE:
+                if chat_type in {"group", "supergroup"} and not await self._is_group_admin(
+                    context=context,
+                    update=update,
+                ):
+                    await self._reply_with_split(
+                        message=message,
+                        text="Only group administrators can use this command.",
+                    )
+                    return
+                response = await self._chat_service.regenerate_last_response(
+                    conversation_identity=conversation_identity,
+                    processing_feedback=self._processing_feedback_factory.create(
+                        context=context,
+                        source_message=message,
+                    ),
+                )
+                await self._reply_with_split(message=message, text=response)
+                return
+
             if parsed_message.command == TelegramCommand.CLEAR:
                 if chat_type in {"group", "supergroup"} and not await self._is_group_admin(
                     context=context,
@@ -243,12 +263,13 @@ class TelegramAdapter:
                     source_message=message,
                 ),
             )
-        except ValueError:
+        except ValueError as exc:
             logger.warning(
                 "Telegram failure",
                 extra={"reason": "invalid_message", "user_id": user_id},
             )
-            await self._reply_with_split(message=message, text="Please send a non-empty message.")
+            error_text = str(exc).strip() or "Please send a non-empty message."
+            await self._reply_with_split(message=message, text=error_text)
             return
         except Exception:
             logger.exception(

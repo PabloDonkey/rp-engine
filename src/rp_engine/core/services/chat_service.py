@@ -244,6 +244,105 @@ class ChatService:
         )
         return character_response
 
+    async def regenerate_last_response(
+        self,
+        *,
+        conversation_identity: ConversationIdentity,
+        processing_feedback: ProcessingFeedback | None = None,
+    ) -> str:
+        session_id = self._require_session_identity(conversation_identity)
+        memory_key = conversation_identity.to_memory_key()
+        logger.info(
+            "ChatService regenerate called",
+            extra={"memory_key": memory_key.value, "session_id": str(session_id)},
+        )
+        session, owner_user, character, world = await self._load_conversation_context(
+            session_id=session_id
+        )
+        feedback = processing_feedback or NoOpProcessingFeedback()
+        feedback_context = FeedbackContext(
+            conversation_owner_id=str(session.id),
+            character_id=character.id,
+            character_name=character.name,
+            user_display_name=owner_user.display_name,
+            world_id=world.id,
+        )
+        async with processing_feedback_scope(feedback, context=feedback_context):
+            history = await self._conversation_store.load_messages(memory_key)
+            if not history:
+                raise ValueError("Conversation is empty. Nothing to regenerate.")
+            if history[-1].role != ConversationRole.CHARACTER:
+                raise ValueError(
+                    "Last message is not a character reply. Regenerate is not available yet."
+                )
+
+            trimmed_history = history[:-1]
+            if not trimmed_history:
+                raise ValueError("Conversation has no user message to regenerate from.")
+
+            latest_user_index = self._find_latest_user_index(trimmed_history)
+            if latest_user_index is None:
+                raise ValueError("Conversation has no user message to regenerate from.")
+
+            last_user = trimmed_history[latest_user_index]
+            prior_history = trimmed_history[:latest_user_index]
+            context_messages = self._memory_strategy.build_context(prior_history)
+            conversation = self._conversation_builder.build(
+                ConversationBuilderInput(
+                    session=session,
+                    user=owner_user,
+                    character=character,
+                    world=world,
+                    memory_messages=context_messages,
+                    user_message=last_user.content,
+                )
+            )
+            request = GenerationRequest(
+                memory_key=memory_key,
+                conversation=conversation,
+                settings=self._generation_settings,
+            )
+            request_id = str(uuid4())
+            turn = self._resolve_turn(trimmed_history)
+            started_at = perf_counter()
+
+            try:
+                llm_response = await self._orchestrator.generate_reply(request)
+            except Exception as exc:
+                await self._append_generation_trace(
+                    session_id=session.id,
+                    turn=turn,
+                    request_id=request_id,
+                    conversation=conversation,
+                    generation_settings=request.settings,
+                    memory_messages=context_messages,
+                    response=None,
+                    latency_ms=self._to_latency_ms(started_at),
+                    error=exc,
+                )
+                raise
+
+            await self._append_generation_trace(
+                session_id=session.id,
+                turn=turn,
+                request_id=request_id,
+                conversation=conversation,
+                generation_settings=request.settings,
+                memory_messages=context_messages,
+                response=llm_response,
+                latency_ms=self._to_latency_ms(started_at),
+            )
+            character_response = llm_response.content
+
+        await self._conversation_store.clear(memory_key)
+        for message in trimmed_history:
+            await self._conversation_store.save_message(memory_key, message)
+        await self._conversation_store.save_message(
+            memory_key,
+            ConversationMessage(role=ConversationRole.CHARACTER, content=character_response),
+        )
+        return character_response
+
     async def clear_conversation(
         self,
         *,
@@ -478,3 +577,10 @@ class ChatService:
         if not stripped:
             return 0
         return len(stripped.split())
+
+    @staticmethod
+    def _find_latest_user_index(messages: list[ConversationMessage]) -> int | None:
+        for index in range(len(messages) - 1, -1, -1):
+            if messages[index].role == ConversationRole.USER:
+                return index
+        return None

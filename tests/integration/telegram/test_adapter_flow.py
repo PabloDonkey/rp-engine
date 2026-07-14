@@ -361,6 +361,67 @@ async def test_continue_command_calls_continue_story() -> None:
 
 
 @pytest.mark.asyncio
+async def test_regenerate_command_calls_regenerate_last_response() -> None:
+    chat_service = AsyncMock()
+    chat_service.regenerate_last_response = AsyncMock(return_value="regenerated")
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+    )
+
+    message = FakeMessage(text="/regenerate")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=9),
+        effective_chat=FakeChat(id=9, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    chat_service.regenerate_last_response.assert_awaited_once()
+    regenerate_kwargs = chat_service.regenerate_last_response.await_args.kwargs
+    assert regenerate_kwargs["conversation_identity"] == ConversationIdentity.for_session(
+        str(FIXED_SESSION_ID)
+    )
+    assert "processing_feedback" in regenerate_kwargs
+    chat_service.send_message.assert_not_awaited()
+    assert message.responses == ["regenerated"]
+
+
+@pytest.mark.asyncio
+async def test_regenerate_command_surfaces_specific_validation_error() -> None:
+    chat_service = AsyncMock()
+    chat_service.regenerate_last_response = AsyncMock(
+        side_effect=ValueError("Conversation has no user message to regenerate from.")
+    )
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+    )
+
+    message = FakeMessage(text="/regenerate")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=9),
+        effective_chat=FakeChat(id=9, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    assert message.responses == ["Conversation has no user message to regenerate from."]
+
+
+@pytest.mark.asyncio
 async def test_clear_command_calls_clear_conversation_and_confirms() -> None:
     chat_service = AsyncMock()
     adapter = TelegramAdapter(

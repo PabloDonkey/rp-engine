@@ -19,6 +19,14 @@ def test_parse_transport_message_for_supported_command_with_bot_mention() -> Non
     assert parsed.argument == "now"
 
 
+def test_parse_transport_message_for_regenerate_command() -> None:
+    parsed = parse_transport_message("/regenerate")
+
+    assert parsed.is_command is True
+    assert parsed.command == TelegramCommand.REGENERATE
+    assert parsed.argument is None
+
+
 def test_parse_transport_message_for_unsupported_command() -> None:
     parsed = parse_transport_message("/unknown")
 
@@ -40,4 +48,5 @@ def test_build_help_message_lists_supported_commands() -> None:
     assert "/help" in help_message
     assert "/continue" in help_message
     assert "/clear" in help_message
+    assert "/regenerate" in help_message
     assert "/character" in help_message

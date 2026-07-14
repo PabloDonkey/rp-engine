@@ -5,6 +5,7 @@ from enum import StrEnum
 class TelegramCommand(StrEnum):
     HELP = "/help"
     CONTINUE = "/continue"
+    REGENERATE = "/regenerate"
     CLEAR = "/clear"
     CHARACTER = "/character"
 
