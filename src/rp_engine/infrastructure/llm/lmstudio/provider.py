@@ -79,9 +79,13 @@ class LMStudioProvider(LLMProvider):
 
         result = model.respond(chat, config=config)
         stats = getattr(result, "stats", None)
-        metadata = {"model_name": self._model_name}
+        metadata = {
+            "provider": "lmstudio",
+            "model_name": self._model_name,
+        }
         if stats is not None:
             metadata["stats"] = str(stats)
+            metadata.update(self._extract_usage_metadata(stats))
 
         return LLMResponse(
             content=self._extract_content(result),
@@ -132,6 +136,25 @@ class LMStudioProvider(LLMProvider):
                 return _normalize_finish_reason(stats_finish)
 
         return "unknown"
+
+    @staticmethod
+    def _extract_usage_metadata(stats: Any) -> dict[str, str]:
+        usage: dict[str, str] = {}
+        candidates = {
+            "usage_prompt_tokens": ("prompt_tokens", "input_tokens"),
+            "usage_completion_tokens": ("completion_tokens", "output_tokens"),
+            "usage_total_tokens": ("total_tokens",),
+        }
+        for metadata_key, attrs in candidates.items():
+            value: object | None = None
+            for attr in attrs:
+                candidate = getattr(stats, attr, None)
+                if isinstance(candidate, int):
+                    value = candidate
+                    break
+            if isinstance(value, int):
+                usage[metadata_key] = str(value)
+        return usage
 
     @classmethod
     def _ensure_default_client_configured(cls, api_host: str) -> None:

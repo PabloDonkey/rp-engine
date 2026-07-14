@@ -121,6 +121,17 @@ Optional application variables:
 * `RP_ENGINE_APP_HOST`
 * `RP_ENGINE_APP_PORT`
 * `RP_ENGINE_DEBUG_STATUS_ENABLED`
+* `RP_ENGINE_DEBUG_GENERATION_TRACE` (`off`, `errors`, or `all`; default `off`)
+
+Generation trace behavior:
+
+* `off`: no generation traces are written
+* `errors`: write traces only when generation fails
+* `all`: write traces for every completed generation
+
+When enabled, traces are stored as JSON Lines at:
+
+* `data/sessions/<session_id>/trace.jsonl`
 
 ## Run application
 

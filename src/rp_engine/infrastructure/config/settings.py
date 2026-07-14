@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     lmstudio_min_p_sampling: float = Field(default=0.05, ge=0.0, le=1.0)
 
     debug_status_enabled: bool = False
+    debug_generation_trace: Literal["off", "errors", "all"] = "off"
     default_world_id: str = "default"
 
     @field_validator("lmstudio_api_host")
@@ -82,6 +83,11 @@ class Settings(BaseSettings):
         if not cleaned:
             raise ValueError("RP_ENGINE_DEFAULT_WORLD_ID must not be empty.")
         return cleaned
+
+    @field_validator("debug_generation_trace")
+    @classmethod
+    def validate_debug_generation_trace(cls, value: str) -> str:
+        return value.strip().lower()
 
 
 @lru_cache(maxsize=1)

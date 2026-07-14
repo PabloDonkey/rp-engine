@@ -25,6 +25,7 @@ from rp_engine.infrastructure.llm.lmstudio.provider import LMStudioProvider
 from rp_engine.infrastructure.storage import (
     JsonCharacterStore,
     JsonConversationStore,
+    JsonGenerationTraceStore,
     JsonGroupIdentityStore,
     JsonSessionStore,
     JsonUserIdentityStore,
@@ -67,6 +68,7 @@ def build_container(settings: Settings) -> AppContainer:
         temperature=settings.lmstudio_temperature,
     )
     conversation_store = JsonConversationStore()
+    generation_trace_store = JsonGenerationTraceStore()
     user_identity_store = JsonUserIdentityStore()
     group_identity_store = JsonGroupIdentityStore()
     character_store = JsonCharacterStore()
@@ -98,6 +100,8 @@ def build_container(settings: Settings) -> AppContainer:
         character_store=character_store,
         world_store=world_store,
         generation_settings=generation_settings,
+        generation_trace_store=generation_trace_store,
+        generation_trace_mode=settings.debug_generation_trace,
     )
 
     telegram_runtime: TelegramRuntime | None = None

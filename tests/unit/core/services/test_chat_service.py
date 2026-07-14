@@ -363,3 +363,129 @@ async def test_chat_service_stops_processing_feedback_when_generation_fails(
 
     feedback.start.assert_awaited_once()
     feedback.stop.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_service_writes_generation_trace_in_all_mode(
+    session_context: tuple[Session, User, Character, World],
+) -> None:
+    session, user, character, world = session_context
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(
+        return_value=LLMResponse(
+            content="scene response",
+            finish_reason="stop",
+            metadata={
+                "provider": "lmstudio",
+                "model_name": "model-a",
+                "usage_prompt_tokens": "12",
+                "usage_completion_tokens": "6",
+            },
+        )
+    )
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(
+        return_value=[ConversationMessage(role=ConversationRole.USER, content="previous")]
+    )
+    memory_strategy = Mock()
+    memory_strategy.build_context.return_value = [
+        ConversationMessage(role=ConversationRole.USER, content="previous")
+    ]
+    session_store = AsyncMock()
+    session_store.get_by_id = AsyncMock(return_value=session)
+    user_store = AsyncMock()
+    user_store.get_by_id = AsyncMock(return_value=user)
+    group_store = AsyncMock()
+    character_store = AsyncMock()
+    character_store.get_by_id = AsyncMock(return_value=character)
+    world_store = AsyncMock()
+    world_store.get_by_id = AsyncMock(return_value=world)
+    trace_store = AsyncMock()
+
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+        user_identity_store=user_store,
+        group_identity_store=group_store,
+        session_store=session_store,
+        character_store=character_store,
+        world_store=world_store,
+        generation_settings=GENERATION_SETTINGS,
+        generation_trace_store=trace_store,
+        generation_trace_mode="all",
+    )
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello",
+    )
+
+    trace_store.append.assert_awaited_once()
+    trace_payload = trace_store.append.await_args.kwargs["record"]
+    assert trace_payload["provider"] == "lmstudio"
+    assert trace_payload["model"] == "model-a"
+    assert trace_payload["finish_reason"] == "stop"
+    assert trace_payload["usage"] == {"prompt_tokens": 12, "completion_tokens": 6}
+    prompt_stats = trace_payload["prompt_stats"]
+    assert isinstance(prompt_stats, dict)
+    assert prompt_stats["character_tokens"] > 0
+    assert prompt_stats["world_tokens"] > 0
+    assert prompt_stats["history_tokens"] > 0
+    assert prompt_stats["system_tokens"] > 0
+    assert prompt_stats["total_prompt_tokens"] == (
+        prompt_stats["system_tokens"] + prompt_stats["history_tokens"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_service_writes_generation_trace_only_on_errors(
+    session_context: tuple[Session, User, Character, World],
+) -> None:
+    session, user, character, world = session_context
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(side_effect=RuntimeError("provider down"))
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(return_value=[])
+    memory_strategy = Mock()
+    memory_strategy.build_context.return_value = []
+    session_store = AsyncMock()
+    session_store.get_by_id = AsyncMock(return_value=session)
+    user_store = AsyncMock()
+    user_store.get_by_id = AsyncMock(return_value=user)
+    group_store = AsyncMock()
+    character_store = AsyncMock()
+    character_store.get_by_id = AsyncMock(return_value=character)
+    world_store = AsyncMock()
+    world_store.get_by_id = AsyncMock(return_value=world)
+    trace_store = AsyncMock()
+
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+        user_identity_store=user_store,
+        group_identity_store=group_store,
+        session_store=session_store,
+        character_store=character_store,
+        world_store=world_store,
+        generation_settings=GENERATION_SETTINGS,
+        generation_trace_store=trace_store,
+        generation_trace_mode="errors",
+    )
+
+    with pytest.raises(RuntimeError, match="provider down"):
+        await service.send_message(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+            message="hello",
+        )
+
+    trace_store.append.assert_awaited_once()
+    trace_payload = trace_store.append.await_args.kwargs["record"]
+    assert trace_payload["finish_reason"] == "error"
+    assert trace_payload["error"] == {"type": "RuntimeError", "message": "provider down"}
+    prompt_stats = trace_payload["prompt_stats"]
+    assert isinstance(prompt_stats, dict)
+    assert prompt_stats["total_prompt_tokens"] == (
+        prompt_stats["system_tokens"] + prompt_stats["history_tokens"]
+    )

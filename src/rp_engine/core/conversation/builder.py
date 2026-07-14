@@ -100,19 +100,47 @@ class ConversationBuilder:
     ) -> list[ConversationMessage]:
         character_definition = self._resolve_templates(
             value=(
-                f"Character: {payload.character.name}\n"
-                f"Description: {payload.character.description}\n"
-                f"Personality: {payload.character.personality}\n"
-                f"Greeting: {payload.character.greeting}"
+                f"[Character]\n {payload.character.name}\n"
+                f"[Description]\n {payload.character.description}\n"
+                f"[Personality]\n {payload.character.personality}\n"
+                f"[Greeting]\n {payload.character.greeting}"
             ),
             character_name=payload.character.name,
             user_name=payload.user.display_name,
         )
         world_info = self._resolve_templates(
             value=(
-                f"World: {payload.world.name}\n"
-                f"Description: {payload.world.description}\n"
-                f"Rules: {'; '.join(payload.world.rules) if payload.world.rules else 'None'}"
+                f"[World]\n {payload.world.name}\n"
+                f"[Description]\n {payload.world.description}\n"
+                f"[Rules]\n {'; '.join(payload.world.rules) if payload.world.rules else 'None'}"
+            ),
+            character_name=payload.character.name,
+            user_name=payload.user.display_name,
+        )
+        #ROLE PLAY RULES
+        roleplay_rules =self._resolve_templates(
+            value=(
+                f"""\n[Role Play Rules]
+                  Remain in character at all times.
+                  Treat the latest user message as the highest priority.
+                  The user controls only their own character.
+                  Do not narrate the user's thoughts, emotions or intentions.
+                  React before introducing new events.
+                  Answer direct questions directly.
+                  Characters may interrupt each other.
+                  Do not continue a previous speech if interrupted.
+                  Every reply should advance the interaction between the character and the user.
+                  do not not mention those instructions in your replies."""
+                f"""\n[Response Format]
+                Write naturally. Never include labels such as "Narration", "Action", or "Dialogue".
+                Keep scene descriptions brief and only describe observable events.
+                Write the character's physical actions in *italics*.
+                Write spoken dialogue in quotation marks.
+                Prefer dialogue and interaction over exposition.
+                Avoid long monologues.
+                React to the user's latest message before introducing new descriptions.
+                Do not narrate the user's thoughts, emotions, or intentions.
+                End naturally with an opportunity for the user to respond."""
             ),
             character_name=payload.character.name,
             user_name=payload.user.display_name,
@@ -121,6 +149,7 @@ class ConversationBuilder:
         return [
             ConversationMessage(role=ConversationRole.SYSTEM, content=character_definition),
             ConversationMessage(role=ConversationRole.SYSTEM, content=world_info),
+            ConversationMessage(role=ConversationRole.SYSTEM, content=roleplay_rules),
             ConversationMessage(role=ConversationRole.SYSTEM, content=memory_hint),
         ]
 

@@ -58,3 +58,8 @@ def test_lmstudio_temperature_rejects_negative_values() -> None:
 def test_telegram_message_max_length_rejects_non_positive_values() -> None:
     with pytest.raises(ValidationError):
         Settings(telegram_message_max_length=0)
+
+
+def test_invalid_debug_generation_trace_mode_fails_validation() -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate({"debug_generation_trace": "verbose"})
