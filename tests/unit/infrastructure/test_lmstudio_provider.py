@@ -6,6 +6,7 @@ import pytest
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
+from rp_engine.core.llm.errors import LLMConnectionError
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.infrastructure.llm.lmstudio.provider import LMStudioProvider
 
@@ -210,3 +211,41 @@ async def test_lmstudio_provider_maps_length_finish_reason(
 
     assert result.content == "partial"
     assert result.finish_reason == "length"
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_provider_maps_connectivity_errors_to_connection_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class LMStudioWebsocketError(RuntimeError):
+        pass
+
+    def fake_configure_default_client(_: str) -> None:
+        return None
+
+    def fake_llm(_: str) -> FakeModel:
+        def raise_connectivity_error(_: FakeChat) -> str:
+            raise LMStudioWebsocketError("LM Studio is not reachable at ws://localhost:1234/llm")
+
+        return FakeModel(raise_connectivity_error)
+
+    monkeypatch.setattr(
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.configure_default_client",
+        fake_configure_default_client,
+    )
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.llm", fake_llm)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.Chat", FakeChat)
+    monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
+
+    provider = LMStudioProvider(
+        model_name="model-a",
+        api_host="127.0.0.1:1234",
+        max_tokens=600,
+        temperature=0.7,
+    )
+
+    with pytest.raises(LLMConnectionError):
+        await provider.generate(
+            Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="hi")]),
+            GenerationSettings(max_tokens=128, temperature=0.3),
+        )

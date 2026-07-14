@@ -61,6 +61,9 @@ class LMStudioProvider(LLMProvider):
             logger.exception("LLM connection failure", extra={"model_name": self._model_name})
             raise LLMConnectionError("Unable to connect to LM Studio.") from exc
         except Exception as exc:
+            if _is_lmstudio_connection_error(exc):
+                logger.exception("LLM connection failure", extra={"model_name": self._model_name})
+                raise LLMConnectionError("Unable to connect to LM Studio.") from exc
             logger.exception("LLM generation failure", extra={"model_name": self._model_name})
             raise LLMGenerationError("LM Studio failed to generate a response.") from exc
 
@@ -187,3 +190,17 @@ def _normalize_finish_reason(reason: str) -> FinishReason:
     if normalized in {"length", "max_tokens", "token_limit"}:
         return "length"
     return "unknown"
+
+
+def _is_lmstudio_connection_error(exc: Exception) -> bool:
+    class_name = exc.__class__.__name__.lower()
+    message = str(exc).lower()
+    return (
+        "lmstudio" in class_name
+        and (
+            "clienterror" in class_name
+            or "websocketerror" in class_name
+            or "not reachable" in message
+            or "connection attempts failed" in message
+        )
+    )

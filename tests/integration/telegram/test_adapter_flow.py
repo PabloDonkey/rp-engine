@@ -11,6 +11,7 @@ from rp_engine.adapters.telegram.adapter import TelegramAdapter
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.adapters.telegram.commands import HELP_MESSAGE
 from rp_engine.core.group.group import Group
+from rp_engine.core.llm.errors import LLMConnectionError
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.services.commands import SelectCharacterCommand
 from rp_engine.core.session.session import Session
@@ -693,3 +694,29 @@ async def test_character_command_selects_active_character() -> None:
 
     assert message.responses == ["Active character set to 'belzebuth' in world 'default'."]
     chat_service.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_telegram_adapter_handles_llm_connection_error_with_retry_message() -> None:
+    chat_service = AsyncMock()
+    chat_service.send_message = AsyncMock(side_effect=LLMConnectionError("connection failed"))
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+    )
+
+    message = FakeMessage(text="hello")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=42),
+        effective_chat=FakeChat(id=42, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    assert message.responses == ["LM backend is unavailable right now. Please try again in a moment."]

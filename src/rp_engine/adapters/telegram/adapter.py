@@ -12,6 +12,7 @@ from rp_engine.adapters.telegram.invocation_policy import should_process_message
 from rp_engine.adapters.telegram.models import TelegramCommand
 from rp_engine.adapters.telegram.splitter import split_message
 from rp_engine.core.group.group import Group
+from rp_engine.core.llm.errors import LLMConnectionError, LLMGenerationError, LLMTimeoutError
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.services.chat_service import ChatService
 from rp_engine.core.services.commands import SelectCharacterCommand
@@ -270,6 +271,36 @@ class TelegramAdapter:
             )
             error_text = str(exc).strip() or "Please send a non-empty message."
             await self._reply_with_split(message=message, text=error_text)
+            return
+        except LLMConnectionError:
+            logger.exception(
+                "Telegram failure",
+                extra={"reason": "llm_connection_error", "user_id": user_id},
+            )
+            await self._reply_with_split(
+                message=message,
+                text="LM backend is unavailable right now. Please try again in a moment.",
+            )
+            return
+        except LLMTimeoutError:
+            logger.exception(
+                "Telegram failure",
+                extra={"reason": "llm_timeout_error", "user_id": user_id},
+            )
+            await self._reply_with_split(
+                message=message,
+                text="The model took too long to reply. Please try again.",
+            )
+            return
+        except LLMGenerationError:
+            logger.exception(
+                "Telegram failure",
+                extra={"reason": "llm_generation_error", "user_id": user_id},
+            )
+            await self._reply_with_split(
+                message=message,
+                text="The model failed to generate a reply. Please try again.",
+            )
             return
         except Exception:
             logger.exception(
