@@ -280,23 +280,39 @@ class ChatService:
             if not trimmed_history:
                 raise ValueError("Conversation has no user message to regenerate from.")
 
-            latest_user_index = self._find_latest_user_index(trimmed_history)
-            if latest_user_index is None:
-                raise ValueError("Conversation has no user message to regenerate from.")
+            latest_context_message = trimmed_history[-1]
+            if latest_context_message.role == ConversationRole.USER:
+                latest_user_index = self._find_latest_user_index(trimmed_history)
+                if latest_user_index is None:
+                    raise ValueError("Conversation has no user message to regenerate from.")
 
-            last_user = trimmed_history[latest_user_index]
-            prior_history = trimmed_history[:latest_user_index]
-            context_messages = self._memory_strategy.build_context(prior_history)
-            conversation = self._conversation_builder.build(
-                ConversationBuilderInput(
-                    session=session,
-                    user=owner_user,
-                    character=character,
-                    world=world,
-                    memory_messages=context_messages,
-                    user_message=last_user.content,
+                last_user = trimmed_history[latest_user_index]
+                prior_history = trimmed_history[:latest_user_index]
+                context_messages = self._memory_strategy.build_context(prior_history)
+                conversation = self._conversation_builder.build(
+                    ConversationBuilderInput(
+                        session=session,
+                        user=owner_user,
+                        character=character,
+                        world=world,
+                        memory_messages=context_messages,
+                        user_message=last_user.content,
+                    )
                 )
-            )
+            elif latest_context_message.role == ConversationRole.CHARACTER:
+                context_messages = self._memory_strategy.build_context(trimmed_history)
+                conversation = self._conversation_builder.build_continue(
+                    ConversationBuilderInput(
+                        session=session,
+                        user=owner_user,
+                        character=character,
+                        world=world,
+                        memory_messages=context_messages,
+                        user_message="continue",
+                    )
+                )
+            else:
+                raise ValueError("Conversation has no valid context to regenerate from.")
             request = GenerationRequest(
                 memory_key=memory_key,
                 conversation=conversation,

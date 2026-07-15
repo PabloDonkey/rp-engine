@@ -1,5 +1,7 @@
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -9,6 +11,7 @@ from telegram import Update
 
 from rp_engine.adapters.telegram.adapter import TelegramAdapter
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
+from rp_engine.adapters.telegram.beta_registry import TelegramBetaRegistry
 from rp_engine.adapters.telegram.commands import HELP_MESSAGE
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import LLMConnectionError
@@ -118,6 +121,7 @@ class FakeUser:
     full_name: str = "Test User"
     first_name: str | None = "Test"
     last_name: str | None = "User"
+    persona_display_name: str | None = None
 
 
 @dataclass
@@ -719,4 +723,265 @@ async def test_telegram_adapter_handles_llm_connection_error_with_retry_message(
 
     await adapter.handle_message(cast(Update, update), cast(Any, None))
 
-    assert message.responses == ["LM backend is unavailable right now. Please try again in a moment."]
+    assert message.responses == [
+        "LM backend is unavailable right now. Please try again in a moment."
+    ]
+
+
+@pytest.mark.asyncio
+async def test_chat_command_in_group_forwards_stripped_text_with_group_metadata() -> None:
+    chat_service = AsyncMock()
+    chat_service.send_message = AsyncMock(return_value="group reply")
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization(set(), {"-555"}),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+    )
+
+    message = FakeMessage(text="/chat   hello from explicit command   ")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=77, username="alice", full_name="Alice"),
+        effective_chat=FakeChat(id=-555, type="group"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
+
+    chat_service.send_message.assert_awaited_once()
+    send_kwargs = chat_service.send_message.await_args.kwargs
+    assert send_kwargs["message"] == "hello from explicit command"
+    assert send_kwargs["user_id"] == str(FIXED_USER_ID)
+    assert send_kwargs["username"] == "alice"
+    assert send_kwargs["display_name"] == "Alice"
+    assert message.responses == ["group reply"]
+
+
+@pytest.mark.asyncio
+async def test_start_command_for_authorized_user_does_not_invoke_chat_service() -> None:
+    chat_service = AsyncMock()
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+    )
+
+    message = FakeMessage(text="/start")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=7),
+        effective_chat=FakeChat(id=7, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    chat_service.send_message.assert_not_awaited()
+    chat_service.continue_story.assert_not_awaited()
+    chat_service.regenerate_last_response.assert_not_awaited()
+    chat_service.clear_conversation.assert_not_awaited()
+    assert len(message.responses) == 1
+    assert "/chat <message>" in message.responses[0]
+    assert "you can also send normal messages directly" in message.responses[0]
+
+
+@pytest.mark.asyncio
+async def test_start_command_for_unauthorized_user_does_not_auto_create_beta_request(
+    tmp_path: Path,
+) -> None:
+    chat_service = AsyncMock()
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization({"123"}),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+        beta_registry=registry,
+    )
+
+    message = FakeMessage(text="/start")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=999, username="blocked_user"),
+        effective_chat=FakeChat(id=999, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    chat_service.send_message.assert_not_awaited()
+    assert len(message.responses) == 1
+    assert "closed beta" in message.responses[0]
+    assert "Use /beta" in message.responses[0]
+    requests_dir = tmp_path / "telegram" / "beta_requests"
+    assert not requests_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_beta_command_creates_request_for_unauthorized_user(tmp_path: Path) -> None:
+    chat_service = AsyncMock()
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization({"123"}),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+        beta_registry=registry,
+    )
+
+    message = FakeMessage(text="/beta")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(
+            id=999,
+            username="PabloDonkey",
+            first_name="Pablo",
+            last_name="Smith",
+        ),
+        effective_chat=FakeChat(id=999, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    request_path = tmp_path / "telegram" / "beta_requests" / "999.json"
+    assert request_path.exists()
+    payload = json.loads(request_path.read_text(encoding="utf-8"))
+    assert payload["telegram_id"] == 999
+    assert payload["username"] == "PabloDonkey"
+    assert payload["first_name"] == "Pablo"
+    assert payload["last_name"] == "Smith"
+    assert payload["status"] == "waiting_for_beta_seat"
+    assert "requested_at" in payload
+    assert len(message.responses) == 1
+    assert "request was recorded" in message.responses[0]
+
+
+@pytest.mark.asyncio
+async def test_beta_command_does_not_overwrite_existing_request(tmp_path: Path) -> None:
+    chat_service = AsyncMock()
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization({"123"}),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+        beta_registry=registry,
+    )
+
+    first_message = FakeMessage(text="/beta")
+    first_update = FakeUpdate(
+        effective_message=first_message,
+        effective_user=FakeUser(id=999, username="existing"),
+        effective_chat=FakeChat(id=999, type="private"),
+    )
+    second_message = FakeMessage(text="/beta")
+    second_update = FakeUpdate(
+        effective_message=second_message,
+        effective_user=FakeUser(id=999, username="changed"),
+        effective_chat=FakeChat(id=999, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, first_update), cast(Any, None))
+    request_path = tmp_path / "telegram" / "beta_requests" / "999.json"
+    first_payload = request_path.read_text(encoding="utf-8")
+
+    await adapter.handle_message(cast(Update, second_update), cast(Any, None))
+    second_payload = request_path.read_text(encoding="utf-8")
+
+    assert first_payload == second_payload
+    assert len(second_message.responses) == 1
+    assert "already on the closed beta waiting list" in second_message.responses[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "expected_display_name"),
+    [
+        (FakeUser(id=77, username="alice", first_name="Alice", last_name="A"), "alice"),
+        (FakeUser(id=77, username=None, first_name="Alice", last_name="A"), "Alice"),
+        (FakeUser(id=77, username=None, first_name=None, last_name="A"), "telegram_user_77"),
+    ],
+)
+async def test_identity_resolution_uses_display_name_priority(
+    user: FakeUser,
+    expected_display_name: str,
+) -> None:
+    chat_service = AsyncMock()
+    chat_service.send_message = AsyncMock(return_value="ok")
+    identity_resolver = AsyncMock()
+    identity_resolver.resolve_identity = AsyncMock(
+        return_value=User(id=FIXED_USER_ID, display_name="x")
+    )
+
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=identity_resolver,
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+    )
+
+    update = FakeUpdate(
+        effective_message=FakeMessage(text="hello"),
+        effective_user=user,
+        effective_chat=FakeChat(id=77, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    resolve_kwargs = identity_resolver.resolve_identity.await_args.kwargs
+    assert resolve_kwargs["display_name"] == expected_display_name
+
+
+@pytest.mark.asyncio
+async def test_identity_resolution_prefers_persona_display_name() -> None:
+    chat_service = AsyncMock()
+    chat_service.send_message = AsyncMock(return_value="ok")
+    identity_resolver = AsyncMock()
+    identity_resolver.resolve_identity = AsyncMock(
+        return_value=User(id=FIXED_USER_ID, display_name="x")
+    )
+
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=identity_resolver,
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+    )
+
+    user = FakeUser(
+        id=77,
+        username="alice",
+        first_name="Alice",
+        last_name="A",
+        persona_display_name="Captain Alice",
+    )
+    update = FakeUpdate(
+        effective_message=FakeMessage(text="hello"),
+        effective_user=user,
+        effective_chat=FakeChat(id=77, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    resolve_kwargs = identity_resolver.resolve_identity.await_args.kwargs
+    assert resolve_kwargs["display_name"] == "Captain Alice"

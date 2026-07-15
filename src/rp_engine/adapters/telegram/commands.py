@@ -1,16 +1,31 @@
 from rp_engine.adapters.telegram.models import ParsedTransportMessage, TelegramCommand
 
 SUPPORTED_COMMANDS: dict[str, TelegramCommand] = {
+    TelegramCommand.START.value: TelegramCommand.START,
+    TelegramCommand.CHAT.value: TelegramCommand.CHAT,
     TelegramCommand.HELP.value: TelegramCommand.HELP,
+    TelegramCommand.BETA.value: TelegramCommand.BETA,
     TelegramCommand.CONTINUE.value: TelegramCommand.CONTINUE,
     TelegramCommand.REGENERATE.value: TelegramCommand.REGENERATE,
     TelegramCommand.CLEAR.value: TelegramCommand.CLEAR,
     TelegramCommand.CHARACTER.value: TelegramCommand.CHARACTER,
 }
 
+TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("start", "Show welcome message"),
+    ("chat", "Send a message to the current character"),
+    ("continue", "Continue the previous assistant reply"),
+    ("regenerate", "Regenerate the last assistant reply"),
+    ("clear", "Clear the current conversation"),
+    ("beta", "Request a beta seat"),
+)
+
 HELP_MESSAGE = (
     "Available commands:\n"
+    "/start - Show welcome and usage\n"
+    "/chat <message> - Send a message to the character\n"
     "/help - Show this help message\n"
+    "/beta - Request a beta seat\n"
     "/continue - Continue the scene\n"
     "/regenerate - Replace the last character reply\n"
     "/clear - Clear the current conversation\n"

@@ -87,9 +87,11 @@ For Telegram, authorization and permissions are transport concerns handled in th
 * Private chats use user-level whitelist authorization.
 * Group chats use group-level whitelist authorization.
 * In authorized groups, all members can send normal messages.
-* Destructive/story-control commands (`/clear`, `/continue`) are restricted to Telegram chat administrators and creators.
+* Destructive/story-control commands (`/clear`, `/continue`, `/regenerate`) are restricted to Telegram chat administrators and creators.
 * Telegram message-size limits are handled by adapter-level message splitting during delivery.
 * Telegram external identities are resolved into internal engine users before calling use cases.
+* Telegram command menu registration (`set_my_commands`) is adapter/runtime-owned.
+* Closed-beta access messaging and beta waitlist registration (`/beta`) are transport concerns.
 
 Adapters must not implement prompt construction, memory strategy logic, or direct LLM interaction.
 
@@ -105,9 +107,13 @@ Transport commands belong to adapters.
 
 Example for Telegram:
 
+* `/start` is handled entirely by the Telegram adapter
+* `/chat <message>` is translated to `ChatService.send_message(...)`
 * `/help` is handled entirely by the Telegram adapter
 * `/continue` is translated to `ChatService.continue_story(...)`
+* `/regenerate` is translated to `ChatService.regenerate_last_response(...)`
 * `/clear` is translated to `ChatService.clear_conversation(...)`
+* `/beta` is handled entirely by the Telegram adapter
 
 The engine and application services never parse Telegram command syntax.
 
@@ -414,11 +420,39 @@ Adapter-->>User: Message
 Telegram command flow:
 
 ```text
+/start
+    ↓
+Telegram Adapter
+    ↓
+Telegram reply
+```
+
+```text
+/chat <message>
+    ↓
+Telegram Adapter
+    ↓
+ChatService.send_message(...)
+    ↓
+RP Engine
+```
+
+```text
 /continue
     ↓
 Telegram Adapter
     ↓
 ChatService.continue_story(...)
+    ↓
+RP Engine
+```
+
+```text
+/regenerate
+    ↓
+Telegram Adapter
+    ↓
+ChatService.regenerate_last_response(...)
     ↓
 RP Engine
 ```
@@ -439,6 +473,14 @@ Telegram Adapter
 Telegram reply
 ```
 
+```text
+/beta
+    ↓
+Telegram Adapter
+    ↓
+JSON request persisted to data/telegram/beta_requests/
+```
+
 Invocation policy for Telegram:
 
 * Private chats: normal messages and supported commands are processed.
@@ -448,7 +490,8 @@ Invocation policy for Telegram:
 Authorization flow:
 
 * Adapter checks whitelist authorization before use-case invocation.
-* Unauthorized users receive a configured transport message.
+* Unauthorized users receive a closed-beta transport message that invites `/beta`.
+* Unauthorized users can still run `/start` and `/beta` without invoking core use cases.
 * Authorized users continue through normal adapter translation.
 
 ---

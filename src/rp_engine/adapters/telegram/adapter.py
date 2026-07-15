@@ -1,12 +1,17 @@
 import logging
 from typing import Any, Protocol
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import Application as TelegramApplication
 from telegram.ext import ContextTypes, MessageHandler, filters
 
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
-from rp_engine.adapters.telegram.commands import build_help_message, parse_transport_message
+from rp_engine.adapters.telegram.beta_registry import TelegramBetaRegistry
+from rp_engine.adapters.telegram.commands import (
+    TELEGRAM_MENU_COMMANDS,
+    build_help_message,
+    parse_transport_message,
+)
 from rp_engine.adapters.telegram.feedback import TelegramProcessingFeedbackFactory
 from rp_engine.adapters.telegram.invocation_policy import should_process_message
 from rp_engine.adapters.telegram.models import TelegramCommand
@@ -20,6 +25,33 @@ from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
 
 logger = logging.getLogger(__name__)
+
+AUTHORIZED_START_MESSAGE = (
+    "Welcome. I am ready to roleplay.\n"
+    "Use /chat <message> to talk to the active character (especially in groups).\n"
+    "Commands: /chat, /continue, /regenerate, /clear."
+)
+
+AUTHORIZED_START_PRIVATE_MESSAGE = (
+    "\nIn private chats, you can also send normal messages directly."
+)
+
+UNAUTHORIZED_START_MESSAGE = (
+    "Welcome. This bot is currently in closed beta.\n"
+    "You are not authorized yet.\n"
+    "Use /beta to request a seat.\n"
+    "If you request access, your Telegram username and ID are recorded for admin review."
+)
+
+BETA_REGISTERED_MESSAGE = (
+    "Thanks. You are already on the closed beta waiting list. "
+    "Please wait for admin approval."
+)
+
+BETA_CREATED_MESSAGE = (
+    "Thanks. Your beta request was recorded. "
+    "An administrator will review it and contact you if approved."
+)
 
 
 class IdentityResolverPort(Protocol):
@@ -75,6 +107,7 @@ class TelegramAdapter:
         unauthorized_message: str,
         message_max_length: int,
         processing_feedback_factory: TelegramProcessingFeedbackFactory | None = None,
+        beta_registry: TelegramBetaRegistry | None = None,
     ) -> None:
         self._chat_service = chat_service
         self._identity_resolver = identity_resolver
@@ -86,6 +119,7 @@ class TelegramAdapter:
         self._processing_feedback_factory = (
             processing_feedback_factory or TelegramProcessingFeedbackFactory()
         )
+        self._beta_registry = beta_registry or TelegramBetaRegistry()
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
@@ -96,6 +130,38 @@ class TelegramAdapter:
         user_id = str(user.id) if user is not None else "anonymous"
         chat = update.effective_chat
         chat_type = chat.type if chat is not None else None
+        parsed_message = parse_transport_message(message.text)
+
+        if parsed_message.command == TelegramCommand.START:
+            if self._is_authorized(chat_type=chat_type, user_id=user_id, chat=chat):
+                welcome = AUTHORIZED_START_MESSAGE
+                if chat_type == "private":
+                    welcome = f"{welcome}{AUTHORIZED_START_PRIVATE_MESSAGE}"
+                await self._reply_with_split(message=message, text=welcome)
+                return
+
+            await self._reply_with_split(message=message, text=UNAUTHORIZED_START_MESSAGE)
+            return
+
+        if parsed_message.command == TelegramCommand.BETA:
+            if user is None:
+                await self._reply_with_split(
+                    message=message,
+                    text="Unable to register a beta request for an unknown user.",
+                )
+                return
+
+            created = await self._beta_registry.create_request(
+                telegram_id=user.id,
+                username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name,
+            )
+            await self._reply_with_split(
+                message=message,
+                text=BETA_CREATED_MESSAGE if created else BETA_REGISTERED_MESSAGE,
+            )
+            return
 
         if not self._is_authorized(chat_type=chat_type, user_id=user_id, chat=chat):
             logger.info(
@@ -108,7 +174,7 @@ class TelegramAdapter:
         resolved_user = await self._identity_resolver.resolve_identity(
             provider="telegram",
             external_id=user_id,
-            display_name=user.full_name if user is not None else "Anonymous",
+            display_name=self._resolve_user_display_name(user=user),
             metadata={
                 "username": user.username or "",
                 "first_name": user.first_name or "",
@@ -118,7 +184,6 @@ class TelegramAdapter:
             else {},
         )
 
-        parsed_message = parse_transport_message(message.text)
         if not should_process_message(chat_type, parsed_message):
             return
 
@@ -246,7 +311,17 @@ class TelegramAdapter:
                 await self._reply_with_split(message=message, text="Conversation memory cleared.")
                 return
 
-            if parsed_message.is_command:
+            outgoing_message = parsed_message.text
+            if parsed_message.command == TelegramCommand.CHAT:
+                if parsed_message.argument is None:
+                    await self._reply_with_split(
+                        message=message,
+                        text="Usage: /chat <message>",
+                    )
+                    return
+                outgoing_message = parsed_message.argument
+
+            if parsed_message.is_command and parsed_message.command != TelegramCommand.CHAT:
                 await self._reply_with_split(
                     message=message,
                     text="Unsupported command. Use /help to see available commands.",
@@ -255,7 +330,7 @@ class TelegramAdapter:
 
             response = await self._chat_service.send_message(
                 conversation_identity=conversation_identity,
-                message=parsed_message.text,
+                message=outgoing_message,
                 user_id=group_user_id,
                 username=group_username,
                 display_name=group_display_name,
@@ -361,6 +436,36 @@ class TelegramAdapter:
                 return f"Group {chat_id}"
         return "Group"
 
+    @staticmethod
+    def _resolve_user_display_name(*, user: Any) -> str:
+        if user is not None:
+            persona_display_name = getattr(user, "persona_display_name", None)
+            if isinstance(persona_display_name, str) and persona_display_name.strip():
+                return persona_display_name.strip()
+
+            username = getattr(user, "username", None)
+            if isinstance(username, str) and username.strip():
+                return username.strip()
+
+            first_name = getattr(user, "first_name", None)
+            if isinstance(first_name, str) and first_name.strip():
+                return first_name.strip()
+
+            last_name = getattr(user, "last_name", None)
+            if (
+                isinstance(first_name, str)
+                and first_name.strip()
+                and isinstance(last_name, str)
+                and last_name.strip()
+            ):
+                return f"{first_name.strip()} {last_name.strip()}"
+
+            user_identifier = getattr(user, "id", None)
+            if user_identifier is not None:
+                return f"telegram_user_{user_identifier}"
+
+        return "telegram_user_anonymous"
+
 
 class TelegramRuntime:
     def __init__(self, application: Any) -> None:
@@ -369,6 +474,12 @@ class TelegramRuntime:
     async def start(self) -> None:
         logger.info("Starting Telegram runtime")
         await self._application.initialize()
+        await self._application.bot.set_my_commands(
+            [
+                BotCommand(command=name, description=description)
+                for name, description in TELEGRAM_MENU_COMMANDS
+            ]
+        )
         await self._application.start()
 
         if self._application.updater is None:

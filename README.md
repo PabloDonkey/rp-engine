@@ -178,6 +178,23 @@ uv run pytest
 5. Open Telegram and send a message to the bot.
 6. Confirm a response is received.
 
+## Telegram Commands
+
+Registered Telegram menu commands:
+
+* `/start` - Show welcome and usage information.
+* `/chat <message>` - Send a message to the active character (recommended in groups).
+* `/continue` - Continue the previous assistant reply.
+* `/regenerate` - Replace only the latest assistant reply.
+* `/clear` - Clear the current conversation.
+* `/beta` - Request a closed-beta seat (stores one JSON request per Telegram user).
+
+`/regenerate` behavior:
+
+* After a normal user -> assistant turn, it regenerates from the latest user message.
+* After `/continue`, it regenerates as a continuation from the previous assistant reply.
+* Repeated `/regenerate` calls always replace only the latest assistant reply.
+
 ---
 
 # Design Principles

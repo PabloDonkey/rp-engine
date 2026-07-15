@@ -63,3 +63,10 @@ def test_telegram_message_max_length_rejects_non_positive_values() -> None:
 def test_invalid_debug_generation_trace_mode_fails_validation() -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate({"debug_generation_trace": "verbose"})
+
+
+def test_default_unauthorized_message_mentions_beta_request() -> None:
+    settings = Settings()
+
+    assert "closed beta" in settings.telegram_unauthorized_message
+    assert "/beta" in settings.telegram_unauthorized_message

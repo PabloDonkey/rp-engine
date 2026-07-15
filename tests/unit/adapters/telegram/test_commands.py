@@ -19,6 +19,30 @@ def test_parse_transport_message_for_supported_command_with_bot_mention() -> Non
     assert parsed.argument == "now"
 
 
+def test_parse_transport_message_for_chat_command_argument() -> None:
+    parsed = parse_transport_message("/chat hello from group")
+
+    assert parsed.is_command is True
+    assert parsed.command == TelegramCommand.CHAT
+    assert parsed.argument == "hello from group"
+
+
+def test_parse_transport_message_for_start_command() -> None:
+    parsed = parse_transport_message("/start")
+
+    assert parsed.is_command is True
+    assert parsed.command == TelegramCommand.START
+    assert parsed.argument is None
+
+
+def test_parse_transport_message_for_beta_command() -> None:
+    parsed = parse_transport_message("/beta")
+
+    assert parsed.is_command is True
+    assert parsed.command == TelegramCommand.BETA
+    assert parsed.argument is None
+
+
 def test_parse_transport_message_for_regenerate_command() -> None:
     parsed = parse_transport_message("/regenerate")
 
@@ -45,7 +69,10 @@ def test_parse_transport_message_for_character_command_argument() -> None:
 def test_build_help_message_lists_supported_commands() -> None:
     help_message = build_help_message()
 
+    assert "/start" in help_message
+    assert "/chat" in help_message
     assert "/help" in help_message
+    assert "/beta" in help_message
     assert "/continue" in help_message
     assert "/clear" in help_message
     assert "/regenerate" in help_message

@@ -5,8 +5,9 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_TELEGRAM_UNAUTHORIZED_MESSAGE = (
-    "Hi! \U0001f44b This bot is currently in a private beta and isn't accepting new users yet. "
-    "If you'd like access, please contact @pablodonkey on Telegram. Thanks for your interest!"
+    "This bot is currently in closed beta, and you are not authorized yet. "
+    "Use /beta to request access. "
+    "If you do, your Telegram username and ID will be recorded for administrator review."
 )
 
 

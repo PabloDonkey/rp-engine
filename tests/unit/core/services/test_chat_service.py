@@ -217,6 +217,9 @@ async def test_chat_service_regenerate_replaces_last_character_message(
     )
 
     assert response == "new reply"
+    request = orchestrator.generate_reply.await_args.args[0]
+    assert request.conversation.messages[-1].role == ConversationRole.USER
+    assert request.conversation.messages[-1].content == "hello"
     conversation_store.clear.assert_awaited_once_with(MemoryKey(f"session_{SESSION_ID}"))
     conversation_store.save_message.assert_has_awaits(
         [
@@ -229,6 +232,52 @@ async def test_chat_service_regenerate_replaces_last_character_message(
                 ConversationMessage(
                     role=ConversationRole.CHARACTER,
                     content="new reply",
+                    metadata={},
+                ),
+            ),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_service_regenerate_after_continue_uses_assistant_context(
+    session_context: tuple[Session, User, Character, World],
+) -> None:
+    service, orchestrator, conversation_store = _build_service(session_context=session_context)
+    conversation_store.load_messages = AsyncMock(
+        return_value=[
+            ConversationMessage(role=ConversationRole.USER, content="hello", metadata={}),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="first", metadata={}),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="to replace", metadata={}),
+        ]
+    )
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="new continuation"))
+
+    response = await service.regenerate_last_response(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+
+    assert response == "new continuation"
+    request = orchestrator.generate_reply.await_args.args[0]
+    assert request.conversation.messages[-1].role == ConversationRole.USER
+    assert request.conversation.messages[-1].metadata == {"source": "continue_command"}
+    assert "Continue the narration naturally" in request.conversation.messages[-1].content
+    conversation_store.clear.assert_awaited_once_with(MemoryKey(f"session_{SESSION_ID}"))
+    conversation_store.save_message.assert_has_awaits(
+        [
+            call(
+                MemoryKey(f"session_{SESSION_ID}"),
+                ConversationMessage(role=ConversationRole.USER, content="hello", metadata={}),
+            ),
+            call(
+                MemoryKey(f"session_{SESSION_ID}"),
+                ConversationMessage(role=ConversationRole.CHARACTER, content="first", metadata={}),
+            ),
+            call(
+                MemoryKey(f"session_{SESSION_ID}"),
+                ConversationMessage(
+                    role=ConversationRole.CHARACTER,
+                    content="new continuation",
                     metadata={},
                 ),
             ),
