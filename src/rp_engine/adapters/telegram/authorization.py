@@ -7,16 +7,18 @@ class TelegramAuthorization:
         self,
         allowed_user_ids: set[str],
         allowed_group_ids: set[str] | None = None,
+        directory: Path | None = None,
     ) -> None:
         self._allowed_user_ids = allowed_user_ids
         self._allowed_group_ids = allowed_group_ids or set()
+        self._directory = directory
 
     @classmethod
     def from_directory(cls, directory: str | Path) -> "TelegramAuthorization":
         directory_path = Path(directory)
         users = cls._load_ids(directory_path / "users.json", "allowed_user_ids")
         groups = cls._load_ids(directory_path / "groups.json", "allowed_group_ids")
-        return cls(allowed_user_ids=users, allowed_group_ids=groups)
+        return cls(allowed_user_ids=users, allowed_group_ids=groups, directory=directory_path)
 
     def is_authorized(self, user_id: str) -> bool:
         if not self._allowed_user_ids:
@@ -26,10 +28,30 @@ class TelegramAuthorization:
     def is_private_chat_authorized(self, user_id: str) -> bool:
         return self.is_authorized(user_id)
 
+    def has_explicit_private_user(self, user_id: str) -> bool:
+        return str(user_id) in self._allowed_user_ids
+
     def is_group_chat_authorized(self, group_id: str) -> bool:
         if not self._allowed_group_ids:
             return True
         return group_id in self._allowed_group_ids
+
+    def add_private_user(self, user_id: str) -> bool:
+        normalized_user_id = str(user_id)
+        if normalized_user_id in self._allowed_user_ids:
+            return False
+        self._allowed_user_ids.add(normalized_user_id)
+        return True
+
+    def persist(self) -> None:
+        if self._directory is None:
+            return
+
+        self._directory.mkdir(parents=True, exist_ok=True)
+        users_path = self._directory / "users.json"
+        users_payload = {"allowed_user_ids": sorted(self._allowed_user_ids)}
+        with users_path.open("w", encoding="utf-8") as file:
+            json.dump(users_payload, file, ensure_ascii=True, indent=2)
 
     @staticmethod
     def _load_ids(file_path: Path, expected_key: str) -> set[str]:

@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from telegram import BotCommand, Update
@@ -6,7 +7,7 @@ from telegram.ext import Application as TelegramApplication
 from telegram.ext import ContextTypes, MessageHandler, filters
 
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
-from rp_engine.adapters.telegram.beta_registry import TelegramBetaRegistry
+from rp_engine.adapters.telegram.beta_registry import TelegramBetaRegistry, TelegramBetaRequest
 from rp_engine.adapters.telegram.commands import (
     TELEGRAM_MENU_COMMANDS,
     build_help_message,
@@ -106,6 +107,7 @@ class TelegramAdapter:
         authorization: TelegramAuthorization,
         unauthorized_message: str,
         message_max_length: int,
+        admin_telegram_user_id: str = "",
         processing_feedback_factory: TelegramProcessingFeedbackFactory | None = None,
         beta_registry: TelegramBetaRegistry | None = None,
     ) -> None:
@@ -114,6 +116,7 @@ class TelegramAdapter:
         self._group_identity_resolver = group_identity_resolver
         self._character_service = character_service
         self._authorization = authorization
+        self._admin_telegram_user_id = admin_telegram_user_id
         self._unauthorized_message = unauthorized_message
         self._message_max_length = message_max_length
         self._processing_feedback_factory = (
@@ -131,6 +134,20 @@ class TelegramAdapter:
         chat = update.effective_chat
         chat_type = chat.type if chat is not None else None
         parsed_message = parse_transport_message(message.text)
+
+        if parsed_message.command in {
+            TelegramCommand.ADMIN_BETA_LIST,
+            TelegramCommand.ADMIN_BETA_ACCEPT,
+            TelegramCommand.ADMIN_BETA_REJECT,
+        }:
+            await self._handle_admin_command(
+                parsed_command=parsed_message.command,
+                argument=parsed_message.argument,
+                user=user,
+                message=message,
+                context=context,
+            )
+            return
 
         if parsed_message.command == TelegramCommand.START:
             if self._is_authorized(chat_type=chat_type, user_id=user_id, chat=chat):
@@ -389,6 +406,222 @@ class TelegramAdapter:
             return
 
         await self._reply_with_split(message=message, text=response)
+
+    async def _handle_admin_command(
+        self,
+        *,
+        parsed_command: TelegramCommand,
+        argument: str | None,
+        user: Any,
+        message: Any,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        if not self._is_admin_sender(user=user):
+            return
+
+        if parsed_command == TelegramCommand.ADMIN_BETA_LIST:
+            requests = await self._beta_registry.list_requests()
+            if not requests:
+                await self._reply_with_split(
+                    message=message,
+                    text="There are no pending beta requests.",
+                )
+                return
+
+            await self._reply_with_split(
+                message=message,
+                text=self._format_pending_requests(requests=requests),
+            )
+            return
+
+        if parsed_command == TelegramCommand.ADMIN_BETA_ACCEPT:
+            if argument is None:
+                await self._reply_with_split(
+                    message=message,
+                    text="Usage: /admin_beta_accept <telegram_id|list_index>",
+                )
+                return
+
+            target_request, resolve_error = await self._resolve_beta_request_target(
+                argument=argument
+            )
+            if target_request is None:
+                await self._reply_with_split(
+                    message=message,
+                    text=resolve_error or "No pending beta request matched the provided value.",
+                )
+                return
+
+            target_id = str(target_request.telegram_id)
+            if self._authorization.has_explicit_private_user(target_id):
+                cleaned = await self._beta_registry.remove_request(
+                    telegram_id=target_request.telegram_id
+                )
+                suffix = " and removed the pending request." if cleaned else "."
+                await self._reply_with_split(
+                    message=message,
+                    text=f"Telegram ID {target_id} is already authorized{suffix}",
+                )
+                return
+
+            self._authorization.add_private_user(target_id)
+            self._authorization.persist()
+            await self._beta_registry.remove_request(telegram_id=target_request.telegram_id)
+            await self._reply_with_split(
+                message=message,
+                text=f"Approved Telegram ID {target_id} and updated authorization.",
+            )
+
+            await self._notify_approved_user(
+                context=context,
+                telegram_id=target_request.telegram_id,
+            )
+            return
+
+        if parsed_command == TelegramCommand.ADMIN_BETA_REJECT:
+            if argument is None:
+                await self._reply_with_split(
+                    message=message,
+                    text="Usage: /admin_beta_reject <telegram_id|list_index> [reason]",
+                )
+                return
+
+            target, reason = self._split_admin_target_and_reason(argument=argument)
+            target_request, resolve_error = await self._resolve_beta_request_target(argument=target)
+            if target_request is None:
+                await self._reply_with_split(
+                    message=message,
+                    text=resolve_error or "No pending beta request matched the provided value.",
+                )
+                return
+
+            if user is None:
+                return
+
+            archived = await self._beta_registry.archive_rejection(
+                telegram_id=target_request.telegram_id,
+                rejected_by_telegram_id=user.id,
+                reason=reason,
+            )
+            if archived is None:
+                await self._reply_with_split(
+                    message=message,
+                    text="No pending beta request matched the provided value.",
+                )
+                return
+
+            await self._reply_with_split(
+                message=message,
+                text=f"Rejected Telegram ID {archived.telegram_id}.",
+            )
+
+    def _is_admin_sender(self, *, user: Any) -> bool:
+        if user is None:
+            return False
+        return str(user.id) == self._admin_telegram_user_id
+
+    async def _resolve_beta_request_target(
+        self,
+        *,
+        argument: str,
+    ) -> tuple[TelegramBetaRequest | None, str | None]:
+        token = argument.strip().split(maxsplit=1)[0]
+        try:
+            raw_value = int(token)
+        except ValueError:
+            return None, "Expected a Telegram ID or list index as a number."
+
+        requests = await self._beta_registry.list_requests()
+        if not requests:
+            return None, "There are no pending beta requests."
+
+        for request in requests:
+            if request.telegram_id == raw_value:
+                return request, None
+
+        if 1 <= raw_value <= len(requests):
+            return requests[raw_value - 1], None
+
+        return None, f"No pending beta request found for '{raw_value}'."
+
+    @staticmethod
+    def _split_admin_target_and_reason(*, argument: str) -> tuple[str, str | None]:
+        pieces = argument.strip().split(maxsplit=1)
+        target = pieces[0]
+        reason = pieces[1].strip() if len(pieces) > 1 and pieces[1].strip() else None
+        return target, reason
+
+    async def _notify_approved_user(
+        self,
+        *,
+        context: ContextTypes.DEFAULT_TYPE,
+        telegram_id: int,
+    ) -> None:
+        bot = getattr(context, "bot", None)
+        if bot is None:
+            return
+
+        send_message = getattr(bot, "send_message", None)
+        if send_message is None:
+            return
+
+        try:
+            await send_message(
+                chat_id=telegram_id,
+                text=(
+                    "Your beta request has been approved!\n\n"
+                    "You can now use the bot.\n"
+                    "Send /start to begin."
+                ),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to send beta approval notification",
+                extra={"telegram_id": telegram_id},
+            )
+
+    def _format_pending_requests(self, *, requests: list[TelegramBetaRequest]) -> str:
+        lines = ["Pending Beta Requests", ""]
+        for index, request in enumerate(requests, start=1):
+            username_value = request.username if request.username else "(none)"
+            username = username_value if username_value.startswith("@") else f"@{username_value}"
+            if username_value == "(none)":
+                username = "(none)"
+
+            full_name = " ".join(
+                part.strip()
+                for part in [request.first_name or "", request.last_name or ""]
+                if part and part.strip()
+            )
+            name_value = full_name or "(unknown)"
+            requested_at = self._format_requested_at(request.requested_at)
+            lines.extend(
+                [
+                    f"{index}.",
+                    f"Username: {username}",
+                    f"Name: {name_value}",
+                    f"Telegram ID: {request.telegram_id}",
+                    f"Requested: {requested_at}",
+                    "",
+                ]
+            )
+            lines.append("-" * 40)
+            lines.append("admin_beta_accept <telegram_id|list_index> - Approve the request")
+            lines.append("admin_beta_reject <telegram_id|list_index> [reason] - Reject the request")
+            lines.append("-" * 40)
+        return "\n".join(lines).rstrip()
+
+    @staticmethod
+    def _format_requested_at(value: str) -> str:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        normalized = parsed.astimezone(UTC)
+        return normalized.strftime("%Y-%m-%d %H:%M UTC")
 
     def _is_authorized(self, *, chat_type: str | None, user_id: str, chat: Any) -> bool:
         if chat_type in {"group", "supergroup"}:

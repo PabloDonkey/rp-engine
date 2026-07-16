@@ -111,6 +111,7 @@ Edit `.env` and set at least these required values:
 
 * `RP_ENGINE_TELEGRAM_ENABLED` (`true` to run with Telegram, `false` for local/dev without Telegram)
 * `RP_ENGINE_TELEGRAM_BOT_TOKEN` (required when Telegram is enabled)
+* `RP_ENGINE_TELEGRAM_ADMIN_USER_ID` (Telegram numeric user ID allowed to run hidden admin commands)
 * `RP_ENGINE_LMSTUDIO_API_HOST` (LM Studio API host in `host:port` format)
 * `RP_ENGINE_LMSTUDIO_MODEL` (loaded model identifier)
 
@@ -194,6 +195,16 @@ Registered Telegram menu commands:
 * After a normal user -> assistant turn, it regenerates from the latest user message.
 * After `/continue`, it regenerates as a continuation from the previous assistant reply.
 * Repeated `/regenerate` calls always replace only the latest assistant reply.
+
+## Telegram Admin Commands (Hidden)
+
+These commands are intentionally hidden from Telegram command menu registration and are for administrators only.
+
+* `/admin_beta_list` - List pending beta requests in chronological order.
+* `/admin_beta_accept <telegram_id|list_index>` - Approve a pending request, add user to authorization, and remove request.
+* `/admin_beta_reject <telegram_id|list_index> [reason]` - Reject a pending request and archive it under `data/telegram/beta_rejected/`.
+
+Only the user configured in `RP_ENGINE_TELEGRAM_ADMIN_USER_ID` can execute these commands.
 
 ---
 

@@ -109,6 +109,10 @@ def build_container(settings: Settings) -> AppContainer:
         if not settings.telegram_bot_token:
             logger.error("Configuration error", extra={"field": "telegram_bot_token"})
             raise ValueError("RP_ENGINE_TELEGRAM_BOT_TOKEN must be set when Telegram is enabled.")
+        if not settings.telegram_admin_user_id:
+            logger.warning(
+                "Telegram admin user ID is not configured; hidden admin commands are disabled."
+            )
 
         telegram_adapter = TelegramAdapter(
             chat_service=chat_service,
@@ -118,6 +122,7 @@ def build_container(settings: Settings) -> AppContainer:
             authorization=TelegramAuthorization.from_directory(
                 settings.telegram_authorization_dir
             ),
+            admin_telegram_user_id=settings.telegram_admin_user_id,
             unauthorized_message=settings.telegram_unauthorized_message,
             message_max_length=settings.telegram_message_max_length,
         )

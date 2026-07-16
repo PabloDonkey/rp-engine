@@ -12,6 +12,12 @@ def test_missing_telegram_token_raises_clear_error() -> None:
         build_container(settings)
 
 
+def test_telegram_admin_user_id_is_stripped() -> None:
+    settings = Settings(telegram_admin_user_id=" 12345 ")
+
+    assert settings.telegram_admin_user_id == "12345"
+
+
 def test_missing_lmstudio_host_fails_validation() -> None:
     with pytest.raises(ValidationError, match="RP_ENGINE_LMSTUDIO_API_HOST must not be empty"):
         Settings(lmstudio_api_host="")

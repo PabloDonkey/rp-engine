@@ -27,6 +27,7 @@ class Settings(BaseSettings):
 
     telegram_enabled: bool = False
     telegram_bot_token: str = ""
+    telegram_admin_user_id: str = ""
     telegram_authorization_dir: str = "data/telegram/authorization"
     telegram_unauthorized_message: str = DEFAULT_TELEGRAM_UNAUTHORIZED_MESSAGE
     telegram_message_max_length: int = Field(default=3800, ge=1)
@@ -76,6 +77,11 @@ class Settings(BaseSettings):
         if not cleaned:
             raise ValueError("RP_ENGINE_TELEGRAM_UNAUTHORIZED_MESSAGE must not be empty.")
         return cleaned
+
+    @field_validator("telegram_admin_user_id")
+    @classmethod
+    def validate_telegram_admin_user_id(cls, value: str) -> str:
+        return value.strip()
 
     @field_validator("default_world_id")
     @classmethod

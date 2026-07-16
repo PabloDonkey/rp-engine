@@ -66,6 +66,13 @@ def test_parse_transport_message_for_character_command_argument() -> None:
     assert parsed.argument == "Belzebuth"
 
 
+def test_parse_transport_message_for_admin_accept_command_argument() -> None:
+    parsed = parse_transport_message("/admin_beta_accept 123456")
+
+    assert parsed.command == TelegramCommand.ADMIN_BETA_ACCEPT
+    assert parsed.argument == "123456"
+
+
 def test_build_help_message_lists_supported_commands() -> None:
     help_message = build_help_message()
 
@@ -77,3 +84,6 @@ def test_build_help_message_lists_supported_commands() -> None:
     assert "/clear" in help_message
     assert "/regenerate" in help_message
     assert "/character" in help_message
+    assert "/admin_beta_list" not in help_message
+    assert "/admin_beta_accept" not in help_message
+    assert "/admin_beta_reject" not in help_message

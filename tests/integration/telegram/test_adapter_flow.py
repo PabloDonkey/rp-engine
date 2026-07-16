@@ -154,6 +154,7 @@ class FakeChatMember:
 class FakeBot:
     def __init__(self, member_status: str = "member") -> None:
         self._member_status = member_status
+        self.send_message = AsyncMock()
 
     async def get_chat_member(self, *, chat_id: int, user_id: int) -> FakeChatMember:
         del chat_id
@@ -164,6 +165,34 @@ class FakeBot:
 @dataclass
 class FakeContext:
     bot: FakeBot
+
+
+def _write_beta_request_file(
+    *,
+    base_path: Path,
+    telegram_id: int,
+    requested_at: str,
+    username: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+) -> None:
+    request_path = base_path / "telegram" / "beta_requests" / f"{telegram_id}.json"
+    request_path.parent.mkdir(parents=True, exist_ok=True)
+    request_path.write_text(
+        json.dumps(
+            {
+                "telegram_id": telegram_id,
+                "username": username,
+                "first_name": first_name,
+                "last_name": last_name,
+                "requested_at": requested_at,
+                "status": "waiting_for_beta_seat",
+            },
+            ensure_ascii=True,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 @pytest.mark.asyncio
@@ -985,3 +1014,253 @@ async def test_identity_resolution_prefers_persona_display_name() -> None:
 
     resolve_kwargs = identity_resolver.resolve_identity.await_args.kwargs
     assert resolve_kwargs["display_name"] == "Captain Alice"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_list_pending_beta_requests_in_chronological_order(tmp_path: Path) -> None:
+    chat_service = AsyncMock()
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    _write_beta_request_file(
+        base_path=tmp_path,
+        telegram_id=987654321,
+        requested_at="2026-07-16T09:18:00+00:00",
+        username="AnotherUser",
+        first_name="Alice",
+    )
+    _write_beta_request_file(
+        base_path=tmp_path,
+        telegram_id=123456789,
+        requested_at="2026-07-15T13:42:00+00:00",
+        username="PabloDonkey",
+        first_name="Pablo",
+    )
+
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+        admin_telegram_user_id="1",
+        beta_registry=registry,
+    )
+
+    message = FakeMessage(text="/admin_beta_list")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=1),
+        effective_chat=FakeChat(id=1, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
+
+    assert len(message.responses) == 1
+    response = message.responses[0]
+    assert "Pending Beta Requests" in response
+    assert response.index("Telegram ID: 123456789") < response.index("Telegram ID: 987654321")
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_list_pending_beta_requests(tmp_path: Path) -> None:
+    chat_service = AsyncMock()
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    _write_beta_request_file(
+        base_path=tmp_path,
+        telegram_id=123456789,
+        requested_at="2026-07-15T13:42:00+00:00",
+    )
+
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+        admin_telegram_user_id="1",
+        beta_registry=registry,
+    )
+
+    message = FakeMessage(text="/admin_beta_list")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=2),
+        effective_chat=FakeChat(id=2, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
+
+    assert message.responses == []
+
+
+@pytest.mark.asyncio
+async def test_admin_can_approve_by_telegram_id_and_persist_authorization(tmp_path: Path) -> None:
+    chat_service = AsyncMock()
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    await registry.create_request(
+        telegram_id=999,
+        username="PabloDonkey",
+        first_name="Pablo",
+        last_name="Smith",
+    )
+
+    authorization_dir = tmp_path / "telegram" / "authorization"
+    authorization = TelegramAuthorization.from_directory(authorization_dir)
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=authorization,
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+        admin_telegram_user_id="1",
+        beta_registry=registry,
+    )
+
+    bot = FakeBot()
+    message = FakeMessage(text="/admin_beta_accept 999")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=1),
+        effective_chat=FakeChat(id=1, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(bot)))
+
+    assert message.responses == ["Approved Telegram ID 999 and updated authorization."]
+    assert not (tmp_path / "telegram" / "beta_requests" / "999.json").exists()
+    users_payload = json.loads((authorization_dir / "users.json").read_text(encoding="utf-8"))
+    assert users_payload["allowed_user_ids"] == ["999"]
+    bot.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_can_approve_by_list_index(tmp_path: Path) -> None:
+    chat_service = AsyncMock()
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    _write_beta_request_file(
+        base_path=tmp_path,
+        telegram_id=222,
+        requested_at="2026-07-15T10:00:00+00:00",
+    )
+    _write_beta_request_file(
+        base_path=tmp_path,
+        telegram_id=333,
+        requested_at="2026-07-15T11:00:00+00:00",
+    )
+
+    authorization_dir = tmp_path / "telegram" / "authorization"
+    authorization = TelegramAuthorization.from_directory(authorization_dir)
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=authorization,
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+        admin_telegram_user_id="1",
+        beta_registry=registry,
+    )
+
+    message = FakeMessage(text="/admin_beta_accept 1")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=1),
+        effective_chat=FakeChat(id=1, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
+
+    assert message.responses == ["Approved Telegram ID 222 and updated authorization."]
+    users_payload = json.loads((authorization_dir / "users.json").read_text(encoding="utf-8"))
+    assert users_payload["allowed_user_ids"] == ["222"]
+    assert not (tmp_path / "telegram" / "beta_requests" / "222.json").exists()
+    assert (tmp_path / "telegram" / "beta_requests" / "333.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_admin_approval_reports_already_authorized_and_cleans_pending(
+    tmp_path: Path,
+) -> None:
+    chat_service = AsyncMock()
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    await registry.create_request(
+        telegram_id=999,
+        username="existing",
+        first_name="Existing",
+        last_name="User",
+    )
+
+    authorization = TelegramAuthorization({"999"})
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=authorization,
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+        admin_telegram_user_id="1",
+        beta_registry=registry,
+    )
+
+    message = FakeMessage(text="/admin_beta_accept 999")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=1),
+        effective_chat=FakeChat(id=1, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
+
+    assert message.responses == [
+        "Telegram ID 999 is already authorized and removed the pending request."
+    ]
+    assert not (tmp_path / "telegram" / "beta_requests" / "999.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_admin_can_reject_pending_request_and_archive_reason(tmp_path: Path) -> None:
+    chat_service = AsyncMock()
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    await registry.create_request(
+        telegram_id=888,
+        username="reject_me",
+        first_name="Reject",
+        last_name="Me",
+    )
+
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+        admin_telegram_user_id="1",
+        beta_registry=registry,
+    )
+
+    message = FakeMessage(text="/admin_beta_reject 888 incomplete_profile")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=1),
+        effective_chat=FakeChat(id=1, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
+
+    assert message.responses == ["Rejected Telegram ID 888."]
+    assert not (tmp_path / "telegram" / "beta_requests" / "888.json").exists()
+    archived_payload = json.loads(
+        (tmp_path / "telegram" / "beta_rejected" / "888.json").read_text(encoding="utf-8")
+    )
+    assert archived_payload["status"] == "rejected"
+    assert archived_payload["rejected_by_telegram_id"] == 1
+    assert archived_payload["rejection_reason"] == "incomplete_profile"
