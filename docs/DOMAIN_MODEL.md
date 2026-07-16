@@ -60,6 +60,8 @@ Roleplay personas are represented as reusable `Character` entities.
 `Character` fields:
 
 * `id` (`str`) - stable application-owned identifier (slug or UUID).
+* `owner_id` (`UUID`) - canonical owner user identifier.
+* `visibility` (`CharacterVisibility`) - access level (`PRIVATE`, `SHARED`, `PUBLIC`).
 * `name` (`str`) - display name.
 * `description` (`str`) - high-level identity description.
 * `personality` (`str`) - behavior profile.

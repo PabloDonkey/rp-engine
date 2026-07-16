@@ -3,8 +3,16 @@ from pydantic import ValidationError
 
 from rp_engine.app.main import build_container
 from rp_engine.infrastructure.config.settings import Settings
-from rp_engine.infrastructure.postgres import PostgresConversationStore, PostgresSessionStore
-from rp_engine.infrastructure.storage import JsonConversationStore, JsonSessionStore
+from rp_engine.infrastructure.postgres import (
+    PostgresCharacterStore,
+    PostgresConversationStore,
+    PostgresSessionStore,
+)
+from rp_engine.infrastructure.storage import (
+    JsonCharacterStore,
+    JsonConversationStore,
+    JsonSessionStore,
+)
 
 
 def test_missing_telegram_token_raises_clear_error() -> None:
@@ -93,6 +101,7 @@ def test_build_container_uses_json_stores_by_default() -> None:
 
     assert isinstance(container.chat_service._conversation_store, JsonConversationStore)
     assert isinstance(container.chat_service._session_store, JsonSessionStore)
+    assert isinstance(container.chat_service._character_store, JsonCharacterStore)
 
 
 def test_build_container_uses_postgres_stores_when_enabled() -> None:
@@ -105,6 +114,7 @@ def test_build_container_uses_postgres_stores_when_enabled() -> None:
 
     assert isinstance(container.chat_service._conversation_store, PostgresConversationStore)
     assert isinstance(container.chat_service._session_store, PostgresSessionStore)
+    assert isinstance(container.chat_service._character_store, PostgresCharacterStore)
 
 
 def test_empty_postgres_host_fails_validation() -> None:

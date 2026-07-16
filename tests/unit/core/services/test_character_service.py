@@ -2,9 +2,10 @@ from uuid import UUID
 
 import pytest
 
-from rp_engine.core.character.character import Character
 from rp_engine.application.services.character_service import CharacterService
 from rp_engine.application.services.commands import SelectCharacterCommand
+from rp_engine.core.character.character import Character
+from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.session.session import Session
 from rp_engine.core.world.world import World
 
@@ -23,9 +24,18 @@ class InMemoryCharacterStore:
                 return character
         return None
 
-    async def create_minimal(self, *, character_id: str, name: str) -> Character:
+    async def create_minimal(
+        self,
+        *,
+        character_id: str,
+        owner_id: UUID,
+        name: str,
+        visibility: CharacterVisibility = CharacterVisibility.PRIVATE,
+    ) -> Character:
         created = Character(
             id=character_id,
+            owner_id=owner_id,
+            visibility=visibility,
             name=name,
             description=f"Character profile for {name}.",
             personality="Open-ended roleplay persona.",
@@ -178,11 +188,44 @@ async def test_different_groups_do_not_share_sessions() -> None:
     group_a = UUID("00000000-0000-0000-0000-000000000201")
     group_b = UUID("00000000-0000-0000-0000-000000000202")
 
-    session_a = await service.ensure_active_session_for_group(group_id=group_a)
-    session_b = await service.ensure_active_session_for_group(group_id=group_b)
+    session_a = await service.ensure_active_session_for_group(
+        group_id=group_a,
+        actor_user_id=UUID("00000000-0000-0000-0000-000000000900"),
+    )
+    session_b = await service.ensure_active_session_for_group(
+        group_id=group_b,
+        actor_user_id=UUID("00000000-0000-0000-0000-000000000901"),
+    )
 
     assert session_a.id != session_b.id
     assert session_a.owner_kind == "group"
     assert session_b.owner_kind == "group"
     assert session_a.owner_id == group_a
     assert session_b.owner_id == group_b
+
+
+@pytest.mark.asyncio
+async def test_private_character_owned_by_another_user_is_rejected() -> None:
+    owner_user_id = UUID("00000000-0000-0000-0000-000000000301")
+    requester_user_id = UUID("00000000-0000-0000-0000-000000000302")
+    character_store = InMemoryCharacterStore()
+    character_store._items["belzebuth"] = Character(
+        id="belzebuth",
+        owner_id=owner_user_id,
+        visibility=CharacterVisibility.PRIVATE,
+        name="Belzebuth",
+        description="Character profile for Belzebuth.",
+        personality="Open-ended roleplay persona.",
+    )
+    service = CharacterService(
+        character_store=character_store,
+        world_store=InMemoryWorldStore(),
+        session_store=InMemorySessionStore(),
+        default_world_id="default",
+    )
+
+    with pytest.raises(ValueError, match="private and belongs to another user"):
+        await service.select_character_for_user(
+            user_id=requester_user_id,
+            command=SelectCharacterCommand(character_name="Belzebuth"),
+        )

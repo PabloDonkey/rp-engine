@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from rp_engine.core.character.character import Character
+from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.conversation.builder import ConversationBuilder, ConversationBuilderInput
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
@@ -23,6 +24,8 @@ def test_builder_resolves_templates_and_orders_messages() -> None:
     user = User(id=session.owner_id, display_name="Pablo")
     character = Character(
         id="belzebuth",
+        owner_id=session.owner_id,
+        visibility=CharacterVisibility.PRIVATE,
         name="Belzebuth",
         description="{{char}} likes {{user}}",
         personality="Bold",

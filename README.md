@@ -163,19 +163,45 @@ uv run python -m uvicorn --app-dir src rp_engine.app.main:app --reload --host 0.
 Start PostgreSQL + pgAdmin:
 
 ```bash
-docker compose up -d
+scripts/db_services.sh up
+```
+
+If your Docker CLI does not include the `compose` subcommand, use:
+
+```bash
+docker-compose up -d
+```
+
+or use the repository helper that auto-detects both variants:
+
+```bash
+scripts/compose.sh up -d
+```
+
+If you get `permission denied while trying to connect to the docker API`, add your user to the `docker` group and re-login:
+
+```bash
+sudo usermod -aG docker "$USER"
+# then log out and log in again
+```
+
+If you want to update Docker to use the modern Compose plugin (`docker compose`), install:
+
+```bash
+sudo apt update
+sudo apt install docker-compose-v2
 ```
 
 Stop services:
 
 ```bash
-docker compose down
+scripts/db_services.sh down
 ```
 
 Reset database data (removes all postgres and pgAdmin persisted state):
 
 ```bash
-docker compose down -v
+scripts/db_services.sh reset
 ```
 
 Persistent data is stored in Docker named volumes:
@@ -221,6 +247,51 @@ uv run mypy .
 
 ```bash
 uv run pytest
+```
+
+## PostgreSQL Tests
+
+Launch local database services first:
+
+```bash
+scripts/db_services.sh up
+```
+
+Fallback when `docker compose` is unavailable:
+
+```bash
+docker-compose up -d
+```
+
+Recommended one-shot command (starts DB services and runs tests in project environment):
+
+```bash
+scripts/test_postgres.sh
+```
+
+Run all tests with PostgreSQL integration tests enabled:
+
+```bash
+RP_ENGINE_RUN_POSTGRES_TESTS=1 /home/pablo/projects/rp-engine/.venv/bin/python -m pytest
+```
+
+Run only PostgreSQL character contract tests:
+
+```bash
+RP_ENGINE_RUN_POSTGRES_TESTS=1 /home/pablo/projects/rp-engine/.venv/bin/python -m pytest tests/integration/infrastructure/test_character_store_contract_postgres.py
+```
+
+If you see import errors like missing `fastapi`, `telegram`, or `lmstudio`, you are likely using a system `pytest` instead of the project virtual environment. Use one of these options:
+
+```bash
+source .venv/bin/activate
+RP_ENGINE_RUN_POSTGRES_TESTS=1 pytest
+```
+
+or
+
+```bash
+RP_ENGINE_RUN_POSTGRES_TESTS=1 /home/pablo/projects/rp-engine/.venv/bin/python -m pytest
 ```
 
 ## First Run Test

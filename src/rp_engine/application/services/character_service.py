@@ -2,6 +2,7 @@ import re
 from uuid import UUID
 
 from rp_engine.core.character.character import Character
+from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.ports.character_store import CharacterStore
 from rp_engine.core.ports.session_store import SessionStore
 from rp_engine.core.ports.world_store import WorldStore
@@ -32,6 +33,7 @@ class CharacterService:
         return await self._select_character(
             owner_kind="user",
             owner_id=user_id,
+            character_owner_id=user_id,
             command=command,
         )
 
@@ -39,11 +41,13 @@ class CharacterService:
         self,
         *,
         group_id: UUID,
+        actor_user_id: UUID,
         command: SelectCharacterCommand,
     ) -> Session:
         return await self._select_character(
             owner_kind="group",
             owner_id=group_id,
+            character_owner_id=actor_user_id,
             command=command,
         )
 
@@ -52,6 +56,7 @@ class CharacterService:
         *,
         owner_kind: SessionOwnerKind,
         owner_id: UUID,
+        character_owner_id: UUID,
         command: SelectCharacterCommand,
     ) -> Session:
         raw_name = command.character_name.strip()
@@ -62,7 +67,12 @@ class CharacterService:
         if not slug:
             raise ValueError("Character name must contain letters or numbers.")
 
-        character = await self._resolve_or_create_character(raw_name=raw_name, slug=slug)
+        character = await self._resolve_or_create_character(
+            raw_name=raw_name,
+            slug=slug,
+            owner_id=character_owner_id,
+            visibility=command.visibility,
+        )
         world = await self._world_store.get_by_id(self._default_world_id)
         if world is None:
             world = await self._world_store.create_default(world_id=self._default_world_id)
@@ -102,16 +112,30 @@ class CharacterService:
         return saved
 
     async def ensure_active_session_for_user(self, *, user_id: UUID) -> Session:
-        return await self._ensure_active_session(owner_kind="user", owner_id=user_id)
+        return await self._ensure_active_session(
+            owner_kind="user",
+            owner_id=user_id,
+            character_owner_id=user_id,
+        )
 
-    async def ensure_active_session_for_group(self, *, group_id: UUID) -> Session:
-        return await self._ensure_active_session(owner_kind="group", owner_id=group_id)
+    async def ensure_active_session_for_group(
+        self,
+        *,
+        group_id: UUID,
+        actor_user_id: UUID,
+    ) -> Session:
+        return await self._ensure_active_session(
+            owner_kind="group",
+            owner_id=group_id,
+            character_owner_id=actor_user_id,
+        )
 
     async def _ensure_active_session(
         self,
         *,
         owner_kind: SessionOwnerKind,
         owner_id: UUID,
+        character_owner_id: UUID,
     ) -> Session:
         active = await self._session_store.get_active_for_owner(
             owner_kind=owner_kind,
@@ -124,6 +148,8 @@ class CharacterService:
         default_character = await self._resolve_or_create_character(
             raw_name="Default Character",
             slug="default",
+            owner_id=character_owner_id,
+            visibility=CharacterVisibility.PUBLIC,
         )
         world = await self._world_store.get_by_id(self._default_world_id)
         if world is None:
@@ -149,16 +175,38 @@ class CharacterService:
         )
         return saved
 
-    async def _resolve_or_create_character(self, *, raw_name: str, slug: str) -> Character:
+    async def _resolve_or_create_character(
+        self,
+        *,
+        raw_name: str,
+        slug: str,
+        owner_id: UUID,
+        visibility: CharacterVisibility,
+    ) -> Character:
         existing = await self._character_store.get_by_id(slug)
         if existing is not None:
+            self._assert_character_access(character=existing, actor_user_id=owner_id)
             return existing
 
         by_name = await self._character_store.find_by_name(raw_name)
         if by_name is not None:
+            self._assert_character_access(character=by_name, actor_user_id=owner_id)
             return by_name
 
-        return await self._character_store.create_minimal(character_id=slug, name=raw_name)
+        return await self._character_store.create_minimal(
+            character_id=slug,
+            owner_id=owner_id,
+            name=raw_name,
+            visibility=visibility,
+        )
+
+    @staticmethod
+    def _assert_character_access(*, character: Character, actor_user_id: UUID) -> None:
+        if (
+            character.visibility == CharacterVisibility.PRIVATE
+            and character.owner_id != actor_user_id
+        ):
+            raise ValueError("Character is private and belongs to another user.")
 
     @staticmethod
     def _slugify(value: str) -> str:

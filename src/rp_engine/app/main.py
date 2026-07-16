@@ -19,10 +19,11 @@ from rp_engine.application.services.identity_resolver import IdentityResolver
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
-from rp_engine.core.ports import ConversationStore, LLMProvider, SessionStore
+from rp_engine.core.ports import CharacterStore, ConversationStore, LLMProvider, SessionStore
 from rp_engine.infrastructure.config.settings import Settings, get_settings
 from rp_engine.infrastructure.llm.lmstudio.provider import LMStudioProvider
 from rp_engine.infrastructure.postgres import (
+    PostgresCharacterStore,
     PostgresConfig,
     PostgresConversationStore,
     PostgresSessionStore,
@@ -76,20 +77,22 @@ def build_container(settings: Settings) -> AppContainer:
     )
     conversation_store: ConversationStore
     session_store: SessionStore
+    character_store: CharacterStore
     if settings.persistence_backend == "postgres":
         postgres_config = PostgresConfig.from_settings(settings)
         postgres_engine = create_engine(postgres_config)
         postgres_session_factory = create_session_factory(postgres_engine)
+        character_store = PostgresCharacterStore(postgres_session_factory)
         conversation_store = PostgresConversationStore(postgres_session_factory)
         session_store = PostgresSessionStore(postgres_session_factory)
     else:
+        character_store = JsonCharacterStore()
         conversation_store = JsonConversationStore()
         session_store = JsonSessionStore()
 
     generation_trace_store = JsonGenerationTraceStore()
     user_identity_store = JsonUserIdentityStore()
     group_identity_store = JsonGroupIdentityStore()
-    character_store = JsonCharacterStore()
     world_store = JsonWorldStore()
     identity_resolver = IdentityResolver(store=user_identity_store)
     group_identity_resolver = GroupIdentityResolver(store=group_identity_store)

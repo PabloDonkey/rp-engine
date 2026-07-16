@@ -13,10 +13,10 @@ from rp_engine.adapters.telegram.adapter import TelegramAdapter
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.adapters.telegram.beta_registry import TelegramBetaRegistry
 from rp_engine.adapters.telegram.commands import HELP_MESSAGE
+from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import LLMConnectionError
 from rp_engine.core.memory.models import ConversationIdentity
-from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
 
@@ -53,8 +53,14 @@ class FakeCharacterService:
             created_at=FIXED_CREATED_AT,
         )
 
-    async def ensure_active_session_for_group(self, *, group_id: UUID) -> Session:
+    async def ensure_active_session_for_group(
+        self,
+        *,
+        group_id: UUID,
+        actor_user_id: UUID,
+    ) -> Session:
         del group_id
+        del actor_user_id
         return Session(
             id=FIXED_SESSION_ID,
             owner_kind="group",
@@ -85,9 +91,11 @@ class FakeCharacterService:
         self,
         *,
         group_id: UUID,
+        actor_user_id: UUID,
         command: SelectCharacterCommand,
     ) -> Session:
         del group_id
+        del actor_user_id
         character_id = command.character_name.lower()
         return Session(
             id=FIXED_SESSION_ID,

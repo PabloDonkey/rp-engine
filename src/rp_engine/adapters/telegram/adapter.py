@@ -17,11 +17,11 @@ from rp_engine.adapters.telegram.feedback import TelegramProcessingFeedbackFacto
 from rp_engine.adapters.telegram.invocation_policy import should_process_message
 from rp_engine.adapters.telegram.models import TelegramCommand
 from rp_engine.adapters.telegram.splitter import split_message
+from rp_engine.application.services.chat_service import ChatService
+from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import LLMConnectionError, LLMGenerationError, LLMTimeoutError
 from rp_engine.core.memory.models import ConversationIdentity
-from rp_engine.application.services.chat_service import ChatService
-from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
 
@@ -78,12 +78,18 @@ class CharacterServicePort(Protocol):
         self,
         *,
         group_id: Any,
+        actor_user_id: Any,
         command: SelectCharacterCommand,
     ) -> Session: ...
 
     async def ensure_active_session_for_user(self, *, user_id: Any) -> Session: ...
 
-    async def ensure_active_session_for_group(self, *, group_id: Any) -> Session: ...
+    async def ensure_active_session_for_group(
+        self,
+        *,
+        group_id: Any,
+        actor_user_id: Any,
+    ) -> Session: ...
 
 
 class GroupIdentityResolverPort(Protocol):
@@ -233,6 +239,7 @@ class TelegramAdapter:
                 else:
                     selected_session = await self._character_service.select_character_for_group(
                         group_id=resolved_group.id,
+                        actor_user_id=resolved_user.id,
                         command=SelectCharacterCommand(character_name=character_name),
                     )
             except ValueError as exc:
@@ -254,7 +261,8 @@ class TelegramAdapter:
             )
         else:
             active_session = await self._character_service.ensure_active_session_for_group(
-                group_id=resolved_group.id
+                group_id=resolved_group.id,
+                actor_user_id=resolved_user.id,
             )
         conversation_identity = ConversationIdentity.for_session(str(active_session.id))
 

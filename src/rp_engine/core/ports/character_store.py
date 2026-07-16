@@ -1,6 +1,8 @@
 from typing import Protocol
+from uuid import UUID
 
 from rp_engine.core.character.character import Character
+from rp_engine.core.character.visibility import CharacterVisibility
 
 
 class CharacterStore(Protocol):
@@ -8,4 +10,11 @@ class CharacterStore(Protocol):
 
     async def find_by_name(self, name: str) -> Character | None: ...
 
-    async def create_minimal(self, *, character_id: str, name: str) -> Character: ...
+    async def create_minimal(
+        self,
+        *,
+        character_id: str,
+        owner_id: UUID,
+        name: str,
+        visibility: CharacterVisibility = CharacterVisibility.PRIVATE,
+    ) -> Character: ...

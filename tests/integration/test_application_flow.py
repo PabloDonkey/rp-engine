@@ -8,7 +8,10 @@ from telegram import Update
 
 from rp_engine.adapters.telegram.adapter import TelegramAdapter
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
+from rp_engine.application.services.chat_service import ChatService
+from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.character.character import Character
+from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
@@ -18,8 +21,6 @@ from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.memory.models import MemoryKey
-from rp_engine.application.services.chat_service import ChatService
-from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.session.session import Session
 from rp_engine.core.user.identity import UserIdentity
 from rp_engine.core.user.user import User
@@ -57,8 +58,14 @@ class FakeCharacterService:
             created_at=datetime.now(UTC),
         )
 
-    async def ensure_active_session_for_group(self, *, group_id: UUID) -> Session:
+    async def ensure_active_session_for_group(
+        self,
+        *,
+        group_id: UUID,
+        actor_user_id: UUID,
+    ) -> Session:
         del group_id
+        del actor_user_id
         return Session(
             id=FIXED_SESSION_ID,
             owner_kind="group",
@@ -88,9 +95,11 @@ class FakeCharacterService:
         self,
         *,
         group_id: UUID,
+        actor_user_id: UUID,
         command: SelectCharacterCommand,
     ) -> Session:
         del group_id
+        del actor_user_id
         return Session(
             id=FIXED_SESSION_ID,
             owner_kind="group",
@@ -243,6 +252,8 @@ class FakeCharacterStore:
             return None
         return Character(
             id="default",
+            owner_id=FIXED_USER_ID,
+            visibility=CharacterVisibility.PRIVATE,
             name="Belzebuth",
             description="{{char}} is a dragon companion of {{user}}.",
             personality="Protective and witty.",
@@ -253,9 +264,18 @@ class FakeCharacterStore:
         del name
         return None
 
-    async def create_minimal(self, *, character_id: str, name: str) -> Character:
+    async def create_minimal(
+        self,
+        *,
+        character_id: str,
+        owner_id: UUID,
+        name: str,
+        visibility: CharacterVisibility = CharacterVisibility.PRIVATE,
+    ) -> Character:
         return Character(
             id=character_id,
+            owner_id=owner_id,
+            visibility=visibility,
             name=name,
             description=f"Character profile for {name}.",
             personality="Open-ended roleplay persona.",

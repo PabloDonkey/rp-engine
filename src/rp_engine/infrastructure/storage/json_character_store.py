@@ -2,10 +2,14 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from rp_engine.core.character.character import Character
 from rp_engine.core.character.character_card import CharacterCard
+from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.ports.character_store import CharacterStore
+
+DEFAULT_OWNER_ID = UUID("00000000-0000-0000-0000-000000000000")
 
 
 class JsonCharacterStore(CharacterStore):
@@ -38,7 +42,14 @@ class JsonCharacterStore(CharacterStore):
                 return character
         return None
 
-    async def create_minimal(self, *, character_id: str, name: str) -> Character:
+    async def create_minimal(
+        self,
+        *,
+        character_id: str,
+        owner_id: UUID,
+        name: str,
+        visibility: CharacterVisibility = CharacterVisibility.PRIVATE,
+    ) -> Character:
         async with self._lock:
             existing = await self.get_by_id(character_id)
             if existing is not None:
@@ -53,6 +64,9 @@ class JsonCharacterStore(CharacterStore):
                 personality="Open-ended roleplay persona.",
             )
             payload: dict[str, object] = {
+                "id": character_id,
+                "owner_id": str(owner_id),
+                "visibility": visibility.value,
                 "name": card.name,
                 "description": card.description,
                 "personality": card.personality,
@@ -68,6 +82,8 @@ class JsonCharacterStore(CharacterStore):
             )
             return Character(
                 id=character_id,
+                owner_id=owner_id,
+                visibility=visibility,
                 name=card.name,
                 description=card.description,
                 personality=card.personality,
@@ -77,6 +93,8 @@ class JsonCharacterStore(CharacterStore):
 
     @staticmethod
     def _to_character(*, character_id: str, payload: dict[str, Any]) -> Character | None:
+        owner_id = payload.get("owner_id")
+        visibility = payload.get("visibility", CharacterVisibility.PRIVATE.value)
         name = payload.get("name")
         description = payload.get("description")
         personality = payload.get("personality")
@@ -96,8 +114,25 @@ class JsonCharacterStore(CharacterStore):
             for key, value in metadata.items()
             if isinstance(key, str) and isinstance(value, str)
         }
+
+        parsed_owner_id = DEFAULT_OWNER_ID
+        if isinstance(owner_id, str):
+            try:
+                parsed_owner_id = UUID(owner_id)
+            except ValueError:
+                parsed_owner_id = DEFAULT_OWNER_ID
+
+        parsed_visibility = CharacterVisibility.PRIVATE
+        if isinstance(visibility, str):
+            try:
+                parsed_visibility = CharacterVisibility(visibility)
+            except ValueError:
+                parsed_visibility = CharacterVisibility.PRIVATE
+
         return Character(
             id=character_id,
+            owner_id=parsed_owner_id,
+            visibility=parsed_visibility,
             name=name,
             description=description,
             personality=personality,

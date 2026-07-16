@@ -20,6 +20,10 @@ Milestone 1 migrates only these repositories to PostgreSQL:
 - SessionStore
 - ConversationStore
 
+Milestone 2 additionally migrates:
+
+- CharacterStore (character definition only)
+
 All other repositories remain on JSON in this milestone:
 
 - CharacterStore
@@ -70,6 +74,33 @@ Columns:
 
 Message ordering is reconstructed by created_at then id.
 
+### characters
+
+Stores reusable Character Definitions.
+
+Columns:
+
+- pk (UUID, internal PK)
+- character_id (TEXT, unique external/domain identifier)
+- owner_id (UUID)
+- visibility (TEXT enum-compatible: PRIVATE, SHARED, PUBLIC)
+- name (TEXT)
+- description (TEXT)
+- personality (TEXT)
+- greeting (TEXT)
+- metadata (jsonb)
+- created_at (timestamptz)
+- updated_at (timestamptz)
+
+Ownership relationship:
+
+- One owner_id can own many character definitions.
+- Visibility affects access semantics, not ownership.
+
+JSONB usage:
+
+- metadata stores extensible character attributes without premature table normalization.
+
 ## Repository Mapping
 
 - SessionStore -> PostgresSessionStore
@@ -83,6 +114,11 @@ Message ordering is reconstructed by created_at then id.
   - save_message
   - load_messages
   - clear
+
+- CharacterStore -> PostgresCharacterStore
+  - get_by_id
+  - find_by_name
+  - create_minimal
 
 The same interfaces are implemented by JSON stores. The composition root decides which implementation to wire.
 

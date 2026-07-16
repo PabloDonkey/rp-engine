@@ -4,7 +4,9 @@ from uuid import UUID
 
 import pytest
 
+from rp_engine.application.services.chat_service import ChatService
 from rp_engine.core.character.character import Character
+from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
@@ -13,7 +15,6 @@ from rp_engine.core.group.group import Group
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
-from rp_engine.application.services.chat_service import ChatService
 from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
 from rp_engine.core.world.world import World
@@ -37,6 +38,8 @@ def session_context() -> tuple[Session, User, Character, World]:
     user = User(id=USER_ID, display_name="Pablo")
     character = Character(
         id="belzebuth",
+        owner_id=USER_ID,
+        visibility=CharacterVisibility.PRIVATE,
         name="Belzebuth",
         description="{{char}} is a dragon companion of {{user}}.",
         personality="Protective and witty.",
@@ -399,6 +402,8 @@ async def test_chat_service_uses_group_owner_as_template_user() -> None:
     character_store.get_by_id = AsyncMock(
         return_value=Character(
             id="belzebuth",
+            owner_id=USER_ID,
+            visibility=CharacterVisibility.PRIVATE,
             name="Belzebuth",
             description="{{char}} guards {{user}}.",
             personality="Protective and witty.",
