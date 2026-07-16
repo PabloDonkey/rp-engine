@@ -25,6 +25,16 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+    persistence_backend: Literal["json", "postgres"] = "json"
+    postgres_host: str = "localhost"
+    postgres_port: int = Field(default=5432, ge=1, le=65535)
+    postgres_database: str = "rp_engine"
+    postgres_user: str = "rp_engine"
+    postgres_password: str = "change_me"
+    postgres_ssl_mode: Literal["disable", "require"] = "disable"
+    postgres_pool_size: int = Field(default=10, ge=1)
+    postgres_max_overflow: int = Field(default=10, ge=0)
+
     telegram_enabled: bool = False
     telegram_bot_token: str = ""
     telegram_admin_user_id: str = ""
@@ -89,6 +99,43 @@ class Settings(BaseSettings):
         cleaned = value.strip().lower()
         if not cleaned:
             raise ValueError("RP_ENGINE_DEFAULT_WORLD_ID must not be empty.")
+        return cleaned
+
+    @field_validator("persistence_backend")
+    @classmethod
+    def validate_persistence_backend(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("postgres_host")
+    @classmethod
+    def validate_postgres_host(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("RP_ENGINE_POSTGRES_HOST must not be empty.")
+        return cleaned
+
+    @field_validator("postgres_database")
+    @classmethod
+    def validate_postgres_database(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("RP_ENGINE_POSTGRES_DATABASE must not be empty.")
+        return cleaned
+
+    @field_validator("postgres_user")
+    @classmethod
+    def validate_postgres_user(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("RP_ENGINE_POSTGRES_USER must not be empty.")
+        return cleaned
+
+    @field_validator("postgres_password")
+    @classmethod
+    def validate_postgres_password(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("RP_ENGINE_POSTGRES_PASSWORD must not be empty.")
         return cleaned
 
     @field_validator("debug_generation_trace")

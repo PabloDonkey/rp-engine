@@ -12,16 +12,23 @@ from rp_engine.adapters.telegram.adapter import (
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.app.lifespan import create_lifespan
 from rp_engine.app.runtime_state import RuntimeState
-from rp_engine.core.engine.orchestrator import RPOrchestrator
-from rp_engine.core.llm.generation import GenerationSettings
-from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
-from rp_engine.core.ports import LLMProvider
 from rp_engine.application.services.character_service import CharacterService
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.group_identity_resolver import GroupIdentityResolver
 from rp_engine.application.services.identity_resolver import IdentityResolver
+from rp_engine.core.engine.orchestrator import RPOrchestrator
+from rp_engine.core.llm.generation import GenerationSettings
+from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
+from rp_engine.core.ports import ConversationStore, LLMProvider, SessionStore
 from rp_engine.infrastructure.config.settings import Settings, get_settings
 from rp_engine.infrastructure.llm.lmstudio.provider import LMStudioProvider
+from rp_engine.infrastructure.postgres import (
+    PostgresConfig,
+    PostgresConversationStore,
+    PostgresSessionStore,
+    create_engine,
+    create_session_factory,
+)
 from rp_engine.infrastructure.storage import (
     JsonCharacterStore,
     JsonConversationStore,
@@ -67,13 +74,23 @@ def build_container(settings: Settings) -> AppContainer:
         max_tokens=settings.lmstudio_max_tokens,
         temperature=settings.lmstudio_temperature,
     )
-    conversation_store = JsonConversationStore()
+    conversation_store: ConversationStore
+    session_store: SessionStore
+    if settings.persistence_backend == "postgres":
+        postgres_config = PostgresConfig.from_settings(settings)
+        postgres_engine = create_engine(postgres_config)
+        postgres_session_factory = create_session_factory(postgres_engine)
+        conversation_store = PostgresConversationStore(postgres_session_factory)
+        session_store = PostgresSessionStore(postgres_session_factory)
+    else:
+        conversation_store = JsonConversationStore()
+        session_store = JsonSessionStore()
+
     generation_trace_store = JsonGenerationTraceStore()
     user_identity_store = JsonUserIdentityStore()
     group_identity_store = JsonGroupIdentityStore()
     character_store = JsonCharacterStore()
     world_store = JsonWorldStore()
-    session_store = JsonSessionStore()
     identity_resolver = IdentityResolver(store=user_identity_store)
     group_identity_resolver = GroupIdentityResolver(store=group_identity_store)
     character_service = CharacterService(
@@ -140,6 +157,7 @@ def build_container(settings: Settings) -> AppContainer:
         extra={
             "telegram_enabled": settings.telegram_enabled,
             "lmstudio_model": settings.lmstudio_model,
+            "persistence_backend": settings.persistence_backend,
         },
     )
 

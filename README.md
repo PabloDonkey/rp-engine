@@ -123,6 +123,18 @@ Optional application variables:
 * `RP_ENGINE_APP_PORT`
 * `RP_ENGINE_DEBUG_STATUS_ENABLED`
 * `RP_ENGINE_DEBUG_GENERATION_TRACE` (`off`, `errors`, or `all`; default `off`)
+* `RP_ENGINE_PERSISTENCE_BACKEND` (`json` or `postgres`; default `json`)
+
+PostgreSQL application variables (used when `RP_ENGINE_PERSISTENCE_BACKEND=postgres`):
+
+* `RP_ENGINE_POSTGRES_HOST`
+* `RP_ENGINE_POSTGRES_PORT`
+* `RP_ENGINE_POSTGRES_DATABASE`
+* `RP_ENGINE_POSTGRES_USER`
+* `RP_ENGINE_POSTGRES_PASSWORD`
+* `RP_ENGINE_POSTGRES_SSL_MODE` (`disable` or `require`)
+* `RP_ENGINE_POSTGRES_POOL_SIZE`
+* `RP_ENGINE_POSTGRES_MAX_OVERFLOW`
 
 Generation trace behavior:
 
@@ -144,6 +156,47 @@ For local development with code reload:
 
 ```bash
 uv run python -m uvicorn --app-dir src rp_engine.app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+## Local PostgreSQL Stack (Docker)
+
+Start PostgreSQL + pgAdmin:
+
+```bash
+docker compose up -d
+```
+
+Stop services:
+
+```bash
+docker compose down
+```
+
+Reset database data (removes all postgres and pgAdmin persisted state):
+
+```bash
+docker compose down -v
+```
+
+Persistent data is stored in Docker named volumes:
+
+* `postgres_data`
+* `pgadmin_data`
+
+pgAdmin is available at:
+
+* `http://localhost:5050`
+
+Run DB migrations:
+
+```bash
+uv run alembic upgrade head
+```
+
+Connect with psql:
+
+```bash
+psql postgresql://rp_engine:change_me@localhost:5432/rp_engine
 ```
 
 ## Lint

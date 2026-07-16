@@ -3,6 +3,8 @@ from pydantic import ValidationError
 
 from rp_engine.app.main import build_container
 from rp_engine.infrastructure.config.settings import Settings
+from rp_engine.infrastructure.postgres import PostgresConversationStore, PostgresSessionStore
+from rp_engine.infrastructure.storage import JsonConversationStore, JsonSessionStore
 
 
 def test_missing_telegram_token_raises_clear_error() -> None:
@@ -76,3 +78,35 @@ def test_default_unauthorized_message_mentions_beta_request() -> None:
 
     assert "closed beta" in settings.telegram_unauthorized_message
     assert "/beta" in settings.telegram_unauthorized_message
+
+
+def test_persistence_backend_defaults_to_json() -> None:
+    settings = Settings()
+
+    assert settings.persistence_backend == "json"
+
+
+def test_build_container_uses_json_stores_by_default() -> None:
+    settings = Settings(telegram_enabled=False)
+
+    container = build_container(settings)
+
+    assert isinstance(container.chat_service._conversation_store, JsonConversationStore)
+    assert isinstance(container.chat_service._session_store, JsonSessionStore)
+
+
+def test_build_container_uses_postgres_stores_when_enabled() -> None:
+    settings = Settings(
+        telegram_enabled=False,
+        persistence_backend="postgres",
+    )
+
+    container = build_container(settings)
+
+    assert isinstance(container.chat_service._conversation_store, PostgresConversationStore)
+    assert isinstance(container.chat_service._session_store, PostgresSessionStore)
+
+
+def test_empty_postgres_host_fails_validation() -> None:
+    with pytest.raises(ValidationError, match="RP_ENGINE_POSTGRES_HOST must not be empty"):
+        Settings(postgres_host="   ")
