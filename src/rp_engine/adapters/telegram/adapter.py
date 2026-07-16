@@ -731,7 +731,7 @@ class TelegramRuntime:
 
 
 def create_telegram_application(token: str, adapter: TelegramAdapter) -> Any:
-    application = TelegramApplication.builder().token(token).build()
+    application = TelegramApplication.builder().token(token).http_version("2").build()
     handler = MessageHandler(filters.TEXT, adapter.handle_message)
     application.add_handler(handler)
     return application
