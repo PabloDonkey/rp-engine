@@ -13,7 +13,7 @@ from rp_engine.core.group.group import Group
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
-from rp_engine.core.services.chat_service import ChatService
+from rp_engine.application.services.chat_service import ChatService
 from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
 from rp_engine.core.world.world import World

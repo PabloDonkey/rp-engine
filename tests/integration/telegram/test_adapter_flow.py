@@ -16,7 +16,7 @@ from rp_engine.adapters.telegram.commands import HELP_MESSAGE
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import LLMConnectionError
 from rp_engine.core.memory.models import ConversationIdentity
-from rp_engine.core.services.commands import SelectCharacterCommand
+from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
 

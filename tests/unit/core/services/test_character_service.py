@@ -3,8 +3,8 @@ from uuid import UUID
 import pytest
 
 from rp_engine.core.character.character import Character
-from rp_engine.core.services.character_service import CharacterService
-from rp_engine.core.services.commands import SelectCharacterCommand
+from rp_engine.application.services.character_service import CharacterService
+from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.session.session import Session
 from rp_engine.core.world.world import World
 

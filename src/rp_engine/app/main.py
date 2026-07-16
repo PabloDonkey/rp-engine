@@ -16,10 +16,10 @@ from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.ports import LLMProvider
-from rp_engine.core.services.character_service import CharacterService
-from rp_engine.core.services.chat_service import ChatService
-from rp_engine.core.services.group_identity_resolver import GroupIdentityResolver
-from rp_engine.core.services.identity_resolver import IdentityResolver
+from rp_engine.application.services.character_service import CharacterService
+from rp_engine.application.services.chat_service import ChatService
+from rp_engine.application.services.group_identity_resolver import GroupIdentityResolver
+from rp_engine.application.services.identity_resolver import IdentityResolver
 from rp_engine.infrastructure.config.settings import Settings, get_settings
 from rp_engine.infrastructure.llm.lmstudio.provider import LMStudioProvider
 from rp_engine.infrastructure.storage import (

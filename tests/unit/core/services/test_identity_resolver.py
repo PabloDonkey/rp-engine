@@ -1,7 +1,7 @@
 import asyncio
 from uuid import UUID
 
-from rp_engine.core.services.identity_resolver import IdentityResolver
+from rp_engine.application.services.identity_resolver import IdentityResolver
 from rp_engine.core.user.identity import UserIdentity
 from rp_engine.core.user.user import User
 

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from rp_engine.core.services.identity_resolver import IdentityResolver
+from rp_engine.application.services.identity_resolver import IdentityResolver
 from rp_engine.infrastructure.storage.json_user_identity_store import JsonUserIdentityStore
 
 

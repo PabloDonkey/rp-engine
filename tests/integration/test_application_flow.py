@@ -18,8 +18,8 @@ from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.memory.models import MemoryKey
-from rp_engine.core.services.chat_service import ChatService
-from rp_engine.core.services.commands import SelectCharacterCommand
+from rp_engine.application.services.chat_service import ChatService
+from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.session.session import Session
 from rp_engine.core.user.identity import UserIdentity
 from rp_engine.core.user.user import User

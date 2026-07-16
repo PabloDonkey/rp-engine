@@ -5,7 +5,7 @@ from rp_engine.core.character.character import Character
 from rp_engine.core.ports.character_store import CharacterStore
 from rp_engine.core.ports.session_store import SessionStore
 from rp_engine.core.ports.world_store import WorldStore
-from rp_engine.core.services.commands import SelectCharacterCommand
+from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.session.session import Session, SessionOwnerKind
 
 

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from rp_engine.adapters.api.models import ChatRequest, ClearConversationRequest, ContinueRequest
-from rp_engine.core.services.chat_service import ChatService
+from rp_engine.application.services.chat_service import ChatService
 
 
 def create_router(chat_service: ChatService) -> APIRouter:

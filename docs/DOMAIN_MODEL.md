@@ -49,7 +49,7 @@ External platforms are represented as linked identities.
 
 ## Boundary Rules
 
-* Core domain and services do not depend on Telegram-specific types.
+* Core domain and application services do not depend on Telegram-specific types.
 * Adapters resolve external identities into `User` before invoking use cases.
 * External identifiers are never used as primary user IDs inside the engine.
 

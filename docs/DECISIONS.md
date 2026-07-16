@@ -563,7 +563,7 @@ If replaced, create a new ADR that supersedes this decision rather than modifyin
 
 ## Context
 
-RP Engine uses adapters, core orchestration, and infrastructure implementations that must remain loosely coupled.
+RP Engine uses adapters, application services, core business logic, and infrastructure implementations that must remain loosely coupled.
 
 Dependency creation and runtime lifecycle ownership must be consistent across adapters, especially for Telegram polling startup and shutdown.
 
@@ -995,7 +995,7 @@ Separating identity data from content preserves clean memory records and allows 
 Different transports impose different output size limits. Telegram, for example, rejects oversized
 messages. These constraints vary by platform and may change independently from core business logic.
 
-If message-size handling is implemented in application services or core orchestration, platform
+If message-size handling is implemented in application services or core business logic, platform
 knowledge leaks into transport-agnostic layers.
 
 ## Decision
@@ -1123,8 +1123,8 @@ If a decision changes in the future, create a new ADR that supersedes the previo
 
 The engine now builds structured domain conversations and must remain provider-agnostic.
 
-If core services serialize provider payloads directly, provider-specific roles and SDK concepts leak
-into domain and application layers.
+If application services or core components serialize provider payloads directly, provider-specific
+roles and SDK concepts leak into domain and application layers.
 
 ## Decision
 
@@ -1149,7 +1149,7 @@ Provider adapters must convert provider exceptions into provider-independent err
 
 * Preserves clean architecture boundaries.
 * Keeps domain language roleplay-first (`character`) instead of provider-first (`assistant`).
-* Supports adding future providers without changing core orchestration.
+* Supports adding future providers without changing application services or core domain logic.
 * Improves testability through provider-independent contracts.
 
 ## Consequences

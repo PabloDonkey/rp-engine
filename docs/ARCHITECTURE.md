@@ -38,8 +38,10 @@ REST --> Adapter
 CLI --> Adapter
 
 Adapter --> Application
-Application --> Engine
-Engine --> Domain
+Application --> Core
+
+Core --> Engine
+Core --> Domain
 
 Engine --> Memory
 Engine --> LLM
@@ -48,7 +50,7 @@ Memory --> Storage
 LLM --> Provider
 ```
 
-The core engine must not depend on Telegram, FastAPI, LM Studio, or any other external framework.
+The core layer must not depend on Telegram, FastAPI, LM Studio, or any other external framework.
 
 ---
 
@@ -161,9 +163,13 @@ Responsibilities of the composition root:
 
 ---
 
-## Engine
+## Core
 
-The engine contains the orchestration logic for roleplay interactions.
+The core layer contains RP engine business logic and domain concepts.
+
+### Engine
+
+The engine sub-layer contains RP-specific orchestration logic.
 
 Responsibilities include:
 
@@ -174,11 +180,11 @@ Responsibilities include:
 * Response generation workflow
 * Context assembly
 
-The engine coordinates services but avoids platform-specific concerns.
+The engine coordinates core workflows while avoiding platform-specific concerns.
 
 ---
 
-## Domain
+### Domain
 
 The domain layer contains the business concepts.
 
@@ -213,7 +219,7 @@ Examples:
 * Configuration
 * LLM providers
 
-Infrastructure depends on the domain, never the reverse.
+Infrastructure implements interfaces defined by higher layers and depends on core abstractions, never the reverse.
 
 For language model integration, infrastructure implements the provider contract defined in:
 
@@ -232,21 +238,17 @@ Adapters
     ↓
 Application
     ↓
-Engine
-    ↓
-Domain
+Core
 
-Infrastructure ─────► Domain
-Infrastructure ─────► Engine
+Infrastructure ─────► Core
 Infrastructure ─────► Core Ports
 ```
 
 Allowed dependencies:
 
 * Adapters → Application
-* Application → Engine
-* Engine → Domain
-* Infrastructure → Domain
+* Application → Core
+* Infrastructure → Core
 * Infrastructure → Core Ports
 
 Forbidden dependencies:
@@ -255,8 +257,8 @@ Forbidden dependencies:
 * Domain → Telegram
 * Domain → LM Studio
 * Domain → File System
-* Engine → Telegram
-* Engine → FastAPI
+* Core → Telegram
+* Core → FastAPI
 
 ---
 
@@ -376,7 +378,7 @@ For LM Studio:
 * domain role `user` -> LM Studio `user`
 * domain role `character` -> LM Studio `assistant`
 
-Role translation is not allowed in core services or domain models.
+Role translation is not allowed in application services or domain models.
 
 ---
 

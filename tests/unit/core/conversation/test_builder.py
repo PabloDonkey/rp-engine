@@ -49,18 +49,19 @@ def test_builder_resolves_templates_and_orders_messages() -> None:
         )
     )
 
-    assert len(conversation.messages) == 5
-    assert [message.role for message in conversation.messages[:3]] == [
+    assert len(conversation.messages) == 6
+    assert [message.role for message in conversation.messages[:4]] == [
+        ConversationRole.SYSTEM,
         ConversationRole.SYSTEM,
         ConversationRole.SYSTEM,
         ConversationRole.SYSTEM,
     ]
-    assert conversation.messages[3] == ConversationMessage(
+    assert conversation.messages[4] == ConversationMessage(
         role=ConversationRole.CHARACTER,
         content="Welcome back, Pablo.",
         metadata={},
     )
-    assert conversation.messages[4] == ConversationMessage(
+    assert conversation.messages[5] == ConversationMessage(
         role=ConversationRole.USER,
         content="Hello Belzebuth.",
         metadata={},
