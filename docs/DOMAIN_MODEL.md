@@ -68,6 +68,96 @@ Roleplay personas are represented as reusable `Character` entities.
 
 Character static definition is stored separately from mutable runtime state.
 
+## Character Ownership
+
+Every `Character` has exactly one owner.
+
+Ownership rules:
+
+* `User` owns `Character`.
+* One `User` can own many `Character` entities.
+* One `Character` has exactly one owner.
+* Ownership is permanent unless explicitly transferred (future feature).
+* Characters exist independently from conversations.
+
+```mermaid
+flowchart LR
+	User -->|owns| Character
+```
+
+Cardinality:
+
+* `User` (1) ---> (*) `Character`
+
+## Character Definition vs Character State
+
+`Character` represents a reusable definition template.
+
+Character Definition examples:
+
+* `name`
+* `personality`
+* `description`
+* `appearance`
+* `scenario`
+* `rules`
+* `system prompt`
+* `initial world context`
+
+`CharacterState` represents evolving runtime data.
+
+Character State examples:
+
+* `relationship`
+* `memories`
+* `emotional state`
+* `inventory`
+* `location`
+* `story progression`
+* `learned knowledge`
+* `evolution`
+* `persistent variables`
+
+Domain distinctions:
+
+* Character Definition changes rarely.
+* Character State evolves continuously.
+* Multiple Character State instances may exist for the same Character.
+* Character State is conversation-specific (or future identity-specific).
+* The separation enables reusable characters with independent story progression.
+
+```mermaid
+flowchart TD
+	Character --> CharacterStateA[Character State A]
+	Character --> CharacterStateB[Character State B]
+	Character --> CharacterStateC[Character State C]
+```
+
+Each state evolves independently.
+
+This separation is expected to map naturally to separate persistence entities during
+the PostgreSQL migration.
+
+## CharacterVisibility
+
+Character visibility is represented by `CharacterVisibility`.
+
+`CharacterVisibility` values:
+
+* `PRIVATE`
+* `SHARED`
+* `PUBLIC`
+
+Visibility semantics:
+
+* `PRIVATE` - only the owner can use the character (current implementation).
+* `SHARED` - future feature; available only to explicitly authorized users or groups.
+* `PUBLIC` - future feature; discoverable and usable by everyone.
+
+Visibility affects access only.
+
+Ownership remains unchanged regardless of visibility.
+
 ## World
 
 Roleplay environments are represented as reusable `World` entities.
