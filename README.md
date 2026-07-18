@@ -9,7 +9,7 @@ The project exposes its capabilities through adapters such as Telegram and a RES
 * Local-first by default
 * Provider-agnostic LLM integration
 * Long-term conversation memory
-* Character and world state management
+* Character card and lore-driven continuity
 * Spec-driven development
 * Modular, testable architecture
 * Async-first implementation
@@ -37,7 +37,7 @@ The project exposes its capabilities through adapters such as Telegram and a RES
 
 * Multiple LLM providers
 * Character management
-* World state tracking
+* World and lore management
 * Memory summarization
 * Tool calling
 * Image generation

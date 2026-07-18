@@ -140,14 +140,14 @@ Introduce reusable roleplay assets and session-owned roleplay context.
 
 ## Goal
 
-Support persistent character simulation.
+Strengthen persistent character continuity.
 
 ### Deliverables
 
 * Character definitions
 * Personality
-* Character state
-* Relationship tracking
+* Character-memory continuity rules
+* Prompt-level consistency improvements
 
 ### Success Criteria
 

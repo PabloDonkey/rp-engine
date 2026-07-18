@@ -75,11 +75,6 @@ class JsonCharacterStore(CharacterStore):
                 "metadata": card.metadata,
             }
             await asyncio.to_thread(self._write_payload, character_dir / "card.json", payload)
-            await asyncio.to_thread(
-                self._write_payload,
-                character_dir / "state.json",
-                {"current_mood": "neutral", "relationship_status": "unknown"},
-            )
             return Character(
                 id=character_id,
                 owner_id=owner_id,

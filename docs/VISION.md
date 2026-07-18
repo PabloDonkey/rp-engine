@@ -54,7 +54,9 @@ Changing providers should require configuration, not architectural changes.
 
 Conversations are persistent.
 
-The engine should preserve important information over time through summarization, structured state, and memory retrieval rather than relying solely on the language model's context window.
+The engine should preserve important information over time through summarization and memory retrieval, rather than relying solely on the language model's context window.
+
+Deterministic structured runtime state is a future capability, not a required foundation for the current architecture.
 
 ---
 

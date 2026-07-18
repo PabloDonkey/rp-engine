@@ -8,7 +8,7 @@ from rp_engine.infrastructure.storage.json_character_store import JsonCharacterS
 
 
 @pytest.mark.asyncio
-async def test_json_character_store_creates_card_and_state_files(tmp_path: Path) -> None:
+async def test_json_character_store_creates_card_file(tmp_path: Path) -> None:
     store = JsonCharacterStore(base_path=tmp_path)
     owner_id = UUID("00000000-0000-0000-0000-000000000123")
 
@@ -22,7 +22,6 @@ async def test_json_character_store_creates_card_and_state_files(tmp_path: Path)
     assert created.owner_id == owner_id
     assert created.visibility == CharacterVisibility.PRIVATE
     assert (tmp_path / "characters" / "belzebuth" / "card.json").exists()
-    assert (tmp_path / "characters" / "belzebuth" / "state.json").exists()
 
 
 @pytest.mark.asyncio

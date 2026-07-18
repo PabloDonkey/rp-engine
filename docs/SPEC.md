@@ -12,7 +12,7 @@ It describes what the system must do from the perspective of users and external 
 
 RP Engine is a conversational engine for persistent roleplay experiences.
 
-The engine maintains conversations, manages memory, tracks narrative state, and generates responses using interchangeable language model providers.
+The engine maintains conversations, manages memory, uses character definitions plus lore for continuity, and generates responses using interchangeable language model providers.
 
 The system exposes its functionality through one or more adapters (Telegram, REST API, CLI, etc.).
 
@@ -130,9 +130,14 @@ Characters shall maintain consistent personalities throughout a conversation.
 
 ---
 
-### FR-032 — Character State
+### FR-032 — Structured Character Runtime State (Removed From Current Domain)
 
-Character state shall persist across multiple conversations when configured.
+The system shall not require a dedicated structured Character State entity for current operation.
+
+Character continuity is currently provided by Character Definition + Conversation Memory + Lore.
+
+Structured deterministic runtime state (for example inventory, health, quests, simulation variables)
+may be introduced by a future milestone only when a concrete feature depends on it and a focused ADR approves model scope.
 
 ---
 

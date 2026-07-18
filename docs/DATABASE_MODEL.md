@@ -26,11 +26,14 @@ Milestone 2 additionally migrates:
 
 All other repositories remain on JSON in this milestone:
 
-- CharacterStore
 - WorldStore
 - UserIdentityStore
 - GroupIdentityStore
 - GenerationTraceStore
+
+Character State is removed as an active domain concept and has no PostgreSQL table in current scope.
+
+JSON character persistence is card-based. Legacy `state.json` compatibility output is removed.
 
 ## Entity Overview
 

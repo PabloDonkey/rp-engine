@@ -68,7 +68,7 @@ Roleplay personas are represented as reusable `Character` entities.
 * `greeting` (`str`) - optional opening text.
 * `metadata` (`dict[str, str]`) - optional structured tags.
 
-Character static definition is stored separately from mutable runtime state.
+Character static definition is stored separately from session memory.
 
 ## Character Ownership
 
@@ -91,9 +91,9 @@ Cardinality:
 
 * `User` (1) ---> (*) `Character`
 
-## Character Definition vs Character State
+## Character Definition vs Character Memory
 
-`Character` represents a reusable definition template.
+`Character` represents a reusable definition template (character card).
 
 Character Definition examples:
 
@@ -106,39 +106,28 @@ Character Definition examples:
 * `system prompt`
 * `initial world context`
 
-`CharacterState` represents evolving runtime data.
+Runtime continuity is currently represented by conversation memory, not by a dedicated
+structured `CharacterState` entity.
 
-Character State examples:
+Current distinctions:
 
-* `relationship`
-* `memories`
-* `emotional state`
-* `inventory`
-* `location`
-* `story progression`
-* `learned knowledge`
-* `evolution`
-* `persistent variables`
-
-Domain distinctions:
-
-* Character Definition changes rarely.
-* Character State evolves continuously.
-* Multiple Character State instances may exist for the same Character.
-* Character State is conversation-specific (or future identity-specific).
-* The separation enables reusable characters with independent story progression.
+* Character Definition changes rarely and is reusable across sessions.
+* Session memory evolves continuously through conversation history and memory strategy.
+* Multiple sessions can use the same Character definition with independent history.
+* Character consistency is enforced through card + memory + lore context assembly.
 
 ```mermaid
 flowchart TD
-	Character --> CharacterStateA[Character State A]
-	Character --> CharacterStateB[Character State B]
-	Character --> CharacterStateC[Character State C]
+	CharacterCard[Character Card] --> SessionA[Session A]
+	CharacterCard --> SessionB[Session B]
+	SessionA --> MemoryA[Conversation Memory A]
+	SessionB --> MemoryB[Conversation Memory B]
+	WorldLore[World Lore] --> SessionA
+	WorldLore --> SessionB
 ```
 
-Each state evolves independently.
-
-This separation is expected to map naturally to separate persistence entities during
-the PostgreSQL migration.
+Structured runtime state (for example inventory, health, quest flags, simulation variables)
+is explicitly deferred until a concrete feature requires deterministic mechanics.
 
 ## CharacterVisibility
 

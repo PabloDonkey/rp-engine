@@ -498,41 +498,49 @@ Authorization flow:
 
 ---
 
-# State Management
+# Runtime Context Model
 
-The engine maintains several categories of state.
+The current engine runtime is centered on four active concepts:
 
-## Conversation State
+* Character Definition (character card)
+* Conversation
+* Memory
+* Lore (world context)
 
-* Recent messages
-* Active participants
-* Session metadata
+## Character Definition
 
----
+* Name and persona traits
+* Description and behavior guidance
+* Optional greeting and metadata
 
-## Character State
-
-* Personality
-* Knowledge
-* Relationships
-* Persistent attributes
+Character definitions are reusable templates and do not mutate per turn.
 
 ---
 
-## World State
+## Conversation
 
-* Locations
-* Objects
-* Events
-* Global facts
+* Ordered user and character messages
+* Session-scoped continuity
+* Regenerate/continue/clear lifecycle
 
 ---
 
-## Memory State
+## Memory
 
-* Long-term summaries
-* Retrieved memories
-* Embeddings (optional)
+* Persisted conversation history
+* Strategy-built context window
+* Optional summarization/retrieval extensions
+
+---
+
+## Lore
+
+* World description
+* World rules and constraints
+* Shared setting context for prompt assembly
+
+Structured character runtime state (for example inventory, relationship variables,
+simulation flags) is intentionally deferred until a concrete deterministic feature requires it.
 
 ---
 
