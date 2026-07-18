@@ -6,6 +6,7 @@ class TelegramCommand(StrEnum):
     START = "/start"
     CHAT = "/chat"
     HELP = "/help"
+    CANCEL = "/cancel"
     BETA = "/beta"
     ADMIN_BETA_LIST = "/admin_beta_list"
     ADMIN_BETA_ACCEPT = "/admin_beta_accept"

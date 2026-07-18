@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from rp_engine.core.character.character import Character
 from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.ports.character_store import CharacterStore
 
@@ -47,3 +48,26 @@ async def assert_character_store_contract(store: CharacterStore) -> None:
     assert loaded_custom is not None
     assert loaded_custom.owner_id == owner_id
     assert loaded_custom.visibility == CharacterVisibility.PUBLIC
+
+    owned_lookup = await store.find_owned_by_name(owner_id=owner_id, name="Belzebuth")
+    assert owned_lookup is not None
+    assert owned_lookup.id == "belzebuth"
+
+    updated = Character(
+        id="belzebuth",
+        owner_id=owner_id,
+        visibility=CharacterVisibility.PRIVATE,
+        name="Belzebuth",
+        description="Updated description",
+        personality="Updated personality",
+        greeting="Updated greeting",
+        metadata={"scenario": "Updated scenario", "spec": "chara_card_v3", "spec_version": "3.0"},
+    )
+    saved = await store.save(updated)
+    assert saved.description == "Updated description"
+
+    reloaded = await store.get_by_id("belzebuth")
+    assert reloaded is not None
+    assert reloaded.description == "Updated description"
+    assert reloaded.greeting == "Updated greeting"
+    assert reloaded.metadata.get("scenario") == "Updated scenario"

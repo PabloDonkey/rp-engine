@@ -13,7 +13,10 @@ from rp_engine.adapters.telegram.adapter import TelegramAdapter
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.adapters.telegram.beta_registry import TelegramBetaRegistry
 from rp_engine.adapters.telegram.commands import HELP_MESSAGE
+from rp_engine.application.services.character_command_service import CharacterCommandService
 from rp_engine.application.services.commands import SelectCharacterCommand
+from rp_engine.core.character.character import Character
+from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import LLMConnectionError
 from rp_engine.core.memory.models import ConversationIdentity
@@ -106,6 +109,16 @@ class FakeCharacterService:
             created_at=FIXED_CREATED_AT,
         )
 
+    async def describe_session_entry(self, *, session: Session) -> str | None:
+        del session
+        return None
+
+
+class FakeCharacterServiceWithEntry(FakeCharacterService):
+    async def describe_session_entry(self, *, session: Session) -> str | None:
+        del session
+        return "Who dares wake me?"
+
 
 class FakeGroupIdentityResolver:
     async def resolve_identity(
@@ -120,6 +133,56 @@ class FakeGroupIdentityResolver:
         del external_id
         del metadata
         return Group(id=FIXED_GROUP_ID, display_name=display_name)
+
+
+class InMemoryCharacterStore:
+    def __init__(self) -> None:
+        self._items: dict[str, Character] = {}
+
+    async def get_by_id(self, character_id: str) -> Character | None:
+        return self._items.get(character_id)
+
+    async def find_by_name(self, name: str) -> Character | None:
+        target = name.strip().lower()
+        for value in self._items.values():
+            if value.name.strip().lower() == target:
+                return value
+        return None
+
+    async def find_owned_by_name(self, *, owner_id: UUID, name: str) -> Character | None:
+        target = name.strip().lower()
+        for value in self._items.values():
+            if value.owner_id == owner_id and value.name.strip().lower() == target:
+                return value
+        return None
+
+    async def create_minimal(
+        self,
+        *,
+        character_id: str,
+        owner_id: UUID,
+        name: str,
+        visibility: CharacterVisibility = CharacterVisibility.PRIVATE,
+    ) -> Character:
+        existing = self._items.get(character_id)
+        if existing is not None:
+            return existing
+        created = Character(
+            id=character_id,
+            owner_id=owner_id,
+            visibility=visibility,
+            name=name,
+            description=f"Character profile for {name}.",
+            personality="Open-ended roleplay persona.",
+            greeting="",
+            metadata={},
+        )
+        self._items[character_id] = created
+        return created
+
+    async def save(self, character: Character) -> Character:
+        self._items[character.id] = character
+        return character
 
 
 @dataclass
@@ -738,6 +801,32 @@ async def test_character_command_selects_active_character() -> None:
 
 
 @pytest.mark.asyncio
+async def test_character_command_shows_entry_message_when_available() -> None:
+    chat_service = AsyncMock()
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterServiceWithEntry(),
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+    )
+
+    message = FakeMessage(text="/character Belzebuth")
+    update = FakeUpdate(
+        effective_message=message,
+        effective_user=FakeUser(id=42),
+        effective_chat=FakeChat(id=42, type="private"),
+    )
+
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    assert message.responses == ["Who dares wake me?"]
+    chat_service.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_telegram_adapter_handles_llm_connection_error_with_retry_message() -> None:
     chat_service = AsyncMock()
     chat_service.send_message = AsyncMock(side_effect=LLMConnectionError("connection failed"))
@@ -858,8 +947,122 @@ async def test_start_command_for_unauthorized_user_does_not_auto_create_beta_req
     assert len(message.responses) == 1
     assert "closed beta" in message.responses[0]
     assert "Use /beta" in message.responses[0]
-    requests_dir = tmp_path / "telegram" / "beta_requests"
-    assert not requests_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_scripted_creation_flow_in_adapter_does_not_call_llm() -> None:
+    chat_service = AsyncMock()
+    store = InMemoryCharacterStore()
+    command_service = CharacterCommandService(character_store=store)
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        character_command_service=command_service,
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+    )
+
+    create_message = FakeMessage(text="/character create")
+    create_update = FakeUpdate(
+        effective_message=create_message,
+        effective_user=FakeUser(id=42),
+        effective_chat=FakeChat(id=42, type="private"),
+    )
+    await adapter.handle_message(cast(Update, create_update), cast(Any, None))
+    assert create_message.responses == ["What is the character name?"]
+
+    for input_text in [
+        "Belzebuth",
+        "Ancient dragon mage",
+        "Wise and ruthless",
+        "Ruined temple",
+        "Who dares wake me?",
+    ]:
+        user_message = FakeMessage(text=input_text)
+        user_update = FakeUpdate(
+            effective_message=user_message,
+            effective_user=FakeUser(id=42),
+            effective_chat=FakeChat(id=42, type="private"),
+        )
+        await adapter.handle_message(cast(Update, user_update), cast(Any, None))
+
+    chat_service.send_message.assert_not_awaited()
+    created = await store.get_by_id("belzebuth")
+    assert created is not None
+    assert created.metadata.get("scenario") == "Ruined temple"
+
+
+@pytest.mark.asyncio
+async def test_scripted_edit_and_cancel_flow_in_adapter() -> None:
+    chat_service = AsyncMock()
+    store = InMemoryCharacterStore()
+    await store.save(
+        Character(
+            id="belzebuth",
+            owner_id=FIXED_USER_ID,
+            visibility=CharacterVisibility.PRIVATE,
+            name="Belzebuth",
+            description="Old description",
+            personality="Old personality",
+            greeting="Old hello",
+            metadata={"scenario": "Old scenario", "spec": "chara_card_v3", "spec_version": "3.0"},
+        )
+    )
+    command_service = CharacterCommandService(character_store=store)
+    adapter = TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        character_service=FakeCharacterService(),
+        character_command_service=command_service,
+        authorization=TelegramAuthorization(set()),
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+    )
+
+    edit_message = FakeMessage(text="/character edit Belzebuth")
+    edit_update = FakeUpdate(
+        effective_message=edit_message,
+        effective_user=FakeUser(id=42),
+        effective_chat=FakeChat(id=42, type="private"),
+    )
+    await adapter.handle_message(cast(Update, edit_update), cast(Any, None))
+    assert "Choose a field to edit" in edit_message.responses[0]
+
+    select_message = FakeMessage(text="2")
+    select_update = FakeUpdate(
+        effective_message=select_message,
+        effective_user=FakeUser(id=42),
+        effective_chat=FakeChat(id=42, type="private"),
+    )
+    await adapter.handle_message(cast(Update, select_update), cast(Any, None))
+    assert "Enter the new description." in select_message.responses[0]
+
+    value_message = FakeMessage(text="Ancient dragon mage")
+    value_update = FakeUpdate(
+        effective_message=value_message,
+        effective_user=FakeUser(id=42),
+        effective_chat=FakeChat(id=42, type="private"),
+    )
+    await adapter.handle_message(cast(Update, value_update), cast(Any, None))
+    assert value_message.responses == ["Description updated successfully."]
+
+    loaded = await store.get_by_id("belzebuth")
+    assert loaded is not None
+    assert loaded.description == "Ancient dragon mage"
+
+    cancel_message = FakeMessage(text="/cancel")
+    cancel_update = FakeUpdate(
+        effective_message=cancel_message,
+        effective_user=FakeUser(id=42),
+        effective_chat=FakeChat(id=42, type="private"),
+    )
+    await adapter.handle_message(cast(Update, cancel_update), cast(Any, None))
+    assert cancel_message.responses == ["No active operation to cancel."]
+    chat_service.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio

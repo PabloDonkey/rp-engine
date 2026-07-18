@@ -12,6 +12,7 @@ from rp_engine.adapters.telegram.adapter import (
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.app.lifespan import create_lifespan
 from rp_engine.app.runtime_state import RuntimeState
+from rp_engine.application.services.character_command_service import CharacterCommandService
 from rp_engine.application.services.character_service import CharacterService
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.group_identity_resolver import GroupIdentityResolver
@@ -98,10 +99,12 @@ def build_container(settings: Settings) -> AppContainer:
     group_identity_resolver = GroupIdentityResolver(store=group_identity_store)
     character_service = CharacterService(
         character_store=character_store,
+        conversation_store=conversation_store,
         world_store=world_store,
         session_store=session_store,
         default_world_id=settings.default_world_id,
     )
+    character_command_service = CharacterCommandService(character_store=character_store)
     memory_strategy = DumpEverythingStrategy()
     generation_settings = GenerationSettings(
         temperature=settings.lmstudio_temperature,
@@ -139,6 +142,7 @@ def build_container(settings: Settings) -> AppContainer:
             identity_resolver=identity_resolver,
             group_identity_resolver=group_identity_resolver,
             character_service=character_service,
+            character_command_service=character_command_service,
             authorization=TelegramAuthorization.from_directory(
                 settings.telegram_authorization_dir
             ),

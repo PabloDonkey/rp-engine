@@ -109,6 +109,10 @@ class FakeCharacterService:
             created_at=datetime.now(UTC),
         )
 
+    async def describe_session_entry(self, *, session: Session) -> str | None:
+        del session
+        return None
+
 
 class FakeGroupIdentityResolver:
     async def resolve_identity(

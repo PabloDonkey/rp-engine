@@ -10,6 +10,8 @@ class CharacterStore(Protocol):
 
     async def find_by_name(self, name: str) -> Character | None: ...
 
+    async def find_owned_by_name(self, *, owner_id: UUID, name: str) -> Character | None: ...
+
     async def create_minimal(
         self,
         *,
@@ -18,3 +20,5 @@ class CharacterStore(Protocol):
         name: str,
         visibility: CharacterVisibility = CharacterVisibility.PRIVATE,
     ) -> Character: ...
+
+    async def save(self, character: Character) -> Character: ...

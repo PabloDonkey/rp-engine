@@ -42,6 +42,26 @@ class JsonCharacterStore(CharacterStore):
                 return character
         return None
 
+    async def find_owned_by_name(self, *, owner_id: UUID, name: str) -> Character | None:
+        target = name.strip().lower()
+        if not self._characters_path.exists():
+            return None
+
+        for directory in self._characters_path.iterdir():
+            if not directory.is_dir():
+                continue
+            card_path = directory / "card.json"
+            if not card_path.exists():
+                continue
+            payload = await asyncio.to_thread(self._read_payload, card_path)
+            character = self._to_character(character_id=directory.name, payload=payload)
+            if character is None:
+                continue
+            if character.owner_id == owner_id and character.name.strip().lower() == target:
+                return character
+
+        return None
+
     async def create_minimal(
         self,
         *,
@@ -85,6 +105,23 @@ class JsonCharacterStore(CharacterStore):
                 greeting="",
                 metadata={},
             )
+
+    async def save(self, character: Character) -> Character:
+        async with self._lock:
+            character_dir = self._characters_path / character.id
+            character_dir.mkdir(parents=True, exist_ok=True)
+            payload: dict[str, object] = {
+                "id": character.id,
+                "owner_id": str(character.owner_id),
+                "visibility": character.visibility.value,
+                "name": character.name,
+                "description": character.description,
+                "personality": character.personality,
+                "greeting": character.greeting,
+                "metadata": dict(character.metadata),
+            }
+            await asyncio.to_thread(self._write_payload, character_dir / "card.json", payload)
+        return character
 
     @staticmethod
     def _to_character(*, character_id: str, payload: dict[str, Any]) -> Character | None:

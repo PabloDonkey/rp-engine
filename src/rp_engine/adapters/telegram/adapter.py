@@ -91,6 +91,8 @@ class CharacterServicePort(Protocol):
         actor_user_id: Any,
     ) -> Session: ...
 
+    async def describe_session_entry(self, *, session: Session) -> str | None: ...
+
 
 class GroupIdentityResolverPort(Protocol):
     async def resolve_identity(
@@ -103,6 +105,61 @@ class GroupIdentityResolverPort(Protocol):
     ) -> Group: ...
 
 
+class CharacterCommandServicePort(Protocol):
+    async def start_creation(self, *, user_id: Any) -> Any: ...
+
+    async def start_edit(self, *, user_id: Any, character_name: str) -> Any: ...
+
+    async def show_character(self, *, user_id: Any, character_name: str) -> Any: ...
+
+    async def validate_character(self, *, user_id: Any, character_name: str) -> Any: ...
+
+    async def cancel(self, *, user_id: Any) -> Any: ...
+
+    async def has_active_workflow(self, *, user_id: Any) -> bool: ...
+
+    async def handle_user_input(self, *, user_id: Any, text: str) -> Any | None: ...
+
+
+class NoOpCharacterCommandService:
+    async def start_creation(self, *, user_id: Any) -> Any:
+        del user_id
+        return _SimpleWorkflowResponse(message="Character workflows are not configured.")
+
+    async def start_edit(self, *, user_id: Any, character_name: str) -> Any:
+        del user_id
+        del character_name
+        return _SimpleWorkflowResponse(message="Character workflows are not configured.")
+
+    async def show_character(self, *, user_id: Any, character_name: str) -> Any:
+        del user_id
+        del character_name
+        return _SimpleWorkflowResponse(message="Character workflows are not configured.")
+
+    async def validate_character(self, *, user_id: Any, character_name: str) -> Any:
+        del user_id
+        del character_name
+        return _SimpleWorkflowResponse(message="Character workflows are not configured.")
+
+    async def cancel(self, *, user_id: Any) -> Any:
+        del user_id
+        return _SimpleWorkflowResponse(message="No active operation to cancel.")
+
+    async def has_active_workflow(self, *, user_id: Any) -> bool:
+        del user_id
+        return False
+
+    async def handle_user_input(self, *, user_id: Any, text: str) -> Any | None:
+        del user_id
+        del text
+        return None
+
+
+class _SimpleWorkflowResponse:
+    def __init__(self, *, message: str) -> None:
+        self.message = message
+
+
 class TelegramAdapter:
     def __init__(
         self,
@@ -113,6 +170,7 @@ class TelegramAdapter:
         authorization: TelegramAuthorization,
         unauthorized_message: str,
         message_max_length: int,
+        character_command_service: CharacterCommandServicePort | None = None,
         admin_telegram_user_id: str = "",
         processing_feedback_factory: TelegramProcessingFeedbackFactory | None = None,
         beta_registry: TelegramBetaRegistry | None = None,
@@ -121,6 +179,7 @@ class TelegramAdapter:
         self._identity_resolver = identity_resolver
         self._group_identity_resolver = group_identity_resolver
         self._character_service = character_service
+        self._character_command_service = character_command_service or NoOpCharacterCommandService()
         self._authorization = authorization
         self._admin_telegram_user_id = admin_telegram_user_id
         self._unauthorized_message = unauthorized_message
@@ -210,6 +269,25 @@ class TelegramAdapter:
         if not should_process_message(chat_type, parsed_message):
             return
 
+        if parsed_message.command == TelegramCommand.CANCEL:
+            cancel_response = await self._character_command_service.cancel(user_id=resolved_user.id)
+            await self._reply_with_split(message=message, text=cancel_response.message)
+            return
+
+        if (
+            not parsed_message.is_command
+            and await self._character_command_service.has_active_workflow(
+                user_id=resolved_user.id
+            )
+        ):
+            workflow_response = await self._character_command_service.handle_user_input(
+                user_id=resolved_user.id,
+                text=parsed_message.text,
+            )
+            if workflow_response is not None:
+                await self._reply_with_split(message=message, text=workflow_response.message)
+                return
+
         is_group_chat = chat_type in {"group", "supergroup"}
         resolved_group: Group | None = None
         if is_group_chat:
@@ -226,8 +304,47 @@ class TelegramAdapter:
             if character_name is None:
                 await self._reply_with_split(
                     message=message,
-                    text="Usage: /character <name>",
+                    text=(
+                        "Usage:\n"
+                        "/character <name>\n"
+                        "/character create\n"
+                        "/character edit <character>\n"
+                        "/character show <character>\n"
+                        "/character validate <character>"
+                    ),
                 )
+                return
+
+            subcommand, subcommand_arg = self._split_character_subcommand(character_name)
+            if subcommand == "create":
+                create_response = await self._character_command_service.start_creation(
+                    user_id=resolved_user.id
+                )
+                await self._reply_with_split(message=message, text=create_response.message)
+                return
+
+            if subcommand == "edit":
+                edit_response = await self._character_command_service.start_edit(
+                    user_id=resolved_user.id,
+                    character_name=subcommand_arg or "",
+                )
+                await self._reply_with_split(message=message, text=edit_response.message)
+                return
+
+            if subcommand == "show":
+                show_response = await self._character_command_service.show_character(
+                    user_id=resolved_user.id,
+                    character_name=subcommand_arg or "",
+                )
+                await self._reply_with_split(message=message, text=show_response.message)
+                return
+
+            if subcommand == "validate":
+                validate_response = await self._character_command_service.validate_character(
+                    user_id=resolved_user.id,
+                    character_name=subcommand_arg or "",
+                )
+                await self._reply_with_split(message=message, text=validate_response.message)
                 return
 
             try:
@@ -246,9 +363,13 @@ class TelegramAdapter:
                 await self._reply_with_split(message=message, text=str(exc))
                 return
 
+            session_entry = await self._character_service.describe_session_entry(
+                session=selected_session
+            )
             await self._reply_with_split(
                 message=message,
-                text=(
+                text=session_entry
+                or (
                     f"Active character set to '{selected_session.character_id}' in "
                     f"world '{selected_session.world_id}'."
                 ),
@@ -706,6 +827,18 @@ class TelegramAdapter:
                 return f"telegram_user_{user_identifier}"
 
         return "telegram_user_anonymous"
+
+    @staticmethod
+    def _split_character_subcommand(argument: str) -> tuple[str | None, str | None]:
+        cleaned = argument.strip()
+        if not cleaned:
+            return None, None
+        parts = cleaned.split(maxsplit=1)
+        command = parts[0].strip().lower()
+        if command not in {"create", "edit", "show", "validate"}:
+            return None, None
+        remainder = parts[1].strip() if len(parts) > 1 else None
+        return command, remainder
 
 
 class TelegramRuntime:

@@ -28,6 +28,16 @@ class PostgresCharacterStore(CharacterStore):
             record = await db_session.scalar(statement)
         return self._to_domain(record)
 
+    async def find_owned_by_name(self, *, owner_id: UUID, name: str) -> Character | None:
+        target = name.strip().lower()
+        statement = select(CharacterRecord).where(
+            CharacterRecord.owner_id == owner_id,
+            func.lower(CharacterRecord.name) == target,
+        )
+        async with self._session_factory() as db_session:
+            record = await db_session.scalar(statement)
+        return self._to_domain(record)
+
     async def create_minimal(
         self,
         *,
@@ -59,6 +69,40 @@ class PostgresCharacterStore(CharacterStore):
         persisted = await self.get_by_id(character_id)
         if persisted is None:
             raise RuntimeError("Character creation failed unexpectedly.")
+        return persisted
+
+    async def save(self, character: Character) -> Character:
+        metadata: dict[str, object] = dict(character.metadata)
+        values = {
+            "pk": uuid4(),
+            "character_id": character.id,
+            "owner_id": character.owner_id,
+            "visibility": character.visibility.value,
+            "name": character.name,
+            "description": character.description,
+            "personality": character.personality,
+            "greeting": character.greeting,
+            "metadata": metadata,
+        }
+        statement = insert(CharacterRecord).values(values)
+        statement = statement.on_conflict_do_update(
+            index_elements=[CharacterRecord.character_id],
+            set_={
+                "owner_id": character.owner_id,
+                "visibility": character.visibility.value,
+                "name": character.name,
+                "description": character.description,
+                "personality": character.personality,
+                "greeting": character.greeting,
+                "metadata": metadata,
+            },
+        )
+        async with session_scope(self._session_factory) as db_session:
+            await db_session.execute(statement)
+
+        persisted = await self.get_by_id(character.id)
+        if persisted is None:
+            raise RuntimeError("Character save failed unexpectedly.")
         return persisted
 
     @staticmethod

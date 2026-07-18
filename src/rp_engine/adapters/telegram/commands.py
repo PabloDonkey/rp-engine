@@ -4,6 +4,7 @@ SUPPORTED_COMMANDS: dict[str, TelegramCommand] = {
     TelegramCommand.START.value: TelegramCommand.START,
     TelegramCommand.CHAT.value: TelegramCommand.CHAT,
     TelegramCommand.HELP.value: TelegramCommand.HELP,
+    TelegramCommand.CANCEL.value: TelegramCommand.CANCEL,
     TelegramCommand.BETA.value: TelegramCommand.BETA,
     TelegramCommand.ADMIN_BETA_LIST.value: TelegramCommand.ADMIN_BETA_LIST,
     TelegramCommand.ADMIN_BETA_ACCEPT.value: TelegramCommand.ADMIN_BETA_ACCEPT,
@@ -17,6 +18,8 @@ SUPPORTED_COMMANDS: dict[str, TelegramCommand] = {
 TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
     ("start", "Show welcome message"),
     ("chat", "Send a message to the current character"),
+    ("character", "Character workflows and selection"),
+    ("cancel", "Cancel current scripted operation"),
     ("continue", "Continue the previous assistant reply"),
     ("regenerate", "Regenerate the last assistant reply"),
     ("clear", "Clear the current conversation"),
@@ -28,11 +31,16 @@ HELP_MESSAGE = (
     "/start - Show welcome and usage\n"
     "/chat <message> - Send a message to the character\n"
     "/help - Show this help message\n"
+    "/cancel - Cancel current scripted operation\n"
     "/beta - Request a beta seat\n"
     "/continue - Continue the scene\n"
     "/regenerate - Replace the last character reply\n"
     "/clear - Clear the current conversation\n"
-    "/character <name> - Select or create your active character"
+    "/character <name> - Select or create your active character\n"
+    "/character create - Start guided character creation\n"
+    "/character edit <character> - Edit one character field\n"
+    "/character show <character> - Show character card summary\n"
+    "/character validate <character> - Validate required card fields"
 )
 
 

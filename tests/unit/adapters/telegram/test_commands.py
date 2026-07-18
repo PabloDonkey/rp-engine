@@ -43,6 +43,14 @@ def test_parse_transport_message_for_beta_command() -> None:
     assert parsed.argument is None
 
 
+def test_parse_transport_message_for_cancel_command() -> None:
+    parsed = parse_transport_message("/cancel")
+
+    assert parsed.is_command is True
+    assert parsed.command == TelegramCommand.CANCEL
+    assert parsed.argument is None
+
+
 def test_parse_transport_message_for_regenerate_command() -> None:
     parsed = parse_transport_message("/regenerate")
 
@@ -79,6 +87,7 @@ def test_build_help_message_lists_supported_commands() -> None:
     assert "/start" in help_message
     assert "/chat" in help_message
     assert "/help" in help_message
+    assert "/cancel" in help_message
     assert "/beta" in help_message
     assert "/continue" in help_message
     assert "/clear" in help_message
