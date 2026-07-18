@@ -17,6 +17,7 @@ from rp_engine.adapters.telegram.feedback import TelegramProcessingFeedbackFacto
 from rp_engine.adapters.telegram.invocation_policy import should_process_message
 from rp_engine.adapters.telegram.models import TelegramCommand
 from rp_engine.adapters.telegram.splitter import split_message
+from rp_engine.application.services.character_service import CharacterSelectionResult
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.group.group import Group
@@ -72,7 +73,7 @@ class CharacterServicePort(Protocol):
         *,
         user_id: Any,
         command: SelectCharacterCommand,
-    ) -> Session: ...
+    ) -> CharacterSelectionResult: ...
 
     async def select_character_for_group(
         self,
@@ -80,7 +81,7 @@ class CharacterServicePort(Protocol):
         group_id: Any,
         actor_user_id: Any,
         command: SelectCharacterCommand,
-    ) -> Session: ...
+    ) -> CharacterSelectionResult: ...
 
     async def ensure_active_session_for_user(self, *, user_id: Any) -> Session: ...
 
@@ -349,12 +350,12 @@ class TelegramAdapter:
 
             try:
                 if resolved_group is None:
-                    selected_session = await self._character_service.select_character_for_user(
+                    selection = await self._character_service.select_character_for_user(
                         user_id=resolved_user.id,
                         command=SelectCharacterCommand(character_name=character_name),
                     )
                 else:
-                    selected_session = await self._character_service.select_character_for_group(
+                    selection = await self._character_service.select_character_for_group(
                         group_id=resolved_group.id,
                         actor_user_id=resolved_user.id,
                         command=SelectCharacterCommand(character_name=character_name),
@@ -363,15 +364,22 @@ class TelegramAdapter:
                 await self._reply_with_split(message=message, text=str(exc))
                 return
 
+            if selection.status == "already_active":
+                await self._reply_with_split(
+                    message=message,
+                    text=f"Character '{selection.session.character_id}' is already active.",
+                )
+                return
+
             session_entry = await self._character_service.describe_session_entry(
-                session=selected_session
+                session=selection.session
             )
             await self._reply_with_split(
                 message=message,
                 text=session_entry
                 or (
-                    f"Active character set to '{selected_session.character_id}' in "
-                    f"world '{selected_session.world_id}'."
+                    f"Active character set to '{selection.session.character_id}' in "
+                    f"world '{selection.session.world_id}'."
                 ),
             )
             return

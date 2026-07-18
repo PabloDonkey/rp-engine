@@ -9,6 +9,9 @@ from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
 from rp_engine.core.world.world import World
 
+SWITCH_CONTEXT_TO_CHARACTER_ID = "switch_context_to_character_id"
+SWITCH_CONTEXT_SUMMARY = "switch_context_summary"
+
 
 @dataclass(frozen=True, slots=True)
 class ConversationBuilderInput:
@@ -146,12 +149,45 @@ class ConversationBuilder:
             user_name=payload.user.display_name,
         )
         memory_hint = "Use conversation history to keep continuity and character consistency."
-        return [
+        messages = [
             ConversationMessage(role=ConversationRole.SYSTEM, content=character_definition),
             ConversationMessage(role=ConversationRole.SYSTEM, content=world_info),
             ConversationMessage(role=ConversationRole.SYSTEM, content=roleplay_rules),
             ConversationMessage(role=ConversationRole.SYSTEM, content=memory_hint),
         ]
+        switch_context = self._switch_context_message(
+            session=payload.session,
+            character_name=payload.character.name,
+            user_name=payload.user.display_name,
+        )
+        if switch_context is not None:
+            messages.append(switch_context)
+        return messages
+
+    def _switch_context_message(
+        self,
+        *,
+        session: Session,
+        character_name: str,
+        user_name: str,
+    ) -> ConversationMessage | None:
+        to_character_id = session.metadata.get(SWITCH_CONTEXT_TO_CHARACTER_ID, "").strip()
+        summary = session.metadata.get(SWITCH_CONTEXT_SUMMARY, "").strip()
+        if not summary:
+            return None
+        if to_character_id and to_character_id != session.character_id:
+            return None
+
+        content = self._resolve_templates(
+            value=(
+                "Additional context from the previous character interaction:\n"
+                f"{summary}\n"
+                "Treat this as temporary continuity context, not long-term memory."
+            ),
+            character_name=character_name,
+            user_name=user_name,
+        )
+        return ConversationMessage(role=ConversationRole.SYSTEM, content=content)
 
     def _resolve_message_templates(
         self,

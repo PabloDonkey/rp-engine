@@ -14,6 +14,7 @@ from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.adapters.telegram.beta_registry import TelegramBetaRegistry
 from rp_engine.adapters.telegram.commands import HELP_MESSAGE
 from rp_engine.application.services.character_command_service import CharacterCommandService
+from rp_engine.application.services.character_service import CharacterSelectionResult
 from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.character.character import Character
 from rp_engine.core.character.visibility import CharacterVisibility
@@ -78,16 +79,19 @@ class FakeCharacterService:
         *,
         user_id: UUID,
         command: SelectCharacterCommand,
-    ) -> Session:
+    ) -> CharacterSelectionResult:
         del user_id
         character_id = command.character_name.lower()
-        return Session(
-            id=FIXED_SESSION_ID,
-            owner_kind="user",
-            owner_id=FIXED_USER_ID,
-            character_id=character_id,
-            world_id="default",
-            created_at=FIXED_CREATED_AT,
+        return CharacterSelectionResult(
+            session=Session(
+                id=FIXED_SESSION_ID,
+                owner_kind="user",
+                owner_id=FIXED_USER_ID,
+                character_id=character_id,
+                world_id="default",
+                created_at=FIXED_CREATED_AT,
+            ),
+            status="activated",
         )
 
     async def select_character_for_group(
@@ -96,17 +100,20 @@ class FakeCharacterService:
         group_id: UUID,
         actor_user_id: UUID,
         command: SelectCharacterCommand,
-    ) -> Session:
+    ) -> CharacterSelectionResult:
         del group_id
         del actor_user_id
         character_id = command.character_name.lower()
-        return Session(
-            id=FIXED_SESSION_ID,
-            owner_kind="group",
-            owner_id=FIXED_GROUP_ID,
-            character_id=character_id,
-            world_id="default",
-            created_at=FIXED_CREATED_AT,
+        return CharacterSelectionResult(
+            session=Session(
+                id=FIXED_SESSION_ID,
+                owner_kind="group",
+                owner_id=FIXED_GROUP_ID,
+                character_id=character_id,
+                world_id="default",
+                created_at=FIXED_CREATED_AT,
+            ),
+            status="activated",
         )
 
     async def describe_session_entry(self, *, session: Session) -> str | None:

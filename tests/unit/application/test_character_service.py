@@ -5,7 +5,12 @@ from uuid import UUID
 
 import pytest
 
-from rp_engine.application.services.character_service import CharacterService
+from rp_engine.application.services.character_service import (
+    SWITCH_CONTEXT_FROM_CHARACTER_ID,
+    SWITCH_CONTEXT_SUMMARY,
+    SWITCH_CONTEXT_TO_CHARACTER_ID,
+    CharacterService,
+)
 from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.character.character import Character
 from rp_engine.core.character.visibility import CharacterVisibility
@@ -16,13 +21,30 @@ from rp_engine.core.session.session import Session
 from rp_engine.core.world.world import World
 
 OWNER_ID = UUID("00000000-0000-0000-0000-000000000042")
-SESSION_ID = UUID("00000000-0000-0000-0000-000000000099")
+ACTIVE_TORD_SESSION_ID = UUID("00000000-0000-0000-0000-000000000100")
+BELZEBUTH_SESSION_ID = UUID("00000000-0000-0000-0000-000000000101")
+
+
+class FakeConversationSummarizer:
+    def __init__(self, summary: str = "Transition summary") -> None:
+        self.summary = summary
+        self.calls: list[list[ConversationMessage]] = []
+        self.raise_error = False
+
+    async def summarize_recent_conversation(
+        self,
+        *,
+        recent_messages: list[ConversationMessage],
+    ) -> str:
+        self.calls.append(list(recent_messages))
+        if self.raise_error:
+            raise RuntimeError("summary failed")
+        return self.summary
 
 
 class FakeCharacterStore:
     def __init__(self) -> None:
         self.items: dict[str, Character] = {}
-        self.create_calls = 0
 
     async def get_by_id(self, character_id: str) -> Character | None:
         return self.items.get(character_id)
@@ -42,7 +64,6 @@ class FakeCharacterStore:
         name: str,
         visibility: CharacterVisibility = CharacterVisibility.PRIVATE,
     ) -> Character:
-        self.create_calls += 1
         created = Character(
             id=character_id,
             owner_id=owner_id,
@@ -88,6 +109,13 @@ class FakeWorldStore:
 
 
 class FakeSessionStore:
+    def __init__(self) -> None:
+        self.sessions: dict[UUID, Session] = {}
+        self.active: dict[tuple[str, UUID], UUID] = {}
+
+    async def get_by_id(self, session_id: UUID) -> Session | None:
+        return self.sessions.get(session_id)
+
     async def find_by_relationship(
         self,
         *,
@@ -96,13 +124,18 @@ class FakeSessionStore:
         character_id: str,
         world_id: str,
     ) -> Session | None:
-        del owner_kind
-        del owner_id
-        del character_id
-        del world_id
+        for session in self.sessions.values():
+            if (
+                session.owner_kind == owner_kind
+                and session.owner_id == owner_id
+                and session.character_id == character_id
+                and session.world_id == world_id
+            ):
+                return session
         return None
 
     async def save(self, session: Session) -> Session:
+        self.sessions[session.id] = session
         return session
 
     async def set_active_for_owner(
@@ -112,70 +145,77 @@ class FakeSessionStore:
         owner_id: UUID,
         session_id: UUID,
     ) -> None:
-        del owner_kind
-        del owner_id
-        del session_id
+        self.active[(owner_kind, owner_id)] = session_id
 
     async def get_active_for_owner(self, *, owner_kind: str, owner_id: UUID) -> Session | None:
-        del owner_kind
-        del owner_id
-        return None
+        session_id = self.active.get((owner_kind, owner_id))
+        if session_id is None:
+            return None
+        return self.sessions.get(session_id)
 
 
-@pytest.mark.asyncio
-async def test_select_character_no_longer_creates_missing_character() -> None:
-    character_store = FakeCharacterStore()
-    service = CharacterService(
-        character_store=character_store,
-        conversation_store=FakeConversationStore(),
-        world_store=FakeWorldStore(),
-        session_store=FakeSessionStore(),
-        default_world_id="default",
-    )
-
-    with pytest.raises(ValueError, match="Character not found"):
-        await service.select_character_for_user(
-            user_id=OWNER_ID,
-            command=SelectCharacterCommand(character_name="Unknown"),
-        )
-
-    assert character_store.create_calls == 0
-
-
-@pytest.mark.asyncio
-async def test_describe_session_entry_uses_greeting_as_first_turn() -> None:
-    character_store = FakeCharacterStore()
-    conversation_store = FakeConversationStore()
-    character_store.items["belzebuth"] = Character(
-        id="belzebuth",
+def _character(*, character_id: str, name: str, greeting: str) -> Character:
+    return Character(
+        id=character_id,
         owner_id=OWNER_ID,
         visibility=CharacterVisibility.PRIVATE,
-        name="Belzebuth",
-        description="Ancient dragon mage",
-        personality="Wise and ruthless",
-        greeting="Who dares wake me?",
-        metadata={"scenario": "Ruined temple"},
+        name=name,
+        description=f"{name} description",
+        personality=f"{name} personality",
+        greeting=greeting,
+        metadata={"first_message": greeting},
+    )
+
+
+def _service_with_fixtures() -> tuple[
+    CharacterService,
+    FakeCharacterStore,
+    FakeConversationStore,
+    FakeSessionStore,
+    FakeConversationSummarizer,
+]:
+    character_store = FakeCharacterStore()
+    conversation_store = FakeConversationStore()
+    session_store = FakeSessionStore()
+    summarizer = FakeConversationSummarizer(
+        summary=(
+            "The user and Tord were investigating an abandoned facility and found signs "
+            "of hidden experiments. The user is cautious but wants to continue. The next "
+            "step is deciding whether to enter the sealed lower wing."
+        )
     )
     service = CharacterService(
         character_store=character_store,
         conversation_store=conversation_store,
+        conversation_summarizer=summarizer,
         world_store=FakeWorldStore(),
-        session_store=FakeSessionStore(),
+        session_store=session_store,
         default_world_id="default",
     )
-    session = Session(
-        id=SESSION_ID,
-        owner_kind="user",
-        owner_id=OWNER_ID,
+    return service, character_store, conversation_store, session_store, summarizer
+
+
+@pytest.mark.asyncio
+async def test_first_activation_returns_greeting_and_does_not_summarize() -> None:
+    service, character_store, conversation_store, _session_store, summarizer = _service_with_fixtures()
+    character_store.items["belzebuth"] = _character(
         character_id="belzebuth",
-        world_id="default",
-        created_at=datetime.now(UTC),
+        name="Belzebuth",
+        greeting="Who dares wake me?",
     )
 
-    entry = await service.describe_session_entry(session=session)
+    selection = await service.select_character_for_user(
+        user_id=OWNER_ID,
+        command=SelectCharacterCommand(character_name="Belzebuth"),
+    )
+
+    assert selection.status == "activated"
+    assert len(summarizer.calls) == 0
+
+    entry = await service.describe_session_entry(session=selection.session)
     assert entry == "Who dares wake me?"
 
-    key = ConversationIdentity.for_session(str(SESSION_ID)).to_memory_key().value
+    key = ConversationIdentity.for_session(str(selection.session.id)).to_memory_key().value
     history = conversation_store.messages[key]
     assert len(history) == 1
     assert history[0].role == ConversationRole.CHARACTER
@@ -183,67 +223,135 @@ async def test_describe_session_entry_uses_greeting_as_first_turn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_describe_session_entry_returns_inferred_resume_without_greeting() -> None:
-    character_store = FakeCharacterStore()
-    conversation_store = FakeConversationStore()
-    character_store.items["belzebuth"] = Character(
-        id="belzebuth",
-        owner_id=OWNER_ID,
-        visibility=CharacterVisibility.PRIVATE,
+async def test_character_switch_summarizes_last_four_and_stores_switch_context() -> None:
+    service, character_store, conversation_store, session_store, summarizer = _service_with_fixtures()
+    character_store.items["tord"] = _character(character_id="tord", name="Tord", greeting="...")
+    character_store.items["belzebuth"] = _character(
+        character_id="belzebuth",
         name="Belzebuth",
-        description="Ancient dragon mage",
-        personality="Wise and ruthless",
         greeting="Who dares wake me?",
-        metadata={"scenario": "Ruined temple"},
     )
-    service = CharacterService(
-        character_store=character_store,
-        conversation_store=conversation_store,
-        world_store=FakeWorldStore(),
-        session_store=FakeSessionStore(),
-        default_world_id="default",
+
+    active_tord_session = Session(
+        id=ACTIVE_TORD_SESSION_ID,
+        owner_kind="user",
+        owner_id=OWNER_ID,
+        character_id="tord",
+        world_id="default",
+        created_at=datetime.now(UTC),
     )
-    session = Session(
-        id=SESSION_ID,
+    target_belzebuth_session = Session(
+        id=BELZEBUTH_SESSION_ID,
         owner_kind="user",
         owner_id=OWNER_ID,
         character_id="belzebuth",
         world_id="default",
         created_at=datetime.now(UTC),
     )
-    memory_key = ConversationIdentity.for_session(str(SESSION_ID)).to_memory_key()
-
-    await conversation_store.save_message(
-        memory_key,
-        ConversationMessage(role=ConversationRole.CHARACTER, content="Who dares wake me?"),
-    )
-    await conversation_store.save_message(
-        memory_key,
-        ConversationMessage(role=ConversationRole.USER, content="Tell me your name."),
-    )
-    await conversation_store.save_message(
-        memory_key,
-        ConversationMessage(role=ConversationRole.CHARACTER, content="I am Belzebuth."),
-    )
-    await conversation_store.save_message(
-        memory_key,
-        ConversationMessage(role=ConversationRole.USER, content="Where are we?"),
-    )
-    await conversation_store.save_message(
-        memory_key,
-        ConversationMessage(role=ConversationRole.CHARACTER, content="Inside the ruined temple."),
-    )
-    await conversation_store.save_message(
-        memory_key,
-        ConversationMessage(role=ConversationRole.USER, content="What do you seek?"),
+    await session_store.save(active_tord_session)
+    await session_store.save(target_belzebuth_session)
+    await session_store.set_active_for_owner(
+        owner_kind="user",
+        owner_id=OWNER_ID,
+        session_id=active_tord_session.id,
     )
 
-    entry = await service.describe_session_entry(session=session)
+    memory_key = ConversationIdentity.for_session(str(active_tord_session.id)).to_memory_key()
+    recent = [
+        ConversationMessage(role=ConversationRole.USER, content="We found the facility map."),
+        ConversationMessage(role=ConversationRole.CHARACTER, content="The lower floor is sealed."),
+        ConversationMessage(role=ConversationRole.USER, content="Should we force the door?"),
+        ConversationMessage(role=ConversationRole.CHARACTER, content="There might be alarms."),
+    ]
+    older = ConversationMessage(role=ConversationRole.USER, content="Earlier unrelated turn")
+    await conversation_store.save_message(memory_key, older)
+    for message in recent:
+        await conversation_store.save_message(memory_key, message)
 
-    assert entry is not None
-    assert entry.startswith("Inferred resume from recent turns:")
-    assert "User intent recently focused on:" in entry
-    assert "Character recently established:" in entry
-    assert "Who dares wake me?" not in entry
-    assert "Where are we?" in entry
-    assert "Inside the ruined temple." in entry
+    selection = await service.select_character_for_user(
+        user_id=OWNER_ID,
+        command=SelectCharacterCommand(character_name="Belzebuth"),
+    )
+
+    assert selection.status == "switched"
+    assert len(summarizer.calls) == 1
+    assert summarizer.calls[0] == recent
+    assert selection.session.metadata[SWITCH_CONTEXT_FROM_CHARACTER_ID] == "tord"
+    assert selection.session.metadata[SWITCH_CONTEXT_TO_CHARACTER_ID] == "belzebuth"
+    assert selection.session.metadata[SWITCH_CONTEXT_SUMMARY] == summarizer.summary
+
+
+@pytest.mark.asyncio
+async def test_same_character_selection_is_noop_without_summary_generation() -> None:
+    service, character_store, _conversation_store, session_store, summarizer = _service_with_fixtures()
+    character_store.items["belzebuth"] = _character(
+        character_id="belzebuth",
+        name="Belzebuth",
+        greeting="Who dares wake me?",
+    )
+
+    existing = Session(
+        id=BELZEBUTH_SESSION_ID,
+        owner_kind="user",
+        owner_id=OWNER_ID,
+        character_id="belzebuth",
+        world_id="default",
+        created_at=datetime.now(UTC),
+    )
+    await session_store.save(existing)
+    await session_store.set_active_for_owner(
+        owner_kind="user",
+        owner_id=OWNER_ID,
+        session_id=existing.id,
+    )
+
+    selection = await service.select_character_for_user(
+        user_id=OWNER_ID,
+        command=SelectCharacterCommand(character_name="Belzebuth"),
+    )
+
+    assert selection.status == "already_active"
+    assert selection.session.id == existing.id
+    assert len(summarizer.calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_switch_continues_when_summarization_fails_and_logs(caplog: pytest.LogCaptureFixture) -> None:
+    service, character_store, conversation_store, session_store, summarizer = _service_with_fixtures()
+    summarizer.raise_error = True
+    character_store.items["tord"] = _character(character_id="tord", name="Tord", greeting="...")
+    character_store.items["belzebuth"] = _character(
+        character_id="belzebuth",
+        name="Belzebuth",
+        greeting="Who dares wake me?",
+    )
+
+    active_tord_session = Session(
+        id=ACTIVE_TORD_SESSION_ID,
+        owner_kind="user",
+        owner_id=OWNER_ID,
+        character_id="tord",
+        world_id="default",
+        created_at=datetime.now(UTC),
+    )
+    await session_store.save(active_tord_session)
+    await session_store.set_active_for_owner(
+        owner_kind="user",
+        owner_id=OWNER_ID,
+        session_id=active_tord_session.id,
+    )
+    memory_key = ConversationIdentity.for_session(str(active_tord_session.id)).to_memory_key()
+    await conversation_store.save_message(
+        memory_key,
+        ConversationMessage(role=ConversationRole.USER, content="Do we enter now?"),
+    )
+
+    selection = await service.select_character_for_user(
+        user_id=OWNER_ID,
+        command=SelectCharacterCommand(character_name="Belzebuth"),
+    )
+
+    assert selection.status == "switched"
+    assert len(summarizer.calls) == 1
+    assert SWITCH_CONTEXT_SUMMARY not in selection.session.metadata
+    assert "Failed to generate character switch summary" in caplog.text

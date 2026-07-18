@@ -22,7 +22,7 @@ from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.ports import CharacterStore, ConversationStore, LLMProvider, SessionStore
 from rp_engine.infrastructure.config.settings import Settings, get_settings
-from rp_engine.infrastructure.llm.lmstudio.provider import LMStudioProvider
+from rp_engine.infrastructure.llm.lmstudio import LMStudioConversationSummarizer, LMStudioProvider
 from rp_engine.infrastructure.postgres import (
     PostgresCharacterStore,
     PostgresConfig,
@@ -97,9 +97,11 @@ def build_container(settings: Settings) -> AppContainer:
     world_store = JsonWorldStore()
     identity_resolver = IdentityResolver(store=user_identity_store)
     group_identity_resolver = GroupIdentityResolver(store=group_identity_store)
+    conversation_summarizer = LMStudioConversationSummarizer(llm_provider=llm_provider)
     character_service = CharacterService(
         character_store=character_store,
         conversation_store=conversation_store,
+        conversation_summarizer=conversation_summarizer,
         world_store=world_store,
         session_store=session_store,
         default_world_id=settings.default_world_id,

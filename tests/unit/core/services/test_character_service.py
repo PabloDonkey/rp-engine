@@ -6,6 +6,8 @@ from rp_engine.application.services.character_service import CharacterService
 from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.character.character import Character
 from rp_engine.core.character.visibility import CharacterVisibility
+from rp_engine.core.conversation.message import ConversationMessage
+from rp_engine.core.memory.models import MemoryKey
 from rp_engine.core.session.session import Session
 from rp_engine.core.world.world import World
 
@@ -44,6 +46,17 @@ class InMemoryCharacterStore:
         )
         self._items[character_id] = created
         return created
+
+    async def find_owned_by_name(self, *, owner_id: UUID, name: str) -> Character | None:
+        target = name.strip().lower()
+        for character in self._items.values():
+            if character.owner_id == owner_id and character.name.lower() == target:
+                return character
+        return None
+
+    async def save(self, character: Character) -> Character:
+        self._items[character.id] = character
+        return character
 
 
 class InMemoryWorldStore:
@@ -113,6 +126,29 @@ class InMemorySessionStore:
         return self._items.get(active_id)
 
 
+class FakeConversationStore:
+    async def save_message(self, memory_key: MemoryKey, message: ConversationMessage) -> None:
+        del memory_key
+        del message
+
+    async def load_messages(self, memory_key: MemoryKey) -> list[ConversationMessage]:
+        del memory_key
+        return []
+
+    async def clear(self, memory_key: MemoryKey) -> None:
+        del memory_key
+
+
+class FakeConversationSummarizer:
+    async def summarize_recent_conversation(
+        self,
+        *,
+        recent_messages: list[ConversationMessage],
+    ) -> str:
+        del recent_messages
+        return ""
+
+
 @pytest.mark.asyncio
 async def test_select_character_reuses_existing_session() -> None:
     user_id = UUID("00000000-0000-0000-0000-000000000001")
@@ -121,6 +157,8 @@ async def test_select_character_reuses_existing_session() -> None:
     session_store = InMemorySessionStore()
     service = CharacterService(
         character_store=character_store,
+        conversation_store=FakeConversationStore(),
+        conversation_summarizer=FakeConversationSummarizer(),
         world_store=world_store,
         session_store=session_store,
         default_world_id="default",
@@ -135,7 +173,7 @@ async def test_select_character_reuses_existing_session() -> None:
         command=SelectCharacterCommand(character_name="belzebuth"),
     )
 
-    assert second.id == first.id
+    assert second.session.id == first.session.id
 
 
 @pytest.mark.asyncio
@@ -143,6 +181,8 @@ async def test_ensure_active_session_creates_default_context() -> None:
     user_id = UUID("00000000-0000-0000-0000-000000000002")
     service = CharacterService(
         character_store=InMemoryCharacterStore(),
+        conversation_store=FakeConversationStore(),
+        conversation_summarizer=FakeConversationSummarizer(),
         world_store=InMemoryWorldStore(),
         session_store=InMemorySessionStore(),
         default_world_id="default",
@@ -160,6 +200,8 @@ async def test_ensure_active_session_creates_default_context() -> None:
 async def test_different_users_do_not_share_sessions() -> None:
     service = CharacterService(
         character_store=InMemoryCharacterStore(),
+        conversation_store=FakeConversationStore(),
+        conversation_summarizer=FakeConversationSummarizer(),
         world_store=InMemoryWorldStore(),
         session_store=InMemorySessionStore(),
         default_world_id="default",
@@ -181,6 +223,8 @@ async def test_different_users_do_not_share_sessions() -> None:
 async def test_different_groups_do_not_share_sessions() -> None:
     service = CharacterService(
         character_store=InMemoryCharacterStore(),
+        conversation_store=FakeConversationStore(),
+        conversation_summarizer=FakeConversationSummarizer(),
         world_store=InMemoryWorldStore(),
         session_store=InMemorySessionStore(),
         default_world_id="default",
@@ -209,16 +253,20 @@ async def test_private_character_owned_by_another_user_is_rejected() -> None:
     owner_user_id = UUID("00000000-0000-0000-0000-000000000301")
     requester_user_id = UUID("00000000-0000-0000-0000-000000000302")
     character_store = InMemoryCharacterStore()
-    character_store._items["belzebuth"] = Character(
+    await character_store.save(
+        Character(
         id="belzebuth",
         owner_id=owner_user_id,
         visibility=CharacterVisibility.PRIVATE,
         name="Belzebuth",
         description="Character profile for Belzebuth.",
         personality="Open-ended roleplay persona.",
+        )
     )
     service = CharacterService(
         character_store=character_store,
+        conversation_store=FakeConversationStore(),
+        conversation_summarizer=FakeConversationSummarizer(),
         world_store=InMemoryWorldStore(),
         session_store=InMemorySessionStore(),
         default_world_id="default",
