@@ -52,6 +52,9 @@ LLM --> Provider
 
 The core layer must not depend on Telegram, FastAPI, LM Studio, or any other external framework.
 
+Character definition portability uses Character Card Specification v3 as the external format
+contract. The canonical specification is documented in `docs/SPEC_V3.md`.
+
 ---
 
 # Layers
@@ -204,6 +207,10 @@ Session is the roleplay ownership boundary:
 * Conversation memory is keyed by session identity, not external adapter IDs.
 
 The domain should contain no framework dependencies.
+
+Character card validation and mapping rules belong to domain/application boundaries, not to
+transport adapters. Adapters may collect command input (for example Telegram `/character ...`
+flows) but must delegate Character Card v3 validation and persistence to application services.
 
 ---
 

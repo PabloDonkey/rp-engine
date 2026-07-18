@@ -95,6 +95,12 @@ Cardinality:
 
 `Character` represents a reusable definition template (character card).
 
+The canonical portable character definition format is Character Card Specification v3
+(`docs/SPEC_V3.md`).
+
+RP Engine maps Character Card v3 fields into its internal `Character` domain model while keeping
+engine-specific ownership and runtime concerns outside the card itself.
+
 Character Definition examples:
 
 * `name`
@@ -105,6 +111,20 @@ Character Definition examples:
 * `rules`
 * `system prompt`
 * `initial world context`
+
+Core Character Card v3 mapping (non-exhaustive):
+
+* `name` -> `Character.name`
+* `description` -> `Character.description`
+* `personality` -> `Character.personality`
+* `first_mes` -> `Character.greeting`
+
+Engine-specific fields are not part of the Character Card v3 object:
+
+* `owner_id`
+* `visibility`
+* session identity and conversation history
+* memory persistence and retrieval metadata
 
 Runtime continuity is currently represented by conversation memory, not by a dedicated
 structured `CharacterState` entity.

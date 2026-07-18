@@ -372,11 +372,15 @@ External systems (Telegram, REST, CLI, Discord, etc.) communicate with the appli
 
 Additional project documentation can be found in the `docs/` directory.
 
+Character cards use Character Card Specification v3 as the portable external definition format,
+mapped into RP Engine's internal character domain model.
+
 | Document          | Description                   |
 | ----------------- | ----------------------------- |
 | `VISION.md`       | Project goals and philosophy  |
 | `SPEC.md`         | Functional requirements       |
-| `DOMAIN.md`       | Domain model and terminology  |
+| `SPEC_V3.md`      | Character Card v3 specification |
+| `DOMAIN_MODEL.md` | Domain model and terminology  |
 | `ARCHITECTURE.md` | System architecture           |
 | `API.md`          | HTTP API specification        |
 | `DECISIONS.md`    | Architecture decision records |
