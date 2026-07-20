@@ -42,7 +42,7 @@ class LMStudioConversationMapper:
 
         add_user = getattr(chat, "add_user_message", None)
         if callable(add_user):
-            add_user(f"Character: {content}")
+            add_user(f"{content}")
             return
 
         raise TypeError("LM Studio chat object does not support adding messages.")

@@ -2,6 +2,7 @@ import asyncio
 import logging
 from threading import Lock
 from typing import Any, ClassVar
+import re
 from urllib.parse import urlparse
 
 import lmstudio as lms
@@ -76,11 +77,18 @@ class LMStudioProvider(LLMProvider):
         chat = self._conversation_mapper.map_conversation(conversation)
         config = self._get_config(settings)
         logger.info(
-            "LmStudio.generate",
-            extra={"config": str(config)},
+            f"LmStudio.generate with config {config}"
         )
 
         result = model.respond(chat, config=config)
+
+        logger.info(f"LLM response: {result}")
+        logger.info(f"Content: {result.content}")
+
+        # Clean the LM Studio internal reasoning string out of the final text
+        parts = re.split(r'__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[a-f0-9]+__', result.content)
+        clean_text = parts[-1].strip()
+
         stats = getattr(result, "stats", None)
         metadata = {
             "provider": "lmstudio",
@@ -91,7 +99,7 @@ class LMStudioProvider(LLMProvider):
             metadata.update(self._extract_usage_metadata(stats))
 
         return LLMResponse(
-            content=self._extract_content(result),
+            content=clean_text,
             finish_reason=self._extract_finish_reason(result),
             metadata=metadata,
         )
@@ -117,9 +125,26 @@ class LMStudioProvider(LLMProvider):
 
     @staticmethod
     def _extract_content(result: Any) -> str:
-        content = getattr(result, "content", None)
+        """Extracts the primary, user-facing content from the raw model response."""
+        # Check for structured 'thought' blocks and strip them out before returning the content.
+        if isinstance(result, dict):
+            # Assuming thought/process might be stored in a key like 'thinking_process' or similar structure
+            # This logic needs to be tailored based on what 'result' actually looks like when thoughts are present.
+            # For general cleanup: we prioritize finding the final, clean string content.
+            content = result.get("content")
+        elif hasattr(result, "content"):
+            content = getattr(result, "content")
+        else:
+            content = None
+
+        if isinstance(content, str) and not ("thought process" in content.lower() or "thinking:" in content.lower()):
+            return content
+        
+        # Fallback to converting the entire object if extraction fails, but this is dangerous.
+        # We assume if structured data was returned, we take the cleanest string available.
         if isinstance(content, str):
             return content
+        
         return str(result)
 
     @staticmethod
@@ -204,3 +229,5 @@ def _is_lmstudio_connection_error(exc: Exception) -> bool:
             or "connection attempts failed" in message
         )
     )
+
+
