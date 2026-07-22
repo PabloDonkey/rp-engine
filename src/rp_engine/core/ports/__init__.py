@@ -12,6 +12,8 @@ from rp_engine.core.ports.processing_feedback import (
 	ProcessingFeedback,
 	processing_feedback_scope,
 )
+from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
+from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.ports.session_store import SessionStore
 from rp_engine.core.ports.user_identity_store import UserIdentityStore
 from rp_engine.core.ports.world_store import WorldStore
@@ -29,6 +31,8 @@ __all__ = [
 	"NoOpProcessingFeedback",
 	"ProcessingFeedback",
 	"processing_feedback_scope",
+	"ScenarioDefinitionStore",
+	"ScenarioSessionStore",
 	"SessionStore",
 	"UserIdentityStore",
 	"WorldStore",

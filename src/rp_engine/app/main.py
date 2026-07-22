@@ -20,7 +20,14 @@ from rp_engine.application.services.identity_resolver import IdentityResolver
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
-from rp_engine.core.ports import CharacterStore, ConversationStore, LLMProvider, SessionStore
+from rp_engine.core.ports import (
+    CharacterStore,
+    ConversationStore,
+    LLMProvider,
+    ScenarioDefinitionStore,
+    ScenarioSessionStore,
+    SessionStore,
+)
 from rp_engine.infrastructure.config.settings import Settings, get_settings
 from rp_engine.infrastructure.llm.lmstudio import LMStudioConversationSummarizer, LMStudioProvider
 from rp_engine.infrastructure.postgres import (
@@ -31,11 +38,17 @@ from rp_engine.infrastructure.postgres import (
     create_engine,
     create_session_factory,
 )
+from rp_engine.infrastructure.postgres.repositories import (
+    PostgresScenarioDefinitionStore,
+    PostgresScenarioSessionStore,
+)
 from rp_engine.infrastructure.storage import (
     JsonCharacterStore,
     JsonConversationStore,
     JsonGenerationTraceStore,
     JsonGroupIdentityStore,
+    JsonScenarioDefinitionStore,
+    JsonScenarioSessionStore,
     JsonSessionStore,
     JsonUserIdentityStore,
     JsonWorldStore,
@@ -79,6 +92,8 @@ def build_container(settings: Settings) -> AppContainer:
     conversation_store: ConversationStore
     session_store: SessionStore
     character_store: CharacterStore
+    scenario_definition_store: ScenarioDefinitionStore
+    scenario_session_store: ScenarioSessionStore
     if settings.persistence_backend == "postgres":
         postgres_config = PostgresConfig.from_settings(settings)
         postgres_engine = create_engine(postgres_config)
@@ -86,10 +101,14 @@ def build_container(settings: Settings) -> AppContainer:
         character_store = PostgresCharacterStore(postgres_session_factory)
         conversation_store = PostgresConversationStore(postgres_session_factory)
         session_store = PostgresSessionStore(postgres_session_factory)
+        scenario_definition_store = PostgresScenarioDefinitionStore()
+        scenario_session_store = PostgresScenarioSessionStore()
     else:
         character_store = JsonCharacterStore()
         conversation_store = JsonConversationStore()
         session_store = JsonSessionStore()
+        scenario_definition_store = JsonScenarioDefinitionStore()
+        scenario_session_store = JsonScenarioSessionStore()
 
     generation_trace_store = JsonGenerationTraceStore()
     user_identity_store = JsonUserIdentityStore()
