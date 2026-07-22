@@ -5,7 +5,7 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from rp_engine.core.character.character import Character
-from rp_engine.core.conversation.builder import ConversationBuilder, ConversationBuilderInput
+from rp_engine.core.conversation.builder import ConversationBuilder, ScenarioConversationInput
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
@@ -29,11 +29,17 @@ from rp_engine.core.ports import (
     WorldStore,
     processing_feedback_scope,
 )
+from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
+from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.session.session import Session
 from rp_engine.core.user.user import User
 from rp_engine.core.world.world import World
 
 logger = logging.getLogger(__name__)
+
+# Bridge role key used while ChatService still loads legacy Session/Character/World.
+# Phase 4 replaces this with real scenario loading and removes the bridge.
+_BRIDGE_ROLE = "character"
 
 
 class ChatService:
@@ -99,7 +105,7 @@ class ChatService:
             history = await self._conversation_store.load_messages(memory_key)
             context_messages = self._memory_strategy.build_context(history)
             conversation = self._conversation_builder.build(
-                ConversationBuilderInput(
+                self._to_scenario_input(
                     session=session,
                     user=owner_user,
                     character=character,
@@ -193,7 +199,7 @@ class ChatService:
             history = await self._conversation_store.load_messages(memory_key)
             context_messages = self._memory_strategy.build_context(history)
             conversation = self._conversation_builder.build_continue(
-                ConversationBuilderInput(
+                self._to_scenario_input(
                     session=session,
                     user=owner_user,
                     character=character,
@@ -290,7 +296,7 @@ class ChatService:
                 prior_history = trimmed_history[:latest_user_index]
                 context_messages = self._memory_strategy.build_context(prior_history)
                 conversation = self._conversation_builder.build(
-                    ConversationBuilderInput(
+                    self._to_scenario_input(
                         session=session,
                         user=owner_user,
                         character=character,
@@ -302,7 +308,7 @@ class ChatService:
             elif latest_context_message.role == ConversationRole.CHARACTER:
                 context_messages = self._memory_strategy.build_context(trimmed_history)
                 conversation = self._conversation_builder.build_continue(
-                    ConversationBuilderInput(
+                    self._to_scenario_input(
                         session=session,
                         user=owner_user,
                         character=character,
@@ -407,6 +413,47 @@ class ChatService:
             raise ValueError("World not found for session.")
 
         return session, user, character, world
+
+    @staticmethod
+    def _to_scenario_input(
+        *,
+        session: Session,
+        user: User,
+        character: Character,
+        world: World,
+        memory_messages: list[ConversationMessage],
+        user_message: str,
+    ) -> ScenarioConversationInput:
+        """Bridge legacy Session/Character/World into scenario builder inputs.
+
+        Temporary: Phase 4 replaces this with real ScenarioDefinition/ScenarioSession
+        loading. It maps the single selected character onto one scenario role so the
+        rewritten ConversationBuilder produces the same context it did before.
+        """
+        scenario = ScenarioDefinition(
+            id=f"legacy_{session.id}",
+            owner_id=session.owner_id,
+            name=character.name,
+            description="",
+            world=world,
+            characters={_BRIDGE_ROLE: character},
+        )
+        scenario_session = ScenarioSession(
+            id=session.id,
+            scenario_definition_id=scenario.id,
+            owner_kind=session.owner_kind,
+            owner_id=session.owner_id,
+            active_participants={_BRIDGE_ROLE: character.id},
+            created_at=session.created_at,
+            metadata=session.metadata,
+        )
+        return ScenarioConversationInput(
+            scenario=scenario,
+            session=scenario_session,
+            user=user,
+            memory_messages=memory_messages,
+            user_message=user_message,
+        )
 
     @staticmethod
     def _group_to_user(group: Group) -> User:

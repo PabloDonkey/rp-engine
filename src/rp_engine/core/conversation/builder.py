@@ -5,36 +5,43 @@ from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import MemoryKey
-from rp_engine.core.session.session import Session
+from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
+from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.user import User
-from rp_engine.core.world.world import World
 
+# Session metadata keys used to carry short-lived continuity context when the active
+# character changes. Written by the character switching flow, read here.
 SWITCH_CONTEXT_TO_CHARACTER_ID = "switch_context_to_character_id"
 SWITCH_CONTEXT_SUMMARY = "switch_context_summary"
 
 
 @dataclass(frozen=True, slots=True)
-class ConversationBuilderInput:
-    session: Session
+class ScenarioConversationInput:
+    """Input context for building a provider-independent conversation from a scenario."""
+
+    scenario: ScenarioDefinition
+    session: ScenarioSession
     user: User
-    character: Character
-    world: World
     memory_messages: list[ConversationMessage]
     user_message: str
+    # Optional explicit active character override; when absent the active character is
+    # resolved from the session's participants (or the scenario's single character).
+    active_character_id: str | None = None
 
 
 class ConversationBuilder:
-    def build(self, payload: ConversationBuilderInput) -> Conversation:
+    def build(self, payload: ScenarioConversationInput) -> Conversation:
         cleaned_user_message = payload.user_message.strip()
         if not cleaned_user_message:
             raise ValueError("User message must not be empty.")
 
-        system_messages = self._build_system_messages(payload)
+        character = self._resolve_active_character(payload)
+        system_messages = self._build_system_messages(payload, character)
         history_messages = [
             self._resolve_message_templates(
                 message=message,
-                character_name=payload.character.name,
-                user_name=payload.user.display_name,
+                payload=payload,
+                character=character,
             )
             for message in payload.memory_messages
         ]
@@ -42,8 +49,8 @@ class ConversationBuilder:
             role=ConversationRole.USER,
             content=self._resolve_templates(
                 value=cleaned_user_message,
-                character_name=payload.character.name,
-                user_name=payload.user.display_name,
+                payload=payload,
+                character=character,
             ),
             metadata={},
         )
@@ -53,13 +60,14 @@ class ConversationBuilder:
             metadata={"session_id": str(payload.session.id)},
         )
 
-    def build_continue(self, payload: ConversationBuilderInput) -> Conversation:
-        system_messages = self._build_system_messages(payload)
+    def build_continue(self, payload: ScenarioConversationInput) -> Conversation:
+        character = self._resolve_active_character(payload)
+        system_messages = self._build_system_messages(payload, character)
         history_messages = [
             self._resolve_message_templates(
                 message=message,
-                character_name=payload.character.name,
-                user_name=payload.user.display_name,
+                payload=payload,
+                character=character,
             )
             for message in payload.memory_messages
         ]
@@ -94,36 +102,121 @@ class ConversationBuilder:
         )
 
     @staticmethod
-    def default_memory_key_for_session(session: Session) -> MemoryKey:
+    def default_memory_key_for_session(session: ScenarioSession) -> MemoryKey:
         return MemoryKey(value=f"session_{session.id}")
+
+    @staticmethod
+    def _resolve_active_character(payload: ScenarioConversationInput) -> Character | None:
+        """Resolve which character is currently speaking, if any.
+
+        Scenarios may be characterless (freeform). When characters exist, the active
+        one is chosen by explicit override, then by the session's participants, then by
+        falling back to the scenario's sole character.
+        """
+        scenario = payload.scenario
+        if not scenario.characters:
+            return None
+
+        if payload.active_character_id is not None:
+            for character in scenario.characters.values():
+                if character.id == payload.active_character_id:
+                    return character
+            return None
+
+        for role, character_id in payload.session.active_participants.items():
+            if role in scenario.characters:
+                return scenario.characters[role]
+            for character in scenario.characters.values():
+                if character.id == character_id:
+                    return character
+
+        if len(scenario.characters) == 1:
+            return next(iter(scenario.characters.values()))
+        return None
 
     def _build_system_messages(
         self,
-        payload: ConversationBuilderInput,
+        payload: ScenarioConversationInput,
+        character: Character | None,
     ) -> list[ConversationMessage]:
-        character_definition = self._resolve_templates(
-            value=(
-                f"[Character]\n {payload.character.name}\n"
-                f"[Description]\n {payload.character.description}\n"
-                f"[Personality]\n {payload.character.personality}\n"
-                f"[Greeting]\n {payload.character.greeting}"
-            ),
-            character_name=payload.character.name,
-            user_name=payload.user.display_name,
+        messages: list[ConversationMessage] = []
+
+        scenario_intro = self._build_scenario_intro(payload)
+        if scenario_intro is not None:
+            messages.append(scenario_intro)
+
+        if character is not None:
+            character_definition = self._resolve_templates(
+                value=(
+                    f"[Character]\n {character.name}\n"
+                    f"[Description]\n {character.description}\n"
+                    f"[Personality]\n {character.personality}\n"
+                    f"[Greeting]\n {character.greeting}"
+                ),
+                payload=payload,
+                character=character,
+            )
+            messages.append(
+                ConversationMessage(role=ConversationRole.SYSTEM, content=character_definition)
+            )
+
+        world = payload.scenario.world
+        if world is not None:
+            world_info = self._resolve_templates(
+                value=(
+                    f"[World]\n {world.name}\n"
+                    f"[Description]\n {world.description}\n"
+                    f"[Rules]\n {'; '.join(world.rules) if world.rules else 'None'}"
+                ),
+                payload=payload,
+                character=character,
+            )
+            messages.append(
+                ConversationMessage(role=ConversationRole.SYSTEM, content=world_info)
+            )
+
+        roleplay_rules = self._resolve_templates(
+            value=self._roleplay_rules_text(payload.scenario.rules),
+            payload=payload,
+            character=character,
         )
-        world_info = self._resolve_templates(
-            value=(
-                f"[World]\n {payload.world.name}\n"
-                f"[Description]\n {payload.world.description}\n"
-                f"[Rules]\n {'; '.join(payload.world.rules) if payload.world.rules else 'None'}"
-            ),
-            character_name=payload.character.name,
-            user_name=payload.user.display_name,
+        messages.append(
+            ConversationMessage(role=ConversationRole.SYSTEM, content=roleplay_rules)
         )
-        #ROLE PLAY RULES
-        roleplay_rules =self._resolve_templates(
-            value=(
-                f"""\n[Role Play Rules]
+
+        memory_hint = "Use conversation history to keep continuity and character consistency."
+        messages.append(ConversationMessage(role=ConversationRole.SYSTEM, content=memory_hint))
+
+        switch_context = self._switch_context_message(payload, character)
+        if switch_context is not None:
+            messages.append(switch_context)
+
+        return messages
+
+    def _build_scenario_intro(
+        self,
+        payload: ScenarioConversationInput,
+    ) -> ConversationMessage | None:
+        scenario = payload.scenario
+        sections: list[str] = [f"[Scenario]\n {scenario.name}"]
+        if scenario.description:
+            sections.append(f"[Overview]\n {scenario.description}")
+        if scenario.initial_context:
+            sections.append(f"[Initial Context]\n {scenario.initial_context}")
+        # Only emit an intro when it carries more than just the name.
+        if len(sections) == 1:
+            return None
+        content = self._resolve_templates(
+            value="\n".join(sections),
+            payload=payload,
+            character=None,
+        )
+        return ConversationMessage(role=ConversationRole.SYSTEM, content=content)
+
+    @staticmethod
+    def _roleplay_rules_text(scenario_rules: list[str]) -> str:
+        base = (
+            """\n[Role Play Rules]
                   Remain in character at all times.
                   Treat the latest user message as the highest priority.
                   The user controls only their own character.
@@ -134,7 +227,7 @@ class ConversationBuilder:
                   Do not continue a previous speech if interrupted.
                   Every reply should advance the interaction between the character and the user.
                   do not not mention those instructions in your replies."""
-                f"""\n[Response Format]
+            """\n[Response Format]
                 Write naturally. Never include labels such as "Narration", "Action", or "Dialogue".
                 Keep scene descriptions brief and only describe observable events.
                 Write the character's physical actions in *italics*.
@@ -144,38 +237,24 @@ class ConversationBuilder:
                 React to the user's latest message before introducing new descriptions.
                 Do not narrate the user's thoughts, emotions, or intentions.
                 End naturally with an opportunity for the user to respond."""
-            ),
-            character_name=payload.character.name,
-            user_name=payload.user.display_name,
         )
-        memory_hint = "Use conversation history to keep continuity and character consistency."
-        messages = [
-            ConversationMessage(role=ConversationRole.SYSTEM, content=character_definition),
-            ConversationMessage(role=ConversationRole.SYSTEM, content=world_info),
-            ConversationMessage(role=ConversationRole.SYSTEM, content=roleplay_rules),
-            ConversationMessage(role=ConversationRole.SYSTEM, content=memory_hint),
-        ]
-        switch_context = self._switch_context_message(
-            session=payload.session,
-            character_name=payload.character.name,
-            user_name=payload.user.display_name,
-        )
-        if switch_context is not None:
-            messages.append(switch_context)
-        return messages
+        if scenario_rules:
+            joined = "\n                  ".join(scenario_rules)
+            base += f"\n[Scenario Rules]\n                  {joined}"
+        return base
 
     def _switch_context_message(
         self,
-        *,
-        session: Session,
-        character_name: str,
-        user_name: str,
+        payload: ScenarioConversationInput,
+        character: Character | None,
     ) -> ConversationMessage | None:
-        to_character_id = session.metadata.get(SWITCH_CONTEXT_TO_CHARACTER_ID, "").strip()
-        summary = session.metadata.get(SWITCH_CONTEXT_SUMMARY, "").strip()
+        metadata = payload.session.metadata
+        to_character_id = metadata.get(SWITCH_CONTEXT_TO_CHARACTER_ID, "").strip()
+        summary = metadata.get(SWITCH_CONTEXT_SUMMARY, "").strip()
         if not summary:
             return None
-        if to_character_id and to_character_id != session.character_id:
+        active_character_id = character.id if character is not None else ""
+        if to_character_id and to_character_id != active_character_id:
             return None
 
         content = self._resolve_templates(
@@ -184,8 +263,8 @@ class ConversationBuilder:
                 f"{summary}\n"
                 "Treat this as temporary continuity context, not long-term memory."
             ),
-            character_name=character_name,
-            user_name=user_name,
+            payload=payload,
+            character=character,
         )
         return ConversationMessage(role=ConversationRole.SYSTEM, content=content)
 
@@ -193,23 +272,31 @@ class ConversationBuilder:
         self,
         *,
         message: ConversationMessage,
-        character_name: str,
-        user_name: str,
+        payload: ScenarioConversationInput,
+        character: Character | None,
     ) -> ConversationMessage:
         return ConversationMessage(
             role=message.role,
             content=self._resolve_templates(
                 value=message.content,
-                character_name=character_name,
-                user_name=user_name,
+                payload=payload,
+                character=character,
             ),
             metadata=message.metadata,
         )
 
     @staticmethod
-    def _resolve_templates(*, value: str, character_name: str, user_name: str) -> str:
+    def _resolve_templates(
+        *,
+        value: str,
+        payload: ScenarioConversationInput,
+        character: Character | None,
+    ) -> str:
+        character_name = character.name if character is not None else "the character"
+        world_name = payload.scenario.world.name if payload.scenario.world is not None else ""
         return (
             value.replace("{{char}}", character_name)
-            .replace("{{user}}", user_name)
+            .replace("{{user}}", payload.user.display_name)
+            .replace("{{world}}", world_name)
             .strip()
         )
