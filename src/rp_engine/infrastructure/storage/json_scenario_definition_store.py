@@ -7,7 +7,9 @@ from uuid import UUID
 from rp_engine.core.character.character import Character
 from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
+from rp_engine.core.scenario.role_profile import RoleProfile
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
+from rp_engine.core.scenario.story_graph import StoryBeat, StoryGraph
 from rp_engine.core.world.world import World
 
 
@@ -54,11 +56,16 @@ class JsonScenarioDefinitionStore(ScenarioDefinitionStore):
                 "name": scenario.name,
                 "description": scenario.description,
                 "world": self._world_to_payload(scenario.world),
+                "role_profiles": {
+                    role: self._role_profile_to_payload(profile)
+                    for role, profile in scenario.role_profiles.items()
+                },
                 "characters": {
                     role: self._character_to_payload(char)
                     for role, char in scenario.characters.items()
                 },
                 "rules": scenario.rules,
+                "story_graph": self._story_graph_to_payload(scenario.story_graph),
                 "initial_context": scenario.initial_context,
                 "metadata": scenario.metadata,
             }
@@ -104,8 +111,19 @@ class JsonScenarioDefinitionStore(ScenarioDefinitionStore):
                     id=world_data["id"],
                     name=world_data["name"],
                     description=world_data["description"],
-                    rules=world_data.get("rules", []),
+                    rules=tuple(world_data.get("rules", [])),
                     metadata=world_data.get("metadata", {}),
+                )
+
+            role_profiles = {}
+            for role, profile_data in payload.get("role_profiles", {}).items():
+                role_profiles[role] = RoleProfile(
+                    id=profile_data["id"],
+                    name=profile_data["name"],
+                    description=profile_data.get("description", ""),
+                    objectives=tuple(profile_data.get("objectives", [])),
+                    constraints=tuple(profile_data.get("constraints", [])),
+                    metadata=profile_data.get("metadata", {}),
                 )
 
             characters = {}
@@ -122,14 +140,20 @@ class JsonScenarioDefinitionStore(ScenarioDefinitionStore):
                         metadata=char_data.get("metadata", {}),
                     )
 
+            story_graph = JsonScenarioDefinitionStore._story_graph_from_payload(
+                payload.get("story_graph")
+            )
+
             return ScenarioDefinition(
                 id=payload["id"],
                 owner_id=UUID(payload["owner_id"]),
                 name=payload["name"],
                 description=payload["description"],
                 world=world,
+                role_profiles=role_profiles,
                 characters=characters,
                 rules=payload.get("rules", []),
+                story_graph=story_graph,
                 initial_context=payload.get("initial_context", ""),
                 metadata=payload.get("metadata", {}),
             )
@@ -147,6 +171,54 @@ class JsonScenarioDefinitionStore(ScenarioDefinitionStore):
             "rules": world.rules,
             "metadata": world.metadata,
         }
+
+    @staticmethod
+    def _role_profile_to_payload(profile: RoleProfile) -> dict[str, Any]:
+        return {
+            "id": profile.id,
+            "name": profile.name,
+            "description": profile.description,
+            "objectives": list(profile.objectives),
+            "constraints": list(profile.constraints),
+            "metadata": profile.metadata,
+        }
+
+    @staticmethod
+    def _story_graph_to_payload(graph: StoryGraph | None) -> dict[str, Any] | None:
+        if graph is None:
+            return None
+        return {
+            "entry_beat_id": graph.entry_beat_id,
+            "beats": {
+                beat_id: {
+                    "id": beat.id,
+                    "description": beat.description,
+                    "transitions": beat.transitions,
+                    "metadata": beat.metadata,
+                }
+                for beat_id, beat in graph.beats.items()
+            },
+            "metadata": graph.metadata,
+        }
+
+    @staticmethod
+    def _story_graph_from_payload(data: dict[str, Any] | None) -> StoryGraph | None:
+        if not data:
+            return None
+        beats = {
+            beat_id: StoryBeat(
+                id=beat_data["id"],
+                description=beat_data["description"],
+                transitions=beat_data.get("transitions", {}),
+                metadata=beat_data.get("metadata", {}),
+            )
+            for beat_id, beat_data in data.get("beats", {}).items()
+        }
+        return StoryGraph(
+            beats=beats,
+            entry_beat_id=data.get("entry_beat_id"),
+            metadata=data.get("metadata", {}),
+        )
 
     @staticmethod
     def _character_to_payload(character: Character) -> dict[str, Any]:

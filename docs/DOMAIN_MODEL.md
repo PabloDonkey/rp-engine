@@ -181,7 +181,121 @@ Roleplay environments are represented as reusable `World` entities.
 * `rules` (`tuple[str, ...]`) - optional world constraints.
 * `metadata` (`dict[str, str]`) - optional world tags.
 
-## Session
+## Scenario Overview
+
+The engine is scenario-centric. A scenario is the primary organizing concept for
+roleplay; `Character` is an optional, reusable asset used *within* a scenario rather
+than the root entity.
+
+Two entities express this split:
+
+* `ScenarioDefinition` - a reusable, immutable blueprint (the template).
+* `ScenarioSession` - a runtime instance of a scenario being played.
+
+```mermaid
+flowchart LR
+	User -->|owns| ScenarioDefinition
+	ScenarioDefinition -->|instantiated as| ScenarioSession
+	ScenarioSession -->|produces| Conversation
+```
+
+Cardinality:
+
+* `User` (1) ---> (*) `ScenarioDefinition`
+* `ScenarioDefinition` (1) ---> (*) `ScenarioSession`
+
+One scenario definition can back many independent sessions, each with its own runtime
+state and conversation history.
+
+## ScenarioDefinition
+
+`ScenarioDefinition` is the reusable blueprint. It is definition data only and carries
+no runtime state.
+
+`ScenarioDefinition` fields:
+
+* `id` (`str`) - stable application-owned identifier.
+* `owner_id` (`UUID`) - canonical owner user identifier.
+* `name` (`str`) - display name.
+* `description` (`str`) - high-level summary.
+* `world` (`World | None`) - optional environment.
+* `role_profiles` (`dict[str, RoleProfile]`) - abstract roles keyed by role name.
+* `characters` (`dict[str, Character]`) - concrete characters keyed by role name.
+* `rules` (`list[str]`) - scenario-specific constraints.
+* `story_graph` (`StoryGraph | None`) - optional narrative structure.
+* `initial_context` (`str`) - opening narrative context.
+* `metadata` (`dict[str, str]`) - optional structured tags.
+
+Characters are optional. A scenario may define only a world and rules (freeform), or
+bind concrete characters to declared roles (cast), or anything in between.
+
+## RoleProfile
+
+`RoleProfile` describes an abstract role in a scenario, independent of any concrete
+character. At runtime a `ScenarioSession` maps a character onto each role.
+
+`RoleProfile` fields:
+
+* `id` (`str`) - stable role identifier.
+* `name` (`str`) - display name.
+* `description` (`str`) - what the role is.
+* `objectives` (`tuple[str, ...]`) - optional in-scenario goals.
+* `constraints` (`tuple[str, ...]`) - optional behavioural constraints.
+* `metadata` (`dict[str, str]`) - optional structured tags.
+
+## StoryGraph
+
+`StoryGraph` is an optional, inert narrative structure. It is pure data with no
+traversal behaviour; how transitions are evaluated is a deliberately deferred runtime
+concern.
+
+`StoryGraph` fields:
+
+* `beats` (`dict[str, StoryBeat]`) - narrative checkpoints keyed by beat id.
+* `entry_beat_id` (`str | None`) - starting beat.
+* `metadata` (`dict[str, str]`) - optional tags.
+
+`StoryBeat` fields:
+
+* `id` (`str`) - beat identifier.
+* `description` (`str`) - what happens at this beat.
+* `transitions` (`dict[str, str]`) - named condition -> next beat id.
+* `metadata` (`dict[str, str]`) - optional tags.
+
+A scenario with no narrative structure simply omits the story graph.
+
+## ScenarioSession
+
+`ScenarioSession` is a runtime instance of a scenario. It references a definition and
+holds all evolving state.
+
+`ScenarioSession` fields:
+
+* `id` (`UUID`) - canonical session key.
+* `scenario_definition_id` (`str`) - the blueprint this session runs.
+* `owner_kind` (`"user" | "group"`) - owner category.
+* `owner_id` (`UUID`) - internal engine owner identifier.
+* `active_participants` (`dict[str, str]`) - role name -> character id currently cast.
+* `world_state` (`dict[str, Any]`) - runtime world variables.
+* `story_progress` (`dict[str, Any]`) - runtime narrative progress (e.g. current beat).
+* `created_at` (`datetime`) - creation timestamp.
+* `metadata` (`dict[str, str]`) - optional session metadata.
+
+Session-scoped conversation persistence and memory keys are derived from
+`ScenarioSession.id`.
+
+Definition vs runtime separation:
+
+* Immutable blueprint data lives on `ScenarioDefinition`.
+* Evolving state (participants, world state, story progress) lives on `ScenarioSession`.
+* Multiple sessions can run the same definition with independent state.
+
+## Session (legacy)
+
+> **Migration note.** `Session` is the previous character-centric runtime entity and is
+> being replaced by `ScenarioSession`. It remains documented while application services
+> and adapters are migrated. Backward compatibility with pre-migration sessions is **not**
+> guaranteed during the beta; existing sessions may need to be recreated.
 
 Roleplay context is owned by `Session`, not directly by adapter identities.
 
