@@ -15,28 +15,23 @@ from rp_engine.core.group.group import Group
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
-from rp_engine.core.session.session import Session
+from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
+from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.user import User
 from rp_engine.core.world.world import World
 
 SESSION_ID = UUID("00000000-0000-0000-0000-000000000111")
 USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 GROUP_ID = UUID("00000000-0000-0000-0000-000000000314")
+DEFINITION_ID = "scenario-1"
+ROLE = "character"
 GENERATION_SETTINGS = GenerationSettings(temperature=0.8, max_tokens=600, top_p=0.95)
 
+ScenarioContext = tuple[ScenarioSession, ScenarioDefinition, User]
 
-@pytest.fixture
-def session_context() -> tuple[Session, User, Character, World]:
-    session = Session(
-        id=SESSION_ID,
-        owner_kind="user",
-        owner_id=USER_ID,
-        character_id="belzebuth",
-        world_id="default",
-        created_at=datetime.now(UTC),
-    )
-    user = User(id=USER_ID, display_name="Pablo")
-    character = Character(
+
+def _character() -> Character:
+    return Character(
         id="belzebuth",
         owner_id=USER_ID,
         visibility=CharacterVisibility.PRIVATE,
@@ -45,19 +40,52 @@ def session_context() -> tuple[Session, User, Character, World]:
         personality="Protective and witty.",
         greeting="Welcome back, {{user}}.",
     )
-    world = World(
+
+
+def _world() -> World:
+    return World(
         id="default",
         name="Main World",
         description="{{user}} explores a realm with {{char}}.",
         rules=("Stay in character.",),
     )
-    return session, user, character, world
+
+
+def _definition(
+    character: Character | None = None, world: World | None = None
+) -> ScenarioDefinition:
+    return ScenarioDefinition(
+        id=DEFINITION_ID,
+        owner_id=USER_ID,
+        name="Belzebuth",
+        description="",
+        world=world or _world(),
+        characters={ROLE: character or _character()},
+    )
+
+
+def _session(*, owner_kind: str = "user", owner_id: UUID = USER_ID) -> ScenarioSession:
+    return ScenarioSession(
+        id=SESSION_ID,
+        scenario_definition_id=DEFINITION_ID,
+        owner_kind=owner_kind,  # type: ignore[arg-type]
+        owner_id=owner_id,
+        active_participants={ROLE: "belzebuth"},
+        created_at=datetime.now(UTC),
+    )
+
+
+@pytest.fixture
+def scenario_context() -> ScenarioContext:
+    return _session(), _definition(), User(id=USER_ID, display_name="Pablo")
 
 
 def _build_service(
     *,
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> tuple[ChatService, AsyncMock, AsyncMock]:
+    session, definition, user = scenario_context
+
     orchestrator = AsyncMock()
     orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="scene response"))
     conversation_store = AsyncMock()
@@ -69,22 +97,15 @@ def _build_service(
         ConversationMessage(role=ConversationRole.USER, content="previous")
     ]
 
-    session, user, character, world = session_context
-
-    session_store = AsyncMock()
-    session_store.get_by_id = AsyncMock(return_value=session)
+    scenario_session_store = AsyncMock()
+    scenario_session_store.get_by_id = AsyncMock(return_value=session)
+    scenario_definition_store = AsyncMock()
+    scenario_definition_store.get_by_id = AsyncMock(return_value=definition)
 
     user_store = AsyncMock()
     user_store.get_by_id = AsyncMock(return_value=user)
-
     group_store = AsyncMock()
     group_store.get_by_id = AsyncMock(return_value=None)
-
-    character_store = AsyncMock()
-    character_store.get_by_id = AsyncMock(return_value=character)
-
-    world_store = AsyncMock()
-    world_store.get_by_id = AsyncMock(return_value=world)
 
     service = ChatService(
         orchestrator=orchestrator,
@@ -92,9 +113,8 @@ def _build_service(
         memory_strategy=memory_strategy,
         user_identity_store=user_store,
         group_identity_store=group_store,
-        session_store=session_store,
-        character_store=character_store,
-        world_store=world_store,
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
         generation_settings=GENERATION_SETTINGS,
     )
     return service, orchestrator, conversation_store
@@ -102,9 +122,9 @@ def _build_service(
 
 @pytest.mark.asyncio
 async def test_chat_service_builds_conversation_and_calls_orchestrator(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    service, orchestrator, conversation_store = _build_service(session_context=session_context)
+    service, orchestrator, conversation_store = _build_service(scenario_context=scenario_context)
 
     response = await service.send_message(
         conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
@@ -152,9 +172,9 @@ async def test_chat_service_builds_conversation_and_calls_orchestrator(
 
 @pytest.mark.asyncio
 async def test_chat_service_rejects_empty_message(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    service, orchestrator, _ = _build_service(session_context=session_context)
+    service, orchestrator, _ = _build_service(scenario_context=scenario_context)
 
     with pytest.raises(ValueError, match="Message must not be empty"):
         await service.send_message(
@@ -167,9 +187,9 @@ async def test_chat_service_rejects_empty_message(
 
 @pytest.mark.asyncio
 async def test_chat_service_rejects_invalid_session_identity(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    service, orchestrator, _ = _build_service(session_context=session_context)
+    service, orchestrator, _ = _build_service(scenario_context=scenario_context)
 
     with pytest.raises(ValueError, match="invalid session id"):
         await service.send_message(
@@ -182,9 +202,9 @@ async def test_chat_service_rejects_invalid_session_identity(
 
 @pytest.mark.asyncio
 async def test_chat_service_continue_saves_character_message(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    service, orchestrator, conversation_store = _build_service(session_context=session_context)
+    service, orchestrator, conversation_store = _build_service(scenario_context=scenario_context)
     orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="continued scene"))
 
     response = await service.continue_story(
@@ -204,9 +224,9 @@ async def test_chat_service_continue_saves_character_message(
 
 @pytest.mark.asyncio
 async def test_chat_service_regenerate_replaces_last_character_message(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    service, orchestrator, conversation_store = _build_service(session_context=session_context)
+    service, orchestrator, conversation_store = _build_service(scenario_context=scenario_context)
     conversation_store.load_messages = AsyncMock(
         return_value=[
             ConversationMessage(role=ConversationRole.USER, content="hello", metadata={}),
@@ -244,9 +264,9 @@ async def test_chat_service_regenerate_replaces_last_character_message(
 
 @pytest.mark.asyncio
 async def test_chat_service_regenerate_after_continue_uses_assistant_context(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    service, orchestrator, conversation_store = _build_service(session_context=session_context)
+    service, orchestrator, conversation_store = _build_service(scenario_context=scenario_context)
     conversation_store.load_messages = AsyncMock(
         return_value=[
             ConversationMessage(role=ConversationRole.USER, content="hello", metadata={}),
@@ -290,9 +310,9 @@ async def test_chat_service_regenerate_after_continue_uses_assistant_context(
 
 @pytest.mark.asyncio
 async def test_chat_service_regenerate_requires_latest_character_message(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    service, orchestrator, conversation_store = _build_service(session_context=session_context)
+    service, orchestrator, conversation_store = _build_service(scenario_context=scenario_context)
     conversation_store.load_messages = AsyncMock(
         return_value=[ConversationMessage(role=ConversationRole.USER, content="hello", metadata={})]
     )
@@ -307,9 +327,9 @@ async def test_chat_service_regenerate_requires_latest_character_message(
 
 @pytest.mark.asyncio
 async def test_chat_service_regenerate_can_run_multiple_times(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    service, orchestrator, conversation_store = _build_service(session_context=session_context)
+    service, orchestrator, conversation_store = _build_service(scenario_context=scenario_context)
     conversation_store.load_messages = AsyncMock(
         side_effect=[
             [
@@ -348,25 +368,17 @@ async def test_chat_service_regenerate_can_run_multiple_times(
 
 @pytest.mark.asyncio
 async def test_chat_service_clear_conversation_uses_store_clear() -> None:
-    orchestrator = AsyncMock()
-    conversation_store = AsyncMock()
-    memory_strategy = Mock()
-    session_store = AsyncMock()
-    user_store = AsyncMock()
-    character_store = AsyncMock()
-    world_store = AsyncMock()
-
     service = ChatService(
-        orchestrator=orchestrator,
-        conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
-        user_identity_store=user_store,
+        orchestrator=AsyncMock(),
+        conversation_store=AsyncMock(),
+        memory_strategy=Mock(),
+        user_identity_store=AsyncMock(),
         group_identity_store=AsyncMock(),
-        session_store=session_store,
-        character_store=character_store,
-        world_store=world_store,
+        scenario_session_store=AsyncMock(),
+        scenario_definition_store=AsyncMock(),
         generation_settings=GENERATION_SETTINGS,
     )
+    conversation_store = service._conversation_store  # type: ignore[attr-defined]
 
     await service.clear_conversation(
         conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
@@ -384,42 +396,14 @@ async def test_chat_service_uses_group_owner_as_template_user() -> None:
     memory_strategy = Mock()
     memory_strategy.build_context.return_value = []
 
-    group_session = Session(
-        id=SESSION_ID,
-        owner_kind="group",
-        owner_id=GROUP_ID,
-        character_id="belzebuth",
-        world_id="default",
-        created_at=datetime.now(UTC),
-    )
-    session_store = AsyncMock()
-    session_store.get_by_id = AsyncMock(return_value=group_session)
+    group_session = _session(owner_kind="group", owner_id=GROUP_ID)
+    scenario_session_store = AsyncMock()
+    scenario_session_store.get_by_id = AsyncMock(return_value=group_session)
+    scenario_definition_store = AsyncMock()
+    scenario_definition_store.get_by_id = AsyncMock(return_value=_definition())
 
     group_store = AsyncMock()
     group_store.get_by_id = AsyncMock(return_value=Group(id=GROUP_ID, display_name="Raid Party"))
-
-    character_store = AsyncMock()
-    character_store.get_by_id = AsyncMock(
-        return_value=Character(
-            id="belzebuth",
-            owner_id=USER_ID,
-            visibility=CharacterVisibility.PRIVATE,
-            name="Belzebuth",
-            description="{{char}} guards {{user}}.",
-            personality="Protective and witty.",
-            greeting="Welcome back, {{user}}.",
-        )
-    )
-
-    world_store = AsyncMock()
-    world_store.get_by_id = AsyncMock(
-        return_value=World(
-            id="default",
-            name="Main World",
-            description="{{user}} explores a realm with {{char}}.",
-            rules=("Stay in character.",),
-        )
-    )
 
     service = ChatService(
         orchestrator=orchestrator,
@@ -427,9 +411,8 @@ async def test_chat_service_uses_group_owner_as_template_user() -> None:
         memory_strategy=memory_strategy,
         user_identity_store=AsyncMock(),
         group_identity_store=group_store,
-        session_store=session_store,
-        character_store=character_store,
-        world_store=world_store,
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
         generation_settings=GENERATION_SETTINGS,
     )
 
@@ -445,9 +428,9 @@ async def test_chat_service_uses_group_owner_as_template_user() -> None:
 
 @pytest.mark.asyncio
 async def test_chat_service_persists_user_metadata(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    service, _, conversation_store = _build_service(session_context=session_context)
+    service, _, conversation_store = _build_service(scenario_context=scenario_context)
 
     await service.send_message(
         conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
@@ -474,9 +457,9 @@ async def test_chat_service_persists_user_metadata(
 
 @pytest.mark.asyncio
 async def test_chat_service_starts_and_stops_processing_feedback(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    service, _, _ = _build_service(session_context=session_context)
+    service, _, _ = _build_service(scenario_context=scenario_context)
     feedback = AsyncMock()
     feedback.start = AsyncMock()
     feedback.update = AsyncMock()
@@ -494,9 +477,9 @@ async def test_chat_service_starts_and_stops_processing_feedback(
 
 @pytest.mark.asyncio
 async def test_chat_service_stops_processing_feedback_when_generation_fails(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    service, orchestrator, _ = _build_service(session_context=session_context)
+    service, orchestrator, _ = _build_service(scenario_context=scenario_context)
     orchestrator.generate_reply = AsyncMock(side_effect=RuntimeError("provider down"))
     feedback = AsyncMock()
     feedback.start = AsyncMock()
@@ -514,11 +497,40 @@ async def test_chat_service_stops_processing_feedback_when_generation_fails(
     feedback.stop.assert_awaited_once()
 
 
+def _build_trace_service(
+    *,
+    scenario_context: ScenarioContext,
+    orchestrator: AsyncMock,
+    conversation_store: AsyncMock,
+    memory_strategy: Mock,
+    trace_store: AsyncMock,
+    generation_trace_mode: str,
+) -> ChatService:
+    session, definition, user = scenario_context
+    scenario_session_store = AsyncMock()
+    scenario_session_store.get_by_id = AsyncMock(return_value=session)
+    scenario_definition_store = AsyncMock()
+    scenario_definition_store.get_by_id = AsyncMock(return_value=definition)
+    user_store = AsyncMock()
+    user_store.get_by_id = AsyncMock(return_value=user)
+    return ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+        user_identity_store=user_store,
+        group_identity_store=AsyncMock(),
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
+        generation_settings=GENERATION_SETTINGS,
+        generation_trace_store=trace_store,
+        generation_trace_mode=generation_trace_mode,  # type: ignore[arg-type]
+    )
+
+
 @pytest.mark.asyncio
 async def test_chat_service_writes_generation_trace_in_all_mode(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    session, user, character, world = session_context
     orchestrator = AsyncMock()
     orchestrator.generate_reply = AsyncMock(
         return_value=LLMResponse(
@@ -540,28 +552,14 @@ async def test_chat_service_writes_generation_trace_in_all_mode(
     memory_strategy.build_context.return_value = [
         ConversationMessage(role=ConversationRole.USER, content="previous")
     ]
-    session_store = AsyncMock()
-    session_store.get_by_id = AsyncMock(return_value=session)
-    user_store = AsyncMock()
-    user_store.get_by_id = AsyncMock(return_value=user)
-    group_store = AsyncMock()
-    character_store = AsyncMock()
-    character_store.get_by_id = AsyncMock(return_value=character)
-    world_store = AsyncMock()
-    world_store.get_by_id = AsyncMock(return_value=world)
     trace_store = AsyncMock()
 
-    service = ChatService(
+    service = _build_trace_service(
+        scenario_context=scenario_context,
         orchestrator=orchestrator,
         conversation_store=conversation_store,
         memory_strategy=memory_strategy,
-        user_identity_store=user_store,
-        group_identity_store=group_store,
-        session_store=session_store,
-        character_store=character_store,
-        world_store=world_store,
-        generation_settings=GENERATION_SETTINGS,
-        generation_trace_store=trace_store,
+        trace_store=trace_store,
         generation_trace_mode="all",
     )
 
@@ -589,37 +587,22 @@ async def test_chat_service_writes_generation_trace_in_all_mode(
 
 @pytest.mark.asyncio
 async def test_chat_service_writes_generation_trace_only_on_errors(
-    session_context: tuple[Session, User, Character, World],
+    scenario_context: ScenarioContext,
 ) -> None:
-    session, user, character, world = session_context
     orchestrator = AsyncMock()
     orchestrator.generate_reply = AsyncMock(side_effect=RuntimeError("provider down"))
     conversation_store = AsyncMock()
     conversation_store.load_messages = AsyncMock(return_value=[])
     memory_strategy = Mock()
     memory_strategy.build_context.return_value = []
-    session_store = AsyncMock()
-    session_store.get_by_id = AsyncMock(return_value=session)
-    user_store = AsyncMock()
-    user_store.get_by_id = AsyncMock(return_value=user)
-    group_store = AsyncMock()
-    character_store = AsyncMock()
-    character_store.get_by_id = AsyncMock(return_value=character)
-    world_store = AsyncMock()
-    world_store.get_by_id = AsyncMock(return_value=world)
     trace_store = AsyncMock()
 
-    service = ChatService(
+    service = _build_trace_service(
+        scenario_context=scenario_context,
         orchestrator=orchestrator,
         conversation_store=conversation_store,
         memory_strategy=memory_strategy,
-        user_identity_store=user_store,
-        group_identity_store=group_store,
-        session_store=session_store,
-        character_store=character_store,
-        world_store=world_store,
-        generation_settings=GENERATION_SETTINGS,
-        generation_trace_store=trace_store,
+        trace_store=trace_store,
         generation_trace_mode="errors",
     )
 

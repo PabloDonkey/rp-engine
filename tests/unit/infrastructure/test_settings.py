@@ -4,14 +4,16 @@ from pydantic import ValidationError
 from rp_engine.app.main import build_container
 from rp_engine.infrastructure.config.settings import Settings
 from rp_engine.infrastructure.postgres import (
-    PostgresCharacterStore,
     PostgresConversationStore,
-    PostgresSessionStore,
+)
+from rp_engine.infrastructure.postgres.repositories import (
+    PostgresScenarioDefinitionStore,
+    PostgresScenarioSessionStore,
 )
 from rp_engine.infrastructure.storage import (
-    JsonCharacterStore,
     JsonConversationStore,
-    JsonSessionStore,
+    JsonScenarioDefinitionStore,
+    JsonScenarioSessionStore,
 )
 
 
@@ -100,8 +102,12 @@ def test_build_container_uses_json_stores_by_default() -> None:
     container = build_container(settings)
 
     assert isinstance(container.chat_service._conversation_store, JsonConversationStore)
-    assert isinstance(container.chat_service._session_store, JsonSessionStore)
-    assert isinstance(container.chat_service._character_store, JsonCharacterStore)
+    assert isinstance(
+        container.chat_service._scenario_session_store, JsonScenarioSessionStore
+    )
+    assert isinstance(
+        container.chat_service._scenario_definition_store, JsonScenarioDefinitionStore
+    )
 
 
 def test_build_container_uses_postgres_stores_when_enabled() -> None:
@@ -113,8 +119,12 @@ def test_build_container_uses_postgres_stores_when_enabled() -> None:
     container = build_container(settings)
 
     assert isinstance(container.chat_service._conversation_store, PostgresConversationStore)
-    assert isinstance(container.chat_service._session_store, PostgresSessionStore)
-    assert isinstance(container.chat_service._character_store, PostgresCharacterStore)
+    assert isinstance(
+        container.chat_service._scenario_session_store, PostgresScenarioSessionStore
+    )
+    assert isinstance(
+        container.chat_service._scenario_definition_store, PostgresScenarioDefinitionStore
+    )
 
 
 def test_empty_postgres_host_fails_validation() -> None:

@@ -1,8 +1,8 @@
 import asyncio
 import logging
+import re
 from threading import Lock
 from typing import Any, ClassVar
-import re
 from urllib.parse import urlparse
 
 import lmstudio as lms
@@ -133,7 +133,7 @@ class LMStudioProvider(LLMProvider):
             # For general cleanup: we prioritize finding the final, clean string content.
             content = result.get("content")
         elif hasattr(result, "content"):
-            content = getattr(result, "content")
+            content = result.content
         else:
             content = None
 

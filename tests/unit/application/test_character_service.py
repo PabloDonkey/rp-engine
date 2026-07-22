@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 
 from rp_engine.application.services.character_service import (
+    AUTO_ROLE,
     SWITCH_CONTEXT_FROM_CHARACTER_ID,
     SWITCH_CONTEXT_SUMMARY,
     SWITCH_CONTEXT_TO_CHARACTER_ID,
@@ -17,12 +18,28 @@ from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
-from rp_engine.core.session.session import Session
+from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
+from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.world.world import World
 
 OWNER_ID = UUID("00000000-0000-0000-0000-000000000042")
 ACTIVE_TORD_SESSION_ID = UUID("00000000-0000-0000-0000-000000000100")
 BELZEBUTH_SESSION_ID = UUID("00000000-0000-0000-0000-000000000101")
+
+
+def _auto_def_id(character_id: str, world_id: str = "default") -> str:
+    return f"auto-{OWNER_ID}-{character_id}-{world_id}"
+
+
+def _scenario_session(session_id: UUID, character_id: str) -> ScenarioSession:
+    return ScenarioSession(
+        id=session_id,
+        scenario_definition_id=_auto_def_id(character_id),
+        owner_kind="user",
+        owner_id=OWNER_ID,
+        active_participants={AUTO_ROLE: character_id},
+        created_at=datetime.now(UTC),
+    )
 
 
 class FakeConversationSummarizer:
@@ -108,35 +125,60 @@ class FakeWorldStore:
         return World(id=world_id, name="Default", description="Default world")
 
 
-class FakeSessionStore:
+class FakeScenarioDefinitionStore:
     def __init__(self) -> None:
-        self.sessions: dict[UUID, Session] = {}
+        self.items: dict[str, ScenarioDefinition] = {}
+
+    async def get_by_id(self, scenario_id: str) -> ScenarioDefinition | None:
+        return self.items.get(scenario_id)
+
+    async def find_by_owner(self, owner_id: UUID) -> list[ScenarioDefinition]:
+        return [item for item in self.items.values() if item.owner_id == owner_id]
+
+    async def save(self, scenario: ScenarioDefinition) -> None:
+        self.items[scenario.id] = scenario
+
+    async def delete(self, scenario_id: str) -> None:
+        self.items.pop(scenario_id, None)
+
+
+class FakeScenarioSessionStore:
+    def __init__(self) -> None:
+        self.sessions: dict[UUID, ScenarioSession] = {}
         self.active: dict[tuple[str, UUID], UUID] = {}
 
-    async def get_by_id(self, session_id: UUID) -> Session | None:
+    async def get_by_id(self, session_id: UUID) -> ScenarioSession | None:
         return self.sessions.get(session_id)
 
-    async def find_by_relationship(
+    async def find_by_owner(self, owner_kind: str, owner_id: UUID) -> list[ScenarioSession]:
+        return [
+            session
+            for session in self.sessions.values()
+            if session.owner_kind == owner_kind and session.owner_id == owner_id
+        ]
+
+    async def find_by_definition(
         self,
         *,
         owner_kind: str,
         owner_id: UUID,
-        character_id: str,
-        world_id: str,
-    ) -> Session | None:
+        scenario_definition_id: str,
+    ) -> ScenarioSession | None:
         for session in self.sessions.values():
             if (
                 session.owner_kind == owner_kind
                 and session.owner_id == owner_id
-                and session.character_id == character_id
-                and session.world_id == world_id
+                and session.scenario_definition_id == scenario_definition_id
             ):
                 return session
         return None
 
-    async def save(self, session: Session) -> Session:
+    async def save(self, session: ScenarioSession) -> ScenarioSession:
         self.sessions[session.id] = session
         return session
+
+    async def delete(self, session_id: UUID) -> None:
+        self.sessions.pop(session_id, None)
 
     async def set_active_for_owner(
         self,
@@ -147,7 +189,12 @@ class FakeSessionStore:
     ) -> None:
         self.active[(owner_kind, owner_id)] = session_id
 
-    async def get_active_for_owner(self, *, owner_kind: str, owner_id: UUID) -> Session | None:
+    async def get_active_for_owner(
+        self,
+        *,
+        owner_kind: str,
+        owner_id: UUID,
+    ) -> ScenarioSession | None:
         session_id = self.active.get((owner_kind, owner_id))
         if session_id is None:
             return None
@@ -171,12 +218,12 @@ def _service_with_fixtures() -> tuple[
     CharacterService,
     FakeCharacterStore,
     FakeConversationStore,
-    FakeSessionStore,
+    FakeScenarioSessionStore,
     FakeConversationSummarizer,
 ]:
     character_store = FakeCharacterStore()
     conversation_store = FakeConversationStore()
-    session_store = FakeSessionStore()
+    scenario_session_store = FakeScenarioSessionStore()
     summarizer = FakeConversationSummarizer(
         summary=(
             "The user and Tord were investigating an abandoned facility and found signs "
@@ -189,15 +236,16 @@ def _service_with_fixtures() -> tuple[
         conversation_store=conversation_store,
         conversation_summarizer=summarizer,
         world_store=FakeWorldStore(),
-        session_store=session_store,
+        scenario_definition_store=FakeScenarioDefinitionStore(),
+        scenario_session_store=scenario_session_store,
         default_world_id="default",
     )
-    return service, character_store, conversation_store, session_store, summarizer
+    return service, character_store, conversation_store, scenario_session_store, summarizer
 
 
 @pytest.mark.asyncio
 async def test_first_activation_returns_greeting_and_does_not_summarize() -> None:
-    service, character_store, conversation_store, _session_store, summarizer = _service_with_fixtures()
+    service, character_store, conversation_store, _sessions, summarizer = _service_with_fixtures()
     character_store.items["belzebuth"] = _character(
         character_id="belzebuth",
         name="Belzebuth",
@@ -210,6 +258,8 @@ async def test_first_activation_returns_greeting_and_does_not_summarize() -> Non
     )
 
     assert selection.status == "activated"
+    assert selection.character_id == "belzebuth"
+    assert selection.world_id == "default"
     assert len(summarizer.calls) == 0
 
     entry = await service.describe_session_entry(session=selection.session)
@@ -224,7 +274,7 @@ async def test_first_activation_returns_greeting_and_does_not_summarize() -> Non
 
 @pytest.mark.asyncio
 async def test_character_switch_summarizes_last_four_and_stores_switch_context() -> None:
-    service, character_store, conversation_store, session_store, summarizer = _service_with_fixtures()
+    service, character_store, conversation_store, sessions, summarizer = _service_with_fixtures()
     character_store.items["tord"] = _character(character_id="tord", name="Tord", greeting="...")
     character_store.items["belzebuth"] = _character(
         character_id="belzebuth",
@@ -232,25 +282,11 @@ async def test_character_switch_summarizes_last_four_and_stores_switch_context()
         greeting="Who dares wake me?",
     )
 
-    active_tord_session = Session(
-        id=ACTIVE_TORD_SESSION_ID,
-        owner_kind="user",
-        owner_id=OWNER_ID,
-        character_id="tord",
-        world_id="default",
-        created_at=datetime.now(UTC),
-    )
-    target_belzebuth_session = Session(
-        id=BELZEBUTH_SESSION_ID,
-        owner_kind="user",
-        owner_id=OWNER_ID,
-        character_id="belzebuth",
-        world_id="default",
-        created_at=datetime.now(UTC),
-    )
-    await session_store.save(active_tord_session)
-    await session_store.save(target_belzebuth_session)
-    await session_store.set_active_for_owner(
+    active_tord_session = _scenario_session(ACTIVE_TORD_SESSION_ID, "tord")
+    target_belzebuth_session = _scenario_session(BELZEBUTH_SESSION_ID, "belzebuth")
+    await sessions.save(active_tord_session)
+    await sessions.save(target_belzebuth_session)
+    await sessions.set_active_for_owner(
         owner_kind="user",
         owner_id=OWNER_ID,
         session_id=active_tord_session.id,
@@ -274,6 +310,7 @@ async def test_character_switch_summarizes_last_four_and_stores_switch_context()
     )
 
     assert selection.status == "switched"
+    assert selection.session.id == target_belzebuth_session.id
     assert len(summarizer.calls) == 1
     assert summarizer.calls[0] == recent
     assert selection.session.metadata[SWITCH_CONTEXT_FROM_CHARACTER_ID] == "tord"
@@ -283,23 +320,16 @@ async def test_character_switch_summarizes_last_four_and_stores_switch_context()
 
 @pytest.mark.asyncio
 async def test_same_character_selection_is_noop_without_summary_generation() -> None:
-    service, character_store, _conversation_store, session_store, summarizer = _service_with_fixtures()
+    service, character_store, _conversation_store, sessions, summarizer = _service_with_fixtures()
     character_store.items["belzebuth"] = _character(
         character_id="belzebuth",
         name="Belzebuth",
         greeting="Who dares wake me?",
     )
 
-    existing = Session(
-        id=BELZEBUTH_SESSION_ID,
-        owner_kind="user",
-        owner_id=OWNER_ID,
-        character_id="belzebuth",
-        world_id="default",
-        created_at=datetime.now(UTC),
-    )
-    await session_store.save(existing)
-    await session_store.set_active_for_owner(
+    existing = _scenario_session(BELZEBUTH_SESSION_ID, "belzebuth")
+    await sessions.save(existing)
+    await sessions.set_active_for_owner(
         owner_kind="user",
         owner_id=OWNER_ID,
         session_id=existing.id,
@@ -316,8 +346,10 @@ async def test_same_character_selection_is_noop_without_summary_generation() -> 
 
 
 @pytest.mark.asyncio
-async def test_switch_continues_when_summarization_fails_and_logs(caplog: pytest.LogCaptureFixture) -> None:
-    service, character_store, conversation_store, session_store, summarizer = _service_with_fixtures()
+async def test_switch_continues_when_summarization_fails_and_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service, character_store, conversation_store, sessions, summarizer = _service_with_fixtures()
     summarizer.raise_error = True
     character_store.items["tord"] = _character(character_id="tord", name="Tord", greeting="...")
     character_store.items["belzebuth"] = _character(
@@ -326,16 +358,9 @@ async def test_switch_continues_when_summarization_fails_and_logs(caplog: pytest
         greeting="Who dares wake me?",
     )
 
-    active_tord_session = Session(
-        id=ACTIVE_TORD_SESSION_ID,
-        owner_kind="user",
-        owner_id=OWNER_ID,
-        character_id="tord",
-        world_id="default",
-        created_at=datetime.now(UTC),
-    )
-    await session_store.save(active_tord_session)
-    await session_store.set_active_for_owner(
+    active_tord_session = _scenario_session(ACTIVE_TORD_SESSION_ID, "tord")
+    await sessions.save(active_tord_session)
+    await sessions.set_active_for_owner(
         owner_kind="user",
         owner_id=OWNER_ID,
         session_id=active_tord_session.id,

@@ -107,23 +107,35 @@ class ConversationBuilder:
 
     @staticmethod
     def _resolve_active_character(payload: ScenarioConversationInput) -> Character | None:
+        return ConversationBuilder.resolve_active_character(
+            scenario=payload.scenario,
+            session=payload.session,
+            active_character_id=payload.active_character_id,
+        )
+
+    @staticmethod
+    def resolve_active_character(
+        *,
+        scenario: ScenarioDefinition,
+        session: ScenarioSession,
+        active_character_id: str | None = None,
+    ) -> Character | None:
         """Resolve which character is currently speaking, if any.
 
         Scenarios may be characterless (freeform). When characters exist, the active
         one is chosen by explicit override, then by the session's participants, then by
         falling back to the scenario's sole character.
         """
-        scenario = payload.scenario
         if not scenario.characters:
             return None
 
-        if payload.active_character_id is not None:
+        if active_character_id is not None:
             for character in scenario.characters.values():
-                if character.id == payload.active_character_id:
+                if character.id == active_character_id:
                     return character
             return None
 
-        for role, character_id in payload.session.active_participants.items():
+        for role, character_id in session.active_participants.items():
             if role in scenario.characters:
                 return scenario.characters[role]
             for character in scenario.characters.values():

@@ -23,7 +23,7 @@ from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import LLMConnectionError, LLMGenerationError, LLMTimeoutError
 from rp_engine.core.memory.models import ConversationIdentity
-from rp_engine.core.session.session import Session
+from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.user import User
 
 logger = logging.getLogger(__name__)
@@ -83,16 +83,16 @@ class CharacterServicePort(Protocol):
         command: SelectCharacterCommand,
     ) -> CharacterSelectionResult: ...
 
-    async def ensure_active_session_for_user(self, *, user_id: Any) -> Session: ...
+    async def ensure_active_session_for_user(self, *, user_id: Any) -> ScenarioSession: ...
 
     async def ensure_active_session_for_group(
         self,
         *,
         group_id: Any,
         actor_user_id: Any,
-    ) -> Session: ...
+    ) -> ScenarioSession: ...
 
-    async def describe_session_entry(self, *, session: Session) -> str | None: ...
+    async def describe_session_entry(self, *, session: ScenarioSession) -> str | None: ...
 
 
 class GroupIdentityResolverPort(Protocol):
@@ -367,7 +367,7 @@ class TelegramAdapter:
             if selection.status == "already_active":
                 await self._reply_with_split(
                     message=message,
-                    text=f"Character '{selection.session.character_id}' is already active.",
+                    text=f"Character '{selection.character_id}' is already active.",
                 )
                 return
 
@@ -378,8 +378,8 @@ class TelegramAdapter:
                 message=message,
                 text=session_entry
                 or (
-                    f"Active character set to '{selection.session.character_id}' in "
-                    f"world '{selection.session.world_id}'."
+                    f"Active character set to '{selection.character_id}' in "
+                    f"world '{selection.world_id}'."
                 ),
             )
             return

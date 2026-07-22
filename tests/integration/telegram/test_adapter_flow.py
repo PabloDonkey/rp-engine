@@ -21,13 +21,29 @@ from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import LLMConnectionError
 from rp_engine.core.memory.models import ConversationIdentity
-from rp_engine.core.session.session import Session
+from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.user import User
 
 FIXED_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 FIXED_GROUP_ID = UUID("00000000-0000-0000-0000-000000000555")
 FIXED_SESSION_ID = UUID("00000000-0000-0000-0000-000000000099")
 FIXED_CREATED_AT = datetime(2026, 7, 12, 0, 0, tzinfo=UTC)
+
+
+def _fixed_session(
+    *,
+    character_id: str = "default",
+    owner_kind: str = "user",
+    owner_id: UUID = FIXED_USER_ID,
+) -> ScenarioSession:
+    return ScenarioSession(
+        id=FIXED_SESSION_ID,
+        scenario_definition_id=f"auto-{owner_id}-{character_id}-default",
+        owner_kind=owner_kind,  # type: ignore[arg-type]
+        owner_id=owner_id,
+        active_participants={"character": character_id},
+        created_at=FIXED_CREATED_AT,
+    )
 
 
 class FakeIdentityResolver:
@@ -46,33 +62,19 @@ class FakeIdentityResolver:
 
 
 class FakeCharacterService:
-    async def ensure_active_session_for_user(self, *, user_id: UUID) -> Session:
+    async def ensure_active_session_for_user(self, *, user_id: UUID) -> ScenarioSession:
         del user_id
-        return Session(
-            id=FIXED_SESSION_ID,
-            owner_kind="user",
-            owner_id=FIXED_USER_ID,
-            character_id="default",
-            world_id="default",
-            created_at=FIXED_CREATED_AT,
-        )
+        return _fixed_session()
 
     async def ensure_active_session_for_group(
         self,
         *,
         group_id: UUID,
         actor_user_id: UUID,
-    ) -> Session:
+    ) -> ScenarioSession:
         del group_id
         del actor_user_id
-        return Session(
-            id=FIXED_SESSION_ID,
-            owner_kind="group",
-            owner_id=FIXED_GROUP_ID,
-            character_id="default",
-            world_id="default",
-            created_at=FIXED_CREATED_AT,
-        )
+        return _fixed_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
 
     async def select_character_for_user(
         self,
@@ -83,14 +85,9 @@ class FakeCharacterService:
         del user_id
         character_id = command.character_name.lower()
         return CharacterSelectionResult(
-            session=Session(
-                id=FIXED_SESSION_ID,
-                owner_kind="user",
-                owner_id=FIXED_USER_ID,
-                character_id=character_id,
-                world_id="default",
-                created_at=FIXED_CREATED_AT,
-            ),
+            session=_fixed_session(character_id=character_id),
+            character_id=character_id,
+            world_id="default",
             status="activated",
         )
 
@@ -105,24 +102,23 @@ class FakeCharacterService:
         del actor_user_id
         character_id = command.character_name.lower()
         return CharacterSelectionResult(
-            session=Session(
-                id=FIXED_SESSION_ID,
+            session=_fixed_session(
+                character_id=character_id,
                 owner_kind="group",
                 owner_id=FIXED_GROUP_ID,
-                character_id=character_id,
-                world_id="default",
-                created_at=FIXED_CREATED_AT,
             ),
+            character_id=character_id,
+            world_id="default",
             status="activated",
         )
 
-    async def describe_session_entry(self, *, session: Session) -> str | None:
+    async def describe_session_entry(self, *, session: ScenarioSession) -> str | None:
         del session
         return None
 
 
 class FakeCharacterServiceWithEntry(FakeCharacterService):
-    async def describe_session_entry(self, *, session: Session) -> str | None:
+    async def describe_session_entry(self, *, session: ScenarioSession) -> str | None:
         del session
         return "Who dares wake me?"
 
@@ -316,14 +312,7 @@ async def test_private_flow_uses_user_session_resolution() -> None:
 
     character_service = AsyncMock()
     character_service.ensure_active_session_for_user = AsyncMock(
-        return_value=Session(
-            id=FIXED_SESSION_ID,
-            owner_kind="user",
-            owner_id=FIXED_USER_ID,
-            character_id="default",
-            world_id="default",
-            created_at=FIXED_CREATED_AT,
-        )
+        return_value=_fixed_session()
     )
 
     adapter = TelegramAdapter(
@@ -355,14 +344,7 @@ async def test_group_flow_uses_group_session_resolution() -> None:
 
     character_service = AsyncMock()
     character_service.ensure_active_session_for_group = AsyncMock(
-        return_value=Session(
-            id=FIXED_SESSION_ID,
-            owner_kind="group",
-            owner_id=FIXED_GROUP_ID,
-            character_id="default",
-            world_id="default",
-            created_at=FIXED_CREATED_AT,
-        )
+        return_value=_fixed_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
     )
 
     adapter = TelegramAdapter(

@@ -26,7 +26,6 @@ from rp_engine.core.ports import (
     LLMProvider,
     ScenarioDefinitionStore,
     ScenarioSessionStore,
-    SessionStore,
 )
 from rp_engine.infrastructure.config.settings import Settings, get_settings
 from rp_engine.infrastructure.llm.lmstudio import LMStudioConversationSummarizer, LMStudioProvider
@@ -34,7 +33,6 @@ from rp_engine.infrastructure.postgres import (
     PostgresCharacterStore,
     PostgresConfig,
     PostgresConversationStore,
-    PostgresSessionStore,
     create_engine,
     create_session_factory,
 )
@@ -49,7 +47,6 @@ from rp_engine.infrastructure.storage import (
     JsonGroupIdentityStore,
     JsonScenarioDefinitionStore,
     JsonScenarioSessionStore,
-    JsonSessionStore,
     JsonUserIdentityStore,
     JsonWorldStore,
 )
@@ -90,7 +87,6 @@ def build_container(settings: Settings) -> AppContainer:
         temperature=settings.lmstudio_temperature,
     )
     conversation_store: ConversationStore
-    session_store: SessionStore
     character_store: CharacterStore
     scenario_definition_store: ScenarioDefinitionStore
     scenario_session_store: ScenarioSessionStore
@@ -100,13 +96,11 @@ def build_container(settings: Settings) -> AppContainer:
         postgres_session_factory = create_session_factory(postgres_engine)
         character_store = PostgresCharacterStore(postgres_session_factory)
         conversation_store = PostgresConversationStore(postgres_session_factory)
-        session_store = PostgresSessionStore(postgres_session_factory)
         scenario_definition_store = PostgresScenarioDefinitionStore()
         scenario_session_store = PostgresScenarioSessionStore()
     else:
         character_store = JsonCharacterStore()
         conversation_store = JsonConversationStore()
-        session_store = JsonSessionStore()
         scenario_definition_store = JsonScenarioDefinitionStore()
         scenario_session_store = JsonScenarioSessionStore()
 
@@ -122,7 +116,8 @@ def build_container(settings: Settings) -> AppContainer:
         conversation_store=conversation_store,
         conversation_summarizer=conversation_summarizer,
         world_store=world_store,
-        session_store=session_store,
+        scenario_definition_store=scenario_definition_store,
+        scenario_session_store=scenario_session_store,
         default_world_id=settings.default_world_id,
     )
     character_command_service = CharacterCommandService(character_store=character_store)
@@ -140,9 +135,8 @@ def build_container(settings: Settings) -> AppContainer:
         memory_strategy=memory_strategy,
         user_identity_store=user_identity_store,
         group_identity_store=group_identity_store,
-        session_store=session_store,
-        character_store=character_store,
-        world_store=world_store,
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
         generation_settings=generation_settings,
         generation_trace_store=generation_trace_store,
         generation_trace_mode=settings.debug_generation_trace,

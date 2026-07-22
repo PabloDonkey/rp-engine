@@ -2,13 +2,14 @@ from uuid import UUID
 
 import pytest
 
-from rp_engine.application.services.character_service import CharacterService
+from rp_engine.application.services.character_service import AUTO_ROLE, CharacterService
 from rp_engine.application.services.commands import SelectCharacterCommand
 from rp_engine.core.character.character import Character
 from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.memory.models import MemoryKey
-from rp_engine.core.session.session import Session
+from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
+from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.world.world import World
 
 
@@ -47,13 +48,6 @@ class InMemoryCharacterStore:
         self._items[character_id] = created
         return created
 
-    async def find_owned_by_name(self, *, owner_id: UUID, name: str) -> Character | None:
-        target = name.strip().lower()
-        for character in self._items.values():
-            if character.owner_id == owner_id and character.name.lower() == target:
-                return character
-        return None
-
     async def save(self, character: Character) -> Character:
         self._items[character.id] = character
         return character
@@ -71,42 +65,65 @@ class InMemoryWorldStore:
             id=world_id,
             name="Default World",
             description="A flexible world with minimal predefined constraints.",
-            rules=(),
-            metadata={},
         )
         self._items[world_id] = world
         return world
 
 
-class InMemorySessionStore:
+class InMemoryScenarioDefinitionStore:
     def __init__(self) -> None:
-        self._items: dict[UUID, Session] = {}
-        self._active_by_user: dict[UUID, UUID] = {}
+        self._items: dict[str, ScenarioDefinition] = {}
 
-    async def get_by_id(self, session_id: UUID) -> Session | None:
+    async def get_by_id(self, scenario_id: str) -> ScenarioDefinition | None:
+        return self._items.get(scenario_id)
+
+    async def find_by_owner(self, owner_id: UUID) -> list[ScenarioDefinition]:
+        return [item for item in self._items.values() if item.owner_id == owner_id]
+
+    async def save(self, scenario: ScenarioDefinition) -> None:
+        self._items[scenario.id] = scenario
+
+    async def delete(self, scenario_id: str) -> None:
+        self._items.pop(scenario_id, None)
+
+
+class InMemoryScenarioSessionStore:
+    def __init__(self) -> None:
+        self._items: dict[UUID, ScenarioSession] = {}
+        self._active: dict[tuple[str, UUID], UUID] = {}
+
+    async def get_by_id(self, session_id: UUID) -> ScenarioSession | None:
         return self._items.get(session_id)
 
-    async def find_by_relationship(
+    async def find_by_owner(self, owner_kind: str, owner_id: UUID) -> list[ScenarioSession]:
+        return [
+            session
+            for session in self._items.values()
+            if session.owner_kind == owner_kind and session.owner_id == owner_id
+        ]
+
+    async def find_by_definition(
         self,
         *,
         owner_kind: str,
         owner_id: UUID,
-        character_id: str,
-        world_id: str,
-    ) -> Session | None:
+        scenario_definition_id: str,
+    ) -> ScenarioSession | None:
         for session in self._items.values():
             if (
                 session.owner_kind == owner_kind
                 and session.owner_id == owner_id
-                and session.character_id == character_id
-                and session.world_id == world_id
+                and session.scenario_definition_id == scenario_definition_id
             ):
                 return session
         return None
 
-    async def save(self, session: Session) -> Session:
+    async def save(self, session: ScenarioSession) -> ScenarioSession:
         self._items[session.id] = session
         return session
+
+    async def delete(self, session_id: UUID) -> None:
+        self._items.pop(session_id, None)
 
     async def set_active_for_owner(
         self,
@@ -115,12 +132,12 @@ class InMemorySessionStore:
         owner_id: UUID,
         session_id: UUID,
     ) -> None:
-        del owner_kind
-        self._active_by_user[owner_id] = session_id
+        self._active[(owner_kind, owner_id)] = session_id
 
-    async def get_active_for_owner(self, *, owner_kind: str, owner_id: UUID) -> Session | None:
-        del owner_kind
-        active_id = self._active_by_user.get(owner_id)
+    async def get_active_for_owner(
+        self, *, owner_kind: str, owner_id: UUID
+    ) -> ScenarioSession | None:
+        active_id = self._active.get((owner_kind, owner_id))
         if active_id is None:
             return None
         return self._items.get(active_id)
@@ -149,20 +166,36 @@ class FakeConversationSummarizer:
         return ""
 
 
+def _build_service(
+    *,
+    character_store: InMemoryCharacterStore | None = None,
+) -> CharacterService:
+    return CharacterService(
+        character_store=character_store or InMemoryCharacterStore(),
+        conversation_store=FakeConversationStore(),
+        conversation_summarizer=FakeConversationSummarizer(),
+        world_store=InMemoryWorldStore(),
+        scenario_definition_store=InMemoryScenarioDefinitionStore(),
+        scenario_session_store=InMemoryScenarioSessionStore(),
+        default_world_id="default",
+    )
+
+
 @pytest.mark.asyncio
 async def test_select_character_reuses_existing_session() -> None:
     user_id = UUID("00000000-0000-0000-0000-000000000001")
     character_store = InMemoryCharacterStore()
-    world_store = InMemoryWorldStore()
-    session_store = InMemorySessionStore()
-    service = CharacterService(
-        character_store=character_store,
-        conversation_store=FakeConversationStore(),
-        conversation_summarizer=FakeConversationSummarizer(),
-        world_store=world_store,
-        session_store=session_store,
-        default_world_id="default",
+    await character_store.save(
+        Character(
+            id="belzebuth",
+            owner_id=user_id,
+            visibility=CharacterVisibility.PRIVATE,
+            name="Belzebuth",
+            description="Belzebuth description",
+            personality="Bold",
+        )
     )
+    service = _build_service(character_store=character_store)
 
     first = await service.select_character_for_user(
         user_id=user_id,
@@ -179,33 +212,18 @@ async def test_select_character_reuses_existing_session() -> None:
 @pytest.mark.asyncio
 async def test_ensure_active_session_creates_default_context() -> None:
     user_id = UUID("00000000-0000-0000-0000-000000000002")
-    service = CharacterService(
-        character_store=InMemoryCharacterStore(),
-        conversation_store=FakeConversationStore(),
-        conversation_summarizer=FakeConversationSummarizer(),
-        world_store=InMemoryWorldStore(),
-        session_store=InMemorySessionStore(),
-        default_world_id="default",
-    )
+    service = _build_service()
 
     session = await service.ensure_active_session_for_user(user_id=user_id)
 
     assert session.owner_kind == "user"
     assert session.owner_id == user_id
-    assert session.character_id == "default"
-    assert session.world_id == "default"
+    assert session.active_participants[AUTO_ROLE] == "default"
 
 
 @pytest.mark.asyncio
 async def test_different_users_do_not_share_sessions() -> None:
-    service = CharacterService(
-        character_store=InMemoryCharacterStore(),
-        conversation_store=FakeConversationStore(),
-        conversation_summarizer=FakeConversationSummarizer(),
-        world_store=InMemoryWorldStore(),
-        session_store=InMemorySessionStore(),
-        default_world_id="default",
-    )
+    service = _build_service()
     user_a = UUID("00000000-0000-0000-0000-000000000101")
     user_b = UUID("00000000-0000-0000-0000-000000000102")
 
@@ -213,22 +231,13 @@ async def test_different_users_do_not_share_sessions() -> None:
     session_b = await service.ensure_active_session_for_user(user_id=user_b)
 
     assert session_a.id != session_b.id
-    assert session_a.owner_kind == "user"
-    assert session_b.owner_kind == "user"
     assert session_a.owner_id == user_a
     assert session_b.owner_id == user_b
 
 
 @pytest.mark.asyncio
 async def test_different_groups_do_not_share_sessions() -> None:
-    service = CharacterService(
-        character_store=InMemoryCharacterStore(),
-        conversation_store=FakeConversationStore(),
-        conversation_summarizer=FakeConversationSummarizer(),
-        world_store=InMemoryWorldStore(),
-        session_store=InMemorySessionStore(),
-        default_world_id="default",
-    )
+    service = _build_service()
     group_a = UUID("00000000-0000-0000-0000-000000000201")
     group_b = UUID("00000000-0000-0000-0000-000000000202")
 
@@ -255,22 +264,15 @@ async def test_private_character_owned_by_another_user_is_rejected() -> None:
     character_store = InMemoryCharacterStore()
     await character_store.save(
         Character(
-        id="belzebuth",
-        owner_id=owner_user_id,
-        visibility=CharacterVisibility.PRIVATE,
-        name="Belzebuth",
-        description="Character profile for Belzebuth.",
-        personality="Open-ended roleplay persona.",
+            id="belzebuth",
+            owner_id=owner_user_id,
+            visibility=CharacterVisibility.PRIVATE,
+            name="Belzebuth",
+            description="Character profile for Belzebuth.",
+            personality="Open-ended roleplay persona.",
         )
     )
-    service = CharacterService(
-        character_store=character_store,
-        conversation_store=FakeConversationStore(),
-        conversation_summarizer=FakeConversationSummarizer(),
-        world_store=InMemoryWorldStore(),
-        session_store=InMemorySessionStore(),
-        default_world_id="default",
-    )
+    service = _build_service(character_store=character_store)
 
     with pytest.raises(ValueError, match="private and belongs to another user"):
         await service.select_character_for_user(

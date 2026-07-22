@@ -92,3 +92,82 @@ async def test_delete_session(tmp_path: Path) -> None:
     await store.delete(session.id)
 
     assert await store.get_by_id(session.id) is None
+
+
+@pytest.mark.asyncio
+async def test_save_returns_session(tmp_path: Path) -> None:
+    store = JsonScenarioSessionStore(base_path=tmp_path)
+    session = ScenarioSession.create_for_user(
+        scenario_definition_id="s1", user_id=USER_ID
+    )
+
+    returned = await store.save(session)
+
+    assert returned == session
+
+
+@pytest.mark.asyncio
+async def test_find_by_definition(tmp_path: Path) -> None:
+    store = JsonScenarioSessionStore(base_path=tmp_path)
+    target = ScenarioSession.create_for_user(scenario_definition_id="wanted", user_id=USER_ID)
+    other = ScenarioSession.create_for_user(scenario_definition_id="other", user_id=USER_ID)
+    await store.save(target)
+    await store.save(other)
+
+    found = await store.find_by_definition(
+        owner_kind="user", owner_id=USER_ID, scenario_definition_id="wanted"
+    )
+
+    assert found is not None
+    assert found.id == target.id
+
+
+@pytest.mark.asyncio
+async def test_find_by_definition_missing_returns_none(tmp_path: Path) -> None:
+    store = JsonScenarioSessionStore(base_path=tmp_path)
+
+    found = await store.find_by_definition(
+        owner_kind="user", owner_id=USER_ID, scenario_definition_id="nope"
+    )
+
+    assert found is None
+
+
+@pytest.mark.asyncio
+async def test_active_session_tracking(tmp_path: Path) -> None:
+    store = JsonScenarioSessionStore(base_path=tmp_path)
+    session = ScenarioSession.create_for_user(scenario_definition_id="s1", user_id=USER_ID)
+    await store.save(session)
+
+    assert await store.get_active_for_owner(owner_kind="user", owner_id=USER_ID) is None
+
+    await store.set_active_for_owner(
+        owner_kind="user", owner_id=USER_ID, session_id=session.id
+    )
+    active = await store.get_active_for_owner(owner_kind="user", owner_id=USER_ID)
+
+    assert active is not None
+    assert active.id == session.id
+
+
+@pytest.mark.asyncio
+async def test_active_session_is_per_owner(tmp_path: Path) -> None:
+    store = JsonScenarioSessionStore(base_path=tmp_path)
+    user_session = ScenarioSession.create_for_user(scenario_definition_id="s1", user_id=USER_ID)
+    group_session = ScenarioSession.create_for_group(
+        scenario_definition_id="s1", group_id=GROUP_ID
+    )
+    await store.save(user_session)
+    await store.save(group_session)
+    await store.set_active_for_owner(
+        owner_kind="user", owner_id=USER_ID, session_id=user_session.id
+    )
+    await store.set_active_for_owner(
+        owner_kind="group", owner_id=GROUP_ID, session_id=group_session.id
+    )
+
+    user_active = await store.get_active_for_owner(owner_kind="user", owner_id=USER_ID)
+    group_active = await store.get_active_for_owner(owner_kind="group", owner_id=GROUP_ID)
+
+    assert user_active is not None and user_active.id == user_session.id
+    assert group_active is not None and group_active.id == group_session.id

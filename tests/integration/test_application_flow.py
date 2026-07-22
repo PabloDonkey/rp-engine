@@ -22,7 +22,8 @@ from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.memory.models import MemoryKey
-from rp_engine.core.session.session import Session
+from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
+from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.identity import UserIdentity
 from rp_engine.core.user.user import User
 from rp_engine.core.world.world import World
@@ -30,6 +31,51 @@ from rp_engine.core.world.world import World
 FIXED_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 FIXED_GROUP_ID = UUID("00000000-0000-0000-0000-000000000333")
 FIXED_SESSION_ID = UUID("00000000-0000-0000-0000-000000000999")
+DEFAULT_DEFINITION_ID = "def-default"
+ROLE = "character"
+
+
+def _default_character() -> Character:
+    return Character(
+        id="default",
+        owner_id=FIXED_USER_ID,
+        visibility=CharacterVisibility.PRIVATE,
+        name="Belzebuth",
+        description="{{char}} is a dragon companion of {{user}}.",
+        personality="Protective and witty.",
+        greeting="Welcome back, {{user}}.",
+    )
+
+
+def _default_world() -> World:
+    return World(
+        id="default",
+        name="Main World",
+        description="{{user}} explores a realm with {{char}}.",
+        rules=("Stay in character.",),
+    )
+
+
+def _default_definition() -> ScenarioDefinition:
+    return ScenarioDefinition(
+        id=DEFAULT_DEFINITION_ID,
+        owner_id=FIXED_USER_ID,
+        name="Belzebuth",
+        description="",
+        world=_default_world(),
+        characters={ROLE: _default_character()},
+    )
+
+
+def _fixed_session(*, owner_kind: str = "user", owner_id: UUID = FIXED_USER_ID) -> ScenarioSession:
+    return ScenarioSession(
+        id=FIXED_SESSION_ID,
+        scenario_definition_id=DEFAULT_DEFINITION_ID,
+        owner_kind=owner_kind,  # type: ignore[arg-type]
+        owner_id=owner_id,
+        active_participants={ROLE: "default"},
+        created_at=datetime.now(UTC),
+    )
 
 
 class FakeIdentityResolver:
@@ -48,33 +94,19 @@ class FakeIdentityResolver:
 
 
 class FakeCharacterService:
-    async def ensure_active_session_for_user(self, *, user_id: UUID) -> Session:
+    async def ensure_active_session_for_user(self, *, user_id: UUID) -> ScenarioSession:
         del user_id
-        return Session(
-            id=FIXED_SESSION_ID,
-            owner_kind="user",
-            owner_id=FIXED_USER_ID,
-            character_id="default",
-            world_id="default",
-            created_at=datetime.now(UTC),
-        )
+        return _fixed_session()
 
     async def ensure_active_session_for_group(
         self,
         *,
         group_id: UUID,
         actor_user_id: UUID,
-    ) -> Session:
+    ) -> ScenarioSession:
         del group_id
         del actor_user_id
-        return Session(
-            id=FIXED_SESSION_ID,
-            owner_kind="group",
-            owner_id=FIXED_GROUP_ID,
-            character_id="default",
-            world_id="default",
-            created_at=datetime.now(UTC),
-        )
+        return _fixed_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
 
     async def select_character_for_user(
         self,
@@ -84,14 +116,9 @@ class FakeCharacterService:
     ) -> CharacterSelectionResult:
         del user_id
         return CharacterSelectionResult(
-            session=Session(
-                id=FIXED_SESSION_ID,
-                owner_kind="user",
-                owner_id=FIXED_USER_ID,
-                character_id=command.character_name.lower(),
-                world_id="default",
-                created_at=datetime.now(UTC),
-            ),
+            session=_fixed_session(),
+            character_id=command.character_name.lower(),
+            world_id="default",
             status="activated",
         )
 
@@ -105,18 +132,13 @@ class FakeCharacterService:
         del group_id
         del actor_user_id
         return CharacterSelectionResult(
-            session=Session(
-                id=FIXED_SESSION_ID,
-                owner_kind="group",
-                owner_id=FIXED_GROUP_ID,
-                character_id=command.character_name.lower(),
-                world_id="default",
-                created_at=datetime.now(UTC),
-            ),
+            session=_fixed_session(owner_kind="group", owner_id=FIXED_GROUP_ID),
+            character_id=command.character_name.lower(),
+            world_id="default",
             status="activated",
         )
 
-    async def describe_session_entry(self, *, session: Session) -> str | None:
+    async def describe_session_entry(self, *, session: ScenarioSession) -> str | None:
         del session
         return None
 
@@ -173,35 +195,34 @@ class InMemoryConversationStore:
         self._messages.pop(memory_key.value, None)
 
 
-class FakeSessionStore:
-    async def get_by_id(self, session_id: UUID) -> Session | None:
+class FakeScenarioSessionStore:
+    async def get_by_id(self, session_id: UUID) -> ScenarioSession | None:
         if session_id != FIXED_SESSION_ID:
             return None
-        return Session(
-            id=FIXED_SESSION_ID,
-            owner_kind="user",
-            owner_id=FIXED_USER_ID,
-            character_id="default",
-            world_id="default",
-            created_at=datetime.now(UTC),
-        )
+        return _fixed_session()
 
-    async def find_by_relationship(
+    async def find_by_owner(self, owner_kind: str, owner_id: UUID) -> list[ScenarioSession]:
+        del owner_kind
+        del owner_id
+        return []
+
+    async def find_by_definition(
         self,
         *,
         owner_kind: str,
         owner_id: UUID,
-        character_id: str,
-        world_id: str,
-    ) -> Session | None:
+        scenario_definition_id: str,
+    ) -> ScenarioSession | None:
         del owner_kind
         del owner_id
-        del character_id
-        del world_id
+        del scenario_definition_id
         return None
 
-    async def save(self, session: Session) -> Session:
+    async def save(self, session: ScenarioSession) -> ScenarioSession:
         return session
+
+    async def delete(self, session_id: UUID) -> None:
+        del session_id
 
     async def set_active_for_owner(
         self,
@@ -214,10 +235,29 @@ class FakeSessionStore:
         del owner_id
         del session_id
 
-    async def get_active_for_owner(self, *, owner_kind: str, owner_id: UUID) -> Session | None:
+    async def get_active_for_owner(
+        self, *, owner_kind: str, owner_id: UUID
+    ) -> ScenarioSession | None:
         del owner_kind
         del owner_id
         return None
+
+
+class FakeScenarioDefinitionStore:
+    async def get_by_id(self, scenario_id: str) -> ScenarioDefinition | None:
+        if scenario_id != DEFAULT_DEFINITION_ID:
+            return None
+        return _default_definition()
+
+    async def find_by_owner(self, owner_id: UUID) -> list[ScenarioDefinition]:
+        del owner_id
+        return []
+
+    async def save(self, scenario: ScenarioDefinition) -> None:
+        del scenario
+
+    async def delete(self, scenario_id: str) -> None:
+        del scenario_id
 
 
 class FakeUserStore:
@@ -353,9 +393,8 @@ async def test_application_smoke_flow_without_external_services() -> None:
         memory_strategy=DumpEverythingStrategy(),
         user_identity_store=FakeUserStore(),
         group_identity_store=FakeGroupStore(),
-        session_store=FakeSessionStore(),
-        character_store=FakeCharacterStore(),
-        world_store=FakeWorldStore(),
+        scenario_session_store=FakeScenarioSessionStore(),
+        scenario_definition_store=FakeScenarioDefinitionStore(),
         generation_settings=GenerationSettings(),
     )
     adapter = TelegramAdapter(
@@ -393,9 +432,8 @@ async def test_continue_command_is_not_saved_as_literal_command() -> None:
         memory_strategy=DumpEverythingStrategy(),
         user_identity_store=FakeUserStore(),
         group_identity_store=FakeGroupStore(),
-        session_store=FakeSessionStore(),
-        character_store=FakeCharacterStore(),
-        world_store=FakeWorldStore(),
+        scenario_session_store=FakeScenarioSessionStore(),
+        scenario_definition_store=FakeScenarioDefinitionStore(),
         generation_settings=GenerationSettings(),
     )
     adapter = TelegramAdapter(
