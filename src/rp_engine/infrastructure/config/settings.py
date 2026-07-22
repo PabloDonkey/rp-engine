@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     debug_status_enabled: bool = False
     debug_generation_trace: Literal["off", "errors", "all"] = "off"
     default_world_id: str = "default"
+    scenario_catalog_dir: str = "data/catalog"
 
     @field_validator("lmstudio_api_host")
     @classmethod

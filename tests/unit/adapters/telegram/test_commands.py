@@ -51,11 +51,11 @@ def test_parse_transport_message_for_cancel_command() -> None:
     assert parsed.argument is None
 
 
-def test_parse_transport_message_for_regenerate_command() -> None:
-    parsed = parse_transport_message("/regenerate")
+def test_parse_transport_message_for_retry_command() -> None:
+    parsed = parse_transport_message("/retry")
 
     assert parsed.is_command is True
-    assert parsed.command == TelegramCommand.REGENERATE
+    assert parsed.command == TelegramCommand.RETRY
     assert parsed.argument is None
 
 
@@ -67,11 +67,25 @@ def test_parse_transport_message_for_unsupported_command() -> None:
     assert parsed.argument is None
 
 
-def test_parse_transport_message_for_character_command_argument() -> None:
-    parsed = parse_transport_message("/character Belzebuth")
+def test_parse_transport_message_for_play_command_argument() -> None:
+    parsed = parse_transport_message("/play sealed-vault")
 
-    assert parsed.command == TelegramCommand.CHARACTER
-    assert parsed.argument == "Belzebuth"
+    assert parsed.command == TelegramCommand.PLAY
+    assert parsed.argument == "sealed-vault"
+
+
+def test_parse_transport_message_for_scenarios_command() -> None:
+    parsed = parse_transport_message("/scenarios")
+
+    assert parsed.command == TelegramCommand.SCENARIOS
+    assert parsed.argument is None
+
+
+def test_removed_commands_are_unsupported() -> None:
+    for text in ("/character Belzebuth", "/regenerate", "/clear"):
+        parsed = parse_transport_message(text)
+        assert parsed.is_command is True
+        assert parsed.command is None
 
 
 def test_parse_transport_message_for_admin_accept_command_argument() -> None:
@@ -81,18 +95,19 @@ def test_parse_transport_message_for_admin_accept_command_argument() -> None:
     assert parsed.argument == "123456"
 
 
-def test_build_help_message_lists_supported_commands() -> None:
-    help_message = build_help_message()
+def test_build_help_message_is_authorization_aware() -> None:
+    authorized = build_help_message(authorized=True)
+    assert "/start" in authorized
+    assert "/scenarios" in authorized
+    assert "/play" in authorized
+    assert "/continue" in authorized
+    assert "/retry" in authorized
+    assert "/restart" in authorized
+    assert "/character" not in authorized
+    assert "/clear" not in authorized
+    assert "/admin_beta_list" not in authorized
 
-    assert "/start" in help_message
-    assert "/chat" in help_message
-    assert "/help" in help_message
-    assert "/cancel" in help_message
-    assert "/beta" in help_message
-    assert "/continue" in help_message
-    assert "/clear" in help_message
-    assert "/regenerate" in help_message
-    assert "/character" in help_message
-    assert "/admin_beta_list" not in help_message
-    assert "/admin_beta_accept" not in help_message
-    assert "/admin_beta_reject" not in help_message
+    unauthorized = build_help_message(authorized=False)
+    assert "/beta" in unauthorized
+    assert "/scenarios" not in unauthorized
+    assert "/play" not in unauthorized

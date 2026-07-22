@@ -12,11 +12,11 @@ from rp_engine.adapters.telegram.adapter import (
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.app.lifespan import create_lifespan
 from rp_engine.app.runtime_state import RuntimeState
-from rp_engine.application.services.character_command_service import CharacterCommandService
 from rp_engine.application.services.character_service import CharacterService
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.group_identity_resolver import GroupIdentityResolver
 from rp_engine.application.services.identity_resolver import IdentityResolver
+from rp_engine.application.services.playthrough_service import PlaythroughService
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
@@ -27,6 +27,7 @@ from rp_engine.core.ports import (
     ScenarioDefinitionStore,
     ScenarioSessionStore,
 )
+from rp_engine.infrastructure.catalog import ScenarioCatalog
 from rp_engine.infrastructure.config.settings import Settings, get_settings
 from rp_engine.infrastructure.llm.lmstudio import LMStudioConversationSummarizer, LMStudioProvider
 from rp_engine.infrastructure.postgres import (
@@ -120,7 +121,13 @@ def build_container(settings: Settings) -> AppContainer:
         scenario_session_store=scenario_session_store,
         default_world_id=settings.default_world_id,
     )
-    character_command_service = CharacterCommandService(character_store=character_store)
+    scenario_catalog = ScenarioCatalog.from_directory(settings.scenario_catalog_dir)
+    playthrough_service = PlaythroughService(
+        catalog=scenario_catalog,
+        scenario_definition_store=scenario_definition_store,
+        scenario_session_store=scenario_session_store,
+        conversation_store=conversation_store,
+    )
     memory_strategy = DumpEverythingStrategy()
     generation_settings = GenerationSettings(
         temperature=settings.lmstudio_temperature,
@@ -156,8 +163,7 @@ def build_container(settings: Settings) -> AppContainer:
             chat_service=chat_service,
             identity_resolver=identity_resolver,
             group_identity_resolver=group_identity_resolver,
-            character_service=character_service,
-            character_command_service=character_command_service,
+            playthrough_service=playthrough_service,
             authorization=TelegramAuthorization.from_directory(
                 settings.telegram_authorization_dir
             ),

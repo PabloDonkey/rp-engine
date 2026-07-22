@@ -41,7 +41,19 @@ async def test_telegram_runtime_registers_command_menu_on_start() -> None:
     assert await_args is not None
     commands = await_args.args[0]
     command_names = [command.command for command in commands]
-    assert command_names == ["start", "chat", "continue", "regenerate", "clear", "beta"]
+    assert command_names == [
+        "start",
+        "scenarios",
+        "play",
+        "continue",
+        "retry",
+        "restart",
+        "cancel",
+        "help",
+        "beta",
+    ]
+    assert "chat" not in command_names
+    assert "character" not in command_names
     assert "admin_beta_list" not in command_names
     assert "admin_beta_accept" not in command_names
     assert "admin_beta_reject" not in command_names

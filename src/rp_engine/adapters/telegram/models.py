@@ -4,17 +4,18 @@ from enum import StrEnum
 
 class TelegramCommand(StrEnum):
     START = "/start"
-    CHAT = "/chat"
     HELP = "/help"
-    CANCEL = "/cancel"
     BETA = "/beta"
+    CANCEL = "/cancel"
+    SCENARIOS = "/scenarios"
+    PLAY = "/play"
+    CHAT = "/chat"
+    CONTINUE = "/continue"
+    RETRY = "/retry"
+    RESTART = "/restart"
     ADMIN_BETA_LIST = "/admin_beta_list"
     ADMIN_BETA_ACCEPT = "/admin_beta_accept"
     ADMIN_BETA_REJECT = "/admin_beta_reject"
-    CONTINUE = "/continue"
-    REGENERATE = "/regenerate"
-    CLEAR = "/clear"
-    CHARACTER = "/character"
 
 
 @dataclass(frozen=True, slots=True)

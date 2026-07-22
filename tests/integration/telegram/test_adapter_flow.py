@@ -9,40 +9,49 @@ from uuid import UUID
 import pytest
 from telegram import Update
 
-from rp_engine.adapters.telegram.adapter import TelegramAdapter
+from rp_engine.adapters.telegram.adapter import (
+    AUTHORIZED_START_NO_PLAY_MESSAGE,
+    AUTHORIZED_START_RESUME_MESSAGE,
+    GROUP_ADMIN_ONLY_MESSAGE,
+    NO_ACTIVE_PLAYTHROUGH_MESSAGE,
+    TelegramAdapter,
+)
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.adapters.telegram.beta_registry import TelegramBetaRegistry
-from rp_engine.adapters.telegram.commands import HELP_MESSAGE
-from rp_engine.application.services.character_command_service import CharacterCommandService
-from rp_engine.application.services.character_service import CharacterSelectionResult
-from rp_engine.application.services.commands import SelectCharacterCommand
-from rp_engine.core.character.character import Character
-from rp_engine.core.character.visibility import CharacterVisibility
+from rp_engine.adapters.telegram.commands import build_help_message
+from rp_engine.application.services.playthrough_service import PlaythroughStart
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import LLMConnectionError
-from rp_engine.core.memory.models import ConversationIdentity
+from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.user import User
+from rp_engine.infrastructure.catalog.scenario_catalog import SYSTEM_OWNER_ID
 
 FIXED_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 FIXED_GROUP_ID = UUID("00000000-0000-0000-0000-000000000555")
 FIXED_SESSION_ID = UUID("00000000-0000-0000-0000-000000000099")
-FIXED_CREATED_AT = datetime(2026, 7, 12, 0, 0, tzinfo=UTC)
 
 
-def _fixed_session(
-    *,
-    character_id: str = "default",
-    owner_kind: str = "user",
-    owner_id: UUID = FIXED_USER_ID,
-) -> ScenarioSession:
+def _scenario(
+    scenario_id: str, *, name: str, opening: str, description: str = ""
+) -> ScenarioDefinition:
+    return ScenarioDefinition(
+        id=scenario_id,
+        owner_id=SYSTEM_OWNER_ID,
+        name=name,
+        description=description,
+        initial_context=opening,
+    )
+
+
+def _session(*, owner_kind: str = "user", owner_id: UUID = FIXED_USER_ID) -> ScenarioSession:
     return ScenarioSession(
         id=FIXED_SESSION_ID,
-        scenario_definition_id=f"auto-{owner_id}-{character_id}-default",
+        scenario_definition_id="vault",
         owner_kind=owner_kind,  # type: ignore[arg-type]
         owner_id=owner_id,
-        active_participants={"character": character_id},
-        created_at=FIXED_CREATED_AT,
+        active_participants={},
+        created_at=datetime(2026, 7, 12, tzinfo=UTC),
     )
 
 
@@ -55,72 +64,8 @@ class FakeIdentityResolver:
         display_name: str,
         metadata: dict[str, str] | None = None,
     ) -> User:
-        del provider
-        del external_id
-        del metadata
+        del provider, external_id, metadata
         return User(id=FIXED_USER_ID, display_name=display_name)
-
-
-class FakeCharacterService:
-    async def ensure_active_session_for_user(self, *, user_id: UUID) -> ScenarioSession:
-        del user_id
-        return _fixed_session()
-
-    async def ensure_active_session_for_group(
-        self,
-        *,
-        group_id: UUID,
-        actor_user_id: UUID,
-    ) -> ScenarioSession:
-        del group_id
-        del actor_user_id
-        return _fixed_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
-
-    async def select_character_for_user(
-        self,
-        *,
-        user_id: UUID,
-        command: SelectCharacterCommand,
-    ) -> CharacterSelectionResult:
-        del user_id
-        character_id = command.character_name.lower()
-        return CharacterSelectionResult(
-            session=_fixed_session(character_id=character_id),
-            character_id=character_id,
-            world_id="default",
-            status="activated",
-        )
-
-    async def select_character_for_group(
-        self,
-        *,
-        group_id: UUID,
-        actor_user_id: UUID,
-        command: SelectCharacterCommand,
-    ) -> CharacterSelectionResult:
-        del group_id
-        del actor_user_id
-        character_id = command.character_name.lower()
-        return CharacterSelectionResult(
-            session=_fixed_session(
-                character_id=character_id,
-                owner_kind="group",
-                owner_id=FIXED_GROUP_ID,
-            ),
-            character_id=character_id,
-            world_id="default",
-            status="activated",
-        )
-
-    async def describe_session_entry(self, *, session: ScenarioSession) -> str | None:
-        del session
-        return None
-
-
-class FakeCharacterServiceWithEntry(FakeCharacterService):
-    async def describe_session_entry(self, *, session: ScenarioSession) -> str | None:
-        del session
-        return "Who dares wake me?"
 
 
 class FakeGroupIdentityResolver:
@@ -132,60 +77,59 @@ class FakeGroupIdentityResolver:
         display_name: str,
         metadata: dict[str, str] | None = None,
     ) -> Group:
-        del provider
-        del external_id
-        del metadata
+        del provider, external_id, metadata
         return Group(id=FIXED_GROUP_ID, display_name=display_name)
 
 
-class InMemoryCharacterStore:
-    def __init__(self) -> None:
-        self._items: dict[str, Character] = {}
-
-    async def get_by_id(self, character_id: str) -> Character | None:
-        return self._items.get(character_id)
-
-    async def find_by_name(self, name: str) -> Character | None:
-        target = name.strip().lower()
-        for value in self._items.values():
-            if value.name.strip().lower() == target:
-                return value
-        return None
-
-    async def find_owned_by_name(self, *, owner_id: UUID, name: str) -> Character | None:
-        target = name.strip().lower()
-        for value in self._items.values():
-            if value.owner_id == owner_id and value.name.strip().lower() == target:
-                return value
-        return None
-
-    async def create_minimal(
+class FakePlaythroughService:
+    def __init__(
         self,
         *,
-        character_id: str,
-        owner_id: UUID,
-        name: str,
-        visibility: CharacterVisibility = CharacterVisibility.PRIVATE,
-    ) -> Character:
-        existing = self._items.get(character_id)
-        if existing is not None:
-            return existing
-        created = Character(
-            id=character_id,
-            owner_id=owner_id,
-            visibility=visibility,
-            name=name,
-            description=f"Character profile for {name}.",
-            personality="Open-ended roleplay persona.",
-            greeting="",
-            metadata={},
-        )
-        self._items[character_id] = created
-        return created
+        scenarios: list[ScenarioDefinition] | None = None,
+        active: ScenarioSession | None = None,
+        known: dict[str, ScenarioDefinition] | None = None,
+        resume: str | None = None,
+    ) -> None:
+        self._scenarios = scenarios or []
+        self._active = active
+        self._known = known or {}
+        self._resume = resume
+        self.started: list[tuple[str, UUID, str]] = []
+        self.restarted: list[tuple[str, UUID]] = []
 
-    async def save(self, character: Character) -> Character:
-        self._items[character.id] = character
-        return character
+    def list_scenarios(self) -> list[ScenarioDefinition]:
+        return self._scenarios
+
+    async def get_active(self, *, owner_kind: str, owner_id: UUID) -> ScenarioSession | None:
+        del owner_kind, owner_id
+        return self._active
+
+    async def start(
+        self, *, owner_kind: str, owner_id: UUID, scenario_id: str
+    ) -> PlaythroughStart | None:
+        self.started.append((owner_kind, owner_id, scenario_id))
+        scenario = self._known.get(scenario_id)
+        if scenario is None:
+            return None
+        session = _session(owner_kind=owner_kind, owner_id=owner_id)
+        self._active = session
+        return PlaythroughStart(
+            session=session, scenario=scenario, opening=scenario.initial_context
+        )
+
+    async def restart(self, *, owner_kind: str, owner_id: UUID) -> PlaythroughStart | None:
+        self.restarted.append((owner_kind, owner_id))
+        if self._active is None:
+            return None
+        scenario = next(iter(self._known.values()))
+        session = _session(owner_kind=owner_kind, owner_id=owner_id)
+        return PlaythroughStart(
+            session=session, scenario=scenario, opening=scenario.initial_context
+        )
+
+    async def resume_text(self, *, session: ScenarioSession) -> str | None:
+        del session
+        return self._resume
 
 
 @dataclass
@@ -231,14 +175,50 @@ class FakeBot:
         self.send_message = AsyncMock()
 
     async def get_chat_member(self, *, chat_id: int, user_id: int) -> FakeChatMember:
-        del chat_id
-        del user_id
+        del chat_id, user_id
         return FakeChatMember(status=self._member_status)
 
 
 @dataclass
 class FakeContext:
     bot: FakeBot
+
+
+def _make_adapter(
+    *,
+    chat_service: Any,
+    playthrough_service: Any,
+    authorization: TelegramAuthorization,
+    admin_telegram_user_id: str = "",
+    beta_registry: TelegramBetaRegistry | None = None,
+) -> TelegramAdapter:
+    return TelegramAdapter(
+        chat_service=chat_service,
+        identity_resolver=FakeIdentityResolver(),
+        group_identity_resolver=FakeGroupIdentityResolver(),
+        playthrough_service=playthrough_service,
+        authorization=authorization,
+        unauthorized_message="not authorized",
+        message_max_length=3800,
+        admin_telegram_user_id=admin_telegram_user_id,
+        beta_registry=beta_registry,
+    )
+
+
+def _private_update(text: str, *, user_id: int = 42) -> FakeUpdate:
+    return FakeUpdate(
+        effective_message=FakeMessage(text=text),
+        effective_user=FakeUser(id=user_id),
+        effective_chat=FakeChat(id=user_id, type="private"),
+    )
+
+
+def _group_update(text: str, *, chat_id: int = -555, user_id: int = 42) -> FakeUpdate:
+    return FakeUpdate(
+        effective_message=FakeMessage(text=text),
+        effective_user=FakeUser(id=user_id),
+        effective_chat=FakeChat(id=chat_id, type="group"),
+    )
 
 
 def _write_beta_request_file(
@@ -269,871 +249,563 @@ def _write_beta_request_file(
     )
 
 
+# --------------------------------------------------------------------------- #
+# Authorization + /start + /help + /beta
+# --------------------------------------------------------------------------- #
+
+
 @pytest.mark.asyncio
-async def test_telegram_adapter_flow_calls_chat_service_and_replies() -> None:
+async def test_non_text_messages_are_ignored() -> None:
     chat_service = AsyncMock()
-    chat_service.send_message = AsyncMock(return_value="bot reply")
-    adapter = TelegramAdapter(
+    adapter = _make_adapter(
         chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
+        playthrough_service=FakePlaythroughService(),
         authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
     )
-
-    message = FakeMessage(text="hello")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    chat_service.send_message.assert_awaited_once()
-    send_kwargs = chat_service.send_message.await_args.kwargs
-    assert send_kwargs["conversation_identity"] == ConversationIdentity.for_session(
-        str(FIXED_SESSION_ID)
-    )
-    assert send_kwargs["message"] == "hello"
-    assert send_kwargs["user_id"] is None
-    assert send_kwargs["username"] is None
-    assert send_kwargs["display_name"] is None
-    assert "processing_feedback" in send_kwargs
-    assert message.responses == ["bot reply"]
-
-
-@pytest.mark.asyncio
-async def test_private_flow_uses_user_session_resolution() -> None:
-    chat_service = AsyncMock()
-    chat_service.send_message = AsyncMock(return_value="ok")
-
-    character_service = AsyncMock()
-    character_service.ensure_active_session_for_user = AsyncMock(
-        return_value=_fixed_session()
-    )
-
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=character_service,
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    update = FakeUpdate(
-        effective_message=FakeMessage(text="hello"),
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    character_service.ensure_active_session_for_user.assert_awaited_once()
-    character_service.ensure_active_session_for_group.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_group_flow_uses_group_session_resolution() -> None:
-    chat_service = AsyncMock()
-    chat_service.send_message = AsyncMock(return_value="group ok")
-
-    character_service = AsyncMock()
-    character_service.ensure_active_session_for_group = AsyncMock(
-        return_value=_fixed_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
-    )
-
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=character_service,
-        authorization=TelegramAuthorization(set(), {"-555"}),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    update = FakeUpdate(
-        effective_message=FakeMessage(text="hello group"),
-        effective_user=FakeUser(id=77),
-        effective_chat=FakeChat(id=-555, type="group"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
-
-    character_service.ensure_active_session_for_group.assert_awaited_once()
-    character_service.ensure_active_session_for_user.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_telegram_adapter_ignores_non_text_messages() -> None:
-    chat_service = AsyncMock()
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
     update = FakeUpdate(
         effective_message=FakeMessage(text=None),
         effective_user=FakeUser(id=42),
         effective_chat=FakeChat(id=42, type="private"),
     )
-
     await adapter.handle_message(cast(Update, update), cast(Any, None))
-
     chat_service.send_message.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_help_command_is_handled_in_adapter() -> None:
-    chat_service = AsyncMock()
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    message = FakeMessage(text="/help")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    assert message.responses == [HELP_MESSAGE]
-    chat_service.send_message.assert_not_awaited()
-    chat_service.continue_story.assert_not_awaited()
-    chat_service.clear_conversation.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_continue_command_calls_continue_story() -> None:
-    chat_service = AsyncMock()
-    chat_service.continue_story = AsyncMock(return_value="continued")
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    message = FakeMessage(text="/continue")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=9),
-        effective_chat=FakeChat(id=9, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    chat_service.continue_story.assert_awaited_once()
-    continue_kwargs = chat_service.continue_story.await_args.kwargs
-    assert continue_kwargs["conversation_identity"] == ConversationIdentity.for_session(
-        str(FIXED_SESSION_ID)
-    )
-    assert "processing_feedback" in continue_kwargs
-    chat_service.send_message.assert_not_awaited()
-    assert message.responses == ["continued"]
-
-
-@pytest.mark.asyncio
-async def test_regenerate_command_calls_regenerate_last_response() -> None:
-    chat_service = AsyncMock()
-    chat_service.regenerate_last_response = AsyncMock(return_value="regenerated")
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    message = FakeMessage(text="/regenerate")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=9),
-        effective_chat=FakeChat(id=9, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    chat_service.regenerate_last_response.assert_awaited_once()
-    regenerate_kwargs = chat_service.regenerate_last_response.await_args.kwargs
-    assert regenerate_kwargs["conversation_identity"] == ConversationIdentity.for_session(
-        str(FIXED_SESSION_ID)
-    )
-    assert "processing_feedback" in regenerate_kwargs
-    chat_service.send_message.assert_not_awaited()
-    assert message.responses == ["regenerated"]
-
-
-@pytest.mark.asyncio
-async def test_regenerate_command_surfaces_specific_validation_error() -> None:
-    chat_service = AsyncMock()
-    chat_service.regenerate_last_response = AsyncMock(
-        side_effect=ValueError("Conversation has no user message to regenerate from.")
-    )
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    message = FakeMessage(text="/regenerate")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=9),
-        effective_chat=FakeChat(id=9, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    assert message.responses == ["Conversation has no user message to regenerate from."]
-
-
-@pytest.mark.asyncio
-async def test_clear_command_calls_clear_conversation_and_confirms() -> None:
-    chat_service = AsyncMock()
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    message = FakeMessage(text="/clear")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=10),
-        effective_chat=FakeChat(id=-100, type="group"),
-    )
-
-    await adapter.handle_message(
-        cast(Update, update),
-        cast(Any, FakeContext(FakeBot(member_status="administrator"))),
-    )
-
-    chat_service.clear_conversation.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
-    )
-    assert message.responses == ["Conversation memory cleared."]
 
 
 @pytest.mark.asyncio
 async def test_unauthorized_user_gets_configured_message() -> None:
     chat_service = AsyncMock()
-    adapter = TelegramAdapter(
+    adapter = _make_adapter(
         chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
+        playthrough_service=FakePlaythroughService(),
+        authorization=TelegramAuthorization({"999"}),
+    )
+    update = _private_update("hello there")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    assert update.effective_message is not None
+    assert update.effective_message.responses == ["not authorized"]
+    chat_service.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_start_shows_beta_invite(tmp_path: Path) -> None:
+    chat_service = AsyncMock()
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(),
         authorization=TelegramAuthorization({"123"}),
-        unauthorized_message="beta closed",
-        message_max_length=3800,
+        beta_registry=registry,
     )
-
-    message = FakeMessage(text="hello")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=999),
-        effective_chat=FakeChat(id=999, type="private"),
-    )
-
+    update = _private_update("/start", user_id=999)
     await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    assert message.responses == ["beta closed"]
-    chat_service.send_message.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_authorized_group_accepts_normal_messages() -> None:
-    chat_service = AsyncMock()
-    chat_service.send_message = AsyncMock(return_value="group reply")
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set(), {"-555"}),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    message = FakeMessage(text="hello from group")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=77, username="alice", full_name="Alice"),
-        effective_chat=FakeChat(id=-555, type="group"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
-
-    chat_service.send_message.assert_awaited_once()
-    send_kwargs = chat_service.send_message.await_args.kwargs
-    assert send_kwargs["conversation_identity"] == ConversationIdentity.for_session(
-        str(FIXED_SESSION_ID)
-    )
-    assert send_kwargs["message"] == "hello from group"
-    assert send_kwargs["user_id"] == str(FIXED_USER_ID)
-    assert send_kwargs["username"] == "alice"
-    assert send_kwargs["display_name"] == "Alice"
-    assert "processing_feedback" in send_kwargs
-    assert message.responses == ["group reply"]
+    assert update.effective_message is not None
+    response = update.effective_message.responses[0]
+    assert "closed beta" in response
+    assert "Use /beta" in response
+    # /start must not silently create a beta request.
+    assert not (tmp_path / "telegram" / "beta_requests" / "999.json").exists()
 
 
 @pytest.mark.asyncio
-async def test_unauthorized_group_gets_configured_message() -> None:
-    chat_service = AsyncMock()
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set(), {"-123"}),
-        unauthorized_message="group not allowed",
-        message_max_length=3800,
-    )
-
-    message = FakeMessage(text="hello from group")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=77, username="alice", full_name="Alice"),
-        effective_chat=FakeChat(id=-555, type="group"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
-
-    chat_service.send_message.assert_not_awaited()
-    assert message.responses == ["group not allowed"]
-
-
-@pytest.mark.asyncio
-async def test_group_chat_supported_command_still_works() -> None:
-    chat_service = AsyncMock()
-    chat_service.continue_story = AsyncMock(return_value="continued in group")
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
+async def test_start_authorized_without_active_invites_scenarios() -> None:
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(active=None),
         authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
     )
-
-    message = FakeMessage(text="/continue")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=77),
-        effective_chat=FakeChat(id=-555, type="group"),
-    )
-
-    await adapter.handle_message(
-        cast(Update, update),
-        cast(Any, FakeContext(FakeBot(member_status="administrator"))),
-    )
-
-    chat_service.continue_story.assert_awaited_once()
-    continue_kwargs = chat_service.continue_story.await_args.kwargs
-    assert continue_kwargs["conversation_identity"] == ConversationIdentity.for_session(
-        str(FIXED_SESSION_ID)
-    )
-    assert "processing_feedback" in continue_kwargs
-    assert message.responses == ["continued in group"]
-
-
-@pytest.mark.asyncio
-async def test_group_member_cannot_continue_or_clear() -> None:
-    chat_service = AsyncMock()
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set(), {"-555"}),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    continue_message = FakeMessage(text="/continue")
-    continue_update = FakeUpdate(
-        effective_message=continue_message,
-        effective_user=FakeUser(id=77),
-        effective_chat=FakeChat(id=-555, type="group"),
-    )
-
-    clear_message = FakeMessage(text="/clear")
-    clear_update = FakeUpdate(
-        effective_message=clear_message,
-        effective_user=FakeUser(id=77),
-        effective_chat=FakeChat(id=-555, type="group"),
-    )
-
-    context = cast(Any, FakeContext(FakeBot(member_status="member")))
-    await adapter.handle_message(cast(Update, continue_update), context)
-    await adapter.handle_message(cast(Update, clear_update), context)
-
-    chat_service.continue_story.assert_not_awaited()
-    chat_service.clear_conversation.assert_not_awaited()
-    assert continue_message.responses == ["Only group administrators can use this command."]
-    assert clear_message.responses == ["Only group administrators can use this command."]
-
-
-@pytest.mark.asyncio
-async def test_group_creator_can_clear() -> None:
-    chat_service = AsyncMock()
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set(), {"-555"}),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    message = FakeMessage(text="/clear")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=77),
-        effective_chat=FakeChat(id=-555, type="group"),
-    )
-
-    await adapter.handle_message(
-        cast(Update, update),
-        cast(Any, FakeContext(FakeBot(member_status="creator"))),
-    )
-
-    chat_service.clear_conversation.assert_awaited_once_with(
-        conversation_identity=ConversationIdentity.for_session(str(FIXED_SESSION_ID)),
-    )
-    assert message.responses == ["Conversation memory cleared."]
-
-
-@pytest.mark.asyncio
-async def test_long_response_is_split_and_delivered_in_multiple_messages() -> None:
-    chat_service = AsyncMock()
-    chat_service.send_message = AsyncMock(return_value="A" * 12)
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=5,
-    )
-
-    message = FakeMessage(text="hello")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-
+    update = _private_update("/start")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    assert message.responses == ["AAAAA", "AAAAA", "AA"]
-
-
-@pytest.mark.asyncio
-async def test_character_command_selects_active_character() -> None:
-    chat_service = AsyncMock()
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    message = FakeMessage(text="/character Belzebuth")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    assert message.responses == ["Active character set to 'belzebuth' in world 'default'."]
-    chat_service.send_message.assert_not_awaited()
+    assert update.effective_message is not None
+    assert update.effective_message.responses == [AUTHORIZED_START_NO_PLAY_MESSAGE]
 
 
 @pytest.mark.asyncio
-async def test_character_command_shows_entry_message_when_available() -> None:
-    chat_service = AsyncMock()
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterServiceWithEntry(),
+async def test_start_authorized_with_active_resumes() -> None:
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(
+            active=_session(), resume="The hall is silent."
+        ),
         authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
     )
-
-    message = FakeMessage(text="/character Belzebuth")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-
+    update = _private_update("/start")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    assert message.responses == ["Who dares wake me?"]
-    chat_service.send_message.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_telegram_adapter_handles_llm_connection_error_with_retry_message() -> None:
-    chat_service = AsyncMock()
-    chat_service.send_message = AsyncMock(side_effect=LLMConnectionError("connection failed"))
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    message = FakeMessage(text="hello")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    assert message.responses == [
-        "LM backend is unavailable right now. Please try again in a moment."
+    assert update.effective_message is not None
+    assert update.effective_message.responses == [
+        f"{AUTHORIZED_START_RESUME_MESSAGE}The hall is silent."
     ]
+
+
+@pytest.mark.asyncio
+async def test_help_is_authorization_aware() -> None:
+    adapter_unauth = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(),
+        authorization=TelegramAuthorization({"999"}),
+    )
+    unauth = _private_update("/help")
+    await adapter_unauth.handle_message(cast(Update, unauth), cast(Any, None))
+    assert unauth.effective_message is not None
+    assert unauth.effective_message.responses == [build_help_message(authorized=False)]
+
+    adapter_auth = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(),
+        authorization=TelegramAuthorization(set()),
+    )
+    auth = _private_update("/help")
+    await adapter_auth.handle_message(cast(Update, auth), cast(Any, None))
+    assert auth.effective_message is not None
+    assert auth.effective_message.responses == [build_help_message(authorized=True)]
+    assert "/scenarios" in auth.effective_message.responses[0]
+
+
+@pytest.mark.asyncio
+async def test_beta_creates_request_then_reports_existing(tmp_path: Path) -> None:
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(),
+        authorization=TelegramAuthorization({"123"}),
+        beta_registry=registry,
+    )
+    first = _private_update("/beta", user_id=999)
+    await adapter.handle_message(cast(Update, first), cast(Any, None))
+    assert first.effective_message is not None
+    assert "recorded" in first.effective_message.responses[0]
+
+    second = _private_update("/beta", user_id=999)
+    await adapter.handle_message(cast(Update, second), cast(Any, None))
+    assert second.effective_message is not None
+    assert "already on the closed beta waiting list" in second.effective_message.responses[0]
+
+
+# --------------------------------------------------------------------------- #
+# /scenarios + /play + /restart
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_scenarios_lists_catalog() -> None:
+    scenarios = [
+        _scenario("vault", name="The Vault", opening="o", description="A heist."),
+        _scenario("manor", name="The Manor", opening="o", description="A haunting."),
+    ]
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(scenarios=scenarios),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("/scenarios")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    assert update.effective_message is not None
+    text = update.effective_message.responses[0]
+    assert "The Vault" in text and "/play vault" in text
+    assert "The Manor" in text and "/play manor" in text
+
+
+@pytest.mark.asyncio
+async def test_play_starts_scenario_and_sends_opening() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="You face the door.")
+    playthrough = FakePlaythroughService(known={"vault": scenario})
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("/play vault")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    assert playthrough.started == [("user", FIXED_USER_ID, "vault")]
+    assert update.effective_message is not None
+    text = update.effective_message.responses[0]
+    assert "The Vault" in text and "You face the door." in text
+
+
+@pytest.mark.asyncio
+async def test_play_unknown_scenario_reports_error() -> None:
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(known={}),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("/play nope")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    assert update.effective_message is not None
+    assert "No scenario 'nope'" in update.effective_message.responses[0]
+
+
+@pytest.mark.asyncio
+async def test_play_without_argument_shows_usage_and_library() -> None:
+    scenarios = [_scenario("vault", name="The Vault", opening="o", description="A heist.")]
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(scenarios=scenarios),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("/play")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    assert update.effective_message is not None
+    text = update.effective_message.responses[0]
+    assert "Usage: /play <id>" in text
+    assert "/play vault" in text
+
+
+@pytest.mark.asyncio
+async def test_play_in_group_requires_admin() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="Opening.")
+    playthrough = FakePlaythroughService(known={"vault": scenario})
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization(set(), {"-555"}),
+    )
+
+    member = _group_update("/play vault")
+    await adapter.handle_message(cast(Update, member), cast(Any, FakeContext(FakeBot("member"))))
+    assert member.effective_message is not None
+    assert member.effective_message.responses == [GROUP_ADMIN_ONLY_MESSAGE]
+    assert playthrough.started == []
+
+    admin = _group_update("/play vault")
+    await adapter.handle_message(
+        cast(Update, admin), cast(Any, FakeContext(FakeBot("administrator")))
+    )
+    assert playthrough.started == [("group", FIXED_GROUP_ID, "vault")]
+
+
+@pytest.mark.asyncio
+async def test_restart_requires_active_and_restarts() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="Fresh start.")
+    # No active playthrough -> prompt to browse.
+    no_active = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(active=None, known={"vault": scenario}),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("/restart")
+    await no_active.handle_message(cast(Update, update), cast(Any, None))
+    assert update.effective_message is not None
+    assert update.effective_message.responses == [NO_ACTIVE_PLAYTHROUGH_MESSAGE]
+
+    # With an active playthrough -> restart and send opening.
+    playthrough = FakePlaythroughService(active=_session(), known={"vault": scenario})
+    active = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization(set()),
+    )
+    restart_update = _private_update("/restart")
+    await active.handle_message(cast(Update, restart_update), cast(Any, None))
+    assert playthrough.restarted == [("user", FIXED_USER_ID)]
+    assert restart_update.effective_message is not None
+    assert "Restarted" in restart_update.effective_message.responses[0]
+    assert "Fresh start." in restart_update.effective_message.responses[0]
+
+
+# --------------------------------------------------------------------------- #
+# Story interaction: /continue, /retry, /chat, plain messages
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_continue_calls_continue_story() -> None:
+    chat_service = AsyncMock()
+    chat_service.continue_story = AsyncMock(return_value="the story advances")
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(active=_session()),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("/continue")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    chat_service.continue_story.assert_awaited_once()
+    assert update.effective_message is not None
+    assert update.effective_message.responses == ["the story advances"]
+
+
+@pytest.mark.asyncio
+async def test_retry_calls_regenerate_last_response() -> None:
+    chat_service = AsyncMock()
+    chat_service.regenerate_last_response = AsyncMock(return_value="a new take")
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(active=_session()),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("/retry")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    chat_service.regenerate_last_response.assert_awaited_once()
+    assert update.effective_message is not None
+    assert update.effective_message.responses == ["a new take"]
+
+
+@pytest.mark.asyncio
+async def test_commands_without_active_playthrough_prompt_to_play() -> None:
+    chat_service = AsyncMock()
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(active=None),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("/continue")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    chat_service.continue_story.assert_not_awaited()
+    assert update.effective_message is not None
+    assert update.effective_message.responses == [NO_ACTIVE_PLAYTHROUGH_MESSAGE]
+
+
+@pytest.mark.asyncio
+async def test_group_member_cannot_continue_but_admin_can() -> None:
+    chat_service = AsyncMock()
+    chat_service.continue_story = AsyncMock(return_value="advanced")
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(
+            active=_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
+        ),
+        authorization=TelegramAuthorization(set(), {"-555"}),
+    )
+
+    member = _group_update("/continue")
+    await adapter.handle_message(cast(Update, member), cast(Any, FakeContext(FakeBot("member"))))
+    chat_service.continue_story.assert_not_awaited()
+    assert member.effective_message is not None
+    assert member.effective_message.responses == [GROUP_ADMIN_ONLY_MESSAGE]
+
+    admin = _group_update("/continue")
+    await adapter.handle_message(
+        cast(Update, admin), cast(Any, FakeContext(FakeBot("administrator")))
+    )
+    chat_service.continue_story.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_chat_command_in_group_forwards_stripped_text_with_group_metadata() -> None:
     chat_service = AsyncMock()
     chat_service.send_message = AsyncMock(return_value="group reply")
-    adapter = TelegramAdapter(
+    adapter = _make_adapter(
         chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
+        playthrough_service=FakePlaythroughService(
+            active=_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
+        ),
         authorization=TelegramAuthorization(set(), {"-555"}),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
     )
-
-    message = FakeMessage(text="/chat   hello from explicit command   ")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=77, username="alice", full_name="Alice"),
-        effective_chat=FakeChat(id=-555, type="group"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
+    update = _group_update("/chat   let's go inside  ", user_id=7)
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot("member"))))
 
     chat_service.send_message.assert_awaited_once()
-    send_kwargs = chat_service.send_message.await_args.kwargs
-    assert send_kwargs["message"] == "hello from explicit command"
-    assert send_kwargs["user_id"] == str(FIXED_USER_ID)
-    assert send_kwargs["username"] == "alice"
-    assert send_kwargs["display_name"] == "Alice"
-    assert message.responses == ["group reply"]
+    kwargs = chat_service.send_message.await_args.kwargs
+    assert kwargs["message"] == "let's go inside"
+    assert kwargs["user_id"] == str(FIXED_USER_ID)
+    assert update.effective_message is not None
+    assert update.effective_message.responses == ["group reply"]
 
 
 @pytest.mark.asyncio
-async def test_start_command_for_authorized_user_does_not_invoke_chat_service() -> None:
+async def test_plain_message_in_group_is_ignored() -> None:
     chat_service = AsyncMock()
-    adapter = TelegramAdapter(
+    adapter = _make_adapter(
         chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    message = FakeMessage(text="/start")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=7),
-        effective_chat=FakeChat(id=7, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    chat_service.send_message.assert_not_awaited()
-    chat_service.continue_story.assert_not_awaited()
-    chat_service.regenerate_last_response.assert_not_awaited()
-    chat_service.clear_conversation.assert_not_awaited()
-    assert len(message.responses) == 1
-    assert "/chat <message>" in message.responses[0]
-    assert "you can also send normal messages directly" in message.responses[0]
-
-
-@pytest.mark.asyncio
-async def test_start_command_for_unauthorized_user_does_not_auto_create_beta_request(
-    tmp_path: Path,
-) -> None:
-    chat_service = AsyncMock()
-    registry = TelegramBetaRegistry(base_path=tmp_path)
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization({"123"}),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-        beta_registry=registry,
-    )
-
-    message = FakeMessage(text="/start")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=999, username="blocked_user"),
-        effective_chat=FakeChat(id=999, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    chat_service.send_message.assert_not_awaited()
-    assert len(message.responses) == 1
-    assert "closed beta" in message.responses[0]
-    assert "Use /beta" in message.responses[0]
-
-
-@pytest.mark.asyncio
-async def test_scripted_creation_flow_in_adapter_does_not_call_llm() -> None:
-    chat_service = AsyncMock()
-    store = InMemoryCharacterStore()
-    command_service = CharacterCommandService(character_store=store)
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        character_command_service=command_service,
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    create_message = FakeMessage(text="/character create")
-    create_update = FakeUpdate(
-        effective_message=create_message,
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-    await adapter.handle_message(cast(Update, create_update), cast(Any, None))
-    assert create_message.responses == ["What is the character name?"]
-
-    for input_text in [
-        "Belzebuth",
-        "Ancient dragon mage",
-        "Wise and ruthless",
-        "Ruined temple",
-        "Who dares wake me?",
-    ]:
-        user_message = FakeMessage(text=input_text)
-        user_update = FakeUpdate(
-            effective_message=user_message,
-            effective_user=FakeUser(id=42),
-            effective_chat=FakeChat(id=42, type="private"),
-        )
-        await adapter.handle_message(cast(Update, user_update), cast(Any, None))
-
-    chat_service.send_message.assert_not_awaited()
-    created = await store.get_by_id("belzebuth")
-    assert created is not None
-    assert created.metadata.get("scenario") == "Ruined temple"
-
-
-@pytest.mark.asyncio
-async def test_scripted_edit_and_cancel_flow_in_adapter() -> None:
-    chat_service = AsyncMock()
-    store = InMemoryCharacterStore()
-    await store.save(
-        Character(
-            id="belzebuth",
-            owner_id=FIXED_USER_ID,
-            visibility=CharacterVisibility.PRIVATE,
-            name="Belzebuth",
-            description="Old description",
-            personality="Old personality",
-            greeting="Old hello",
-            metadata={"scenario": "Old scenario", "spec": "chara_card_v3", "spec_version": "3.0"},
-        )
-    )
-    command_service = CharacterCommandService(character_store=store)
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        character_command_service=command_service,
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-    )
-
-    edit_message = FakeMessage(text="/character edit Belzebuth")
-    edit_update = FakeUpdate(
-        effective_message=edit_message,
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-    await adapter.handle_message(cast(Update, edit_update), cast(Any, None))
-    assert "Choose a field to edit" in edit_message.responses[0]
-
-    select_message = FakeMessage(text="2")
-    select_update = FakeUpdate(
-        effective_message=select_message,
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-    await adapter.handle_message(cast(Update, select_update), cast(Any, None))
-    assert "Enter the new description." in select_message.responses[0]
-
-    value_message = FakeMessage(text="Ancient dragon mage")
-    value_update = FakeUpdate(
-        effective_message=value_message,
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-    await adapter.handle_message(cast(Update, value_update), cast(Any, None))
-    assert value_message.responses == ["Description updated successfully."]
-
-    loaded = await store.get_by_id("belzebuth")
-    assert loaded is not None
-    assert loaded.description == "Ancient dragon mage"
-
-    cancel_message = FakeMessage(text="/cancel")
-    cancel_update = FakeUpdate(
-        effective_message=cancel_message,
-        effective_user=FakeUser(id=42),
-        effective_chat=FakeChat(id=42, type="private"),
-    )
-    await adapter.handle_message(cast(Update, cancel_update), cast(Any, None))
-    assert cancel_message.responses == ["No active operation to cancel."]
-    chat_service.send_message.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_beta_command_creates_request_for_unauthorized_user(tmp_path: Path) -> None:
-    chat_service = AsyncMock()
-    registry = TelegramBetaRegistry(base_path=tmp_path)
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization({"123"}),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-        beta_registry=registry,
-    )
-
-    message = FakeMessage(text="/beta")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(
-            id=999,
-            username="PabloDonkey",
-            first_name="Pablo",
-            last_name="Smith",
+        playthrough_service=FakePlaythroughService(
+            active=_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
         ),
-        effective_chat=FakeChat(id=999, type="private"),
+        authorization=TelegramAuthorization(set(), {"-555"}),
     )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
-
-    request_path = tmp_path / "telegram" / "beta_requests" / "999.json"
-    assert request_path.exists()
-    payload = json.loads(request_path.read_text(encoding="utf-8"))
-    assert payload["telegram_id"] == 999
-    assert payload["username"] == "PabloDonkey"
-    assert payload["first_name"] == "Pablo"
-    assert payload["last_name"] == "Smith"
-    assert payload["status"] == "waiting_for_beta_seat"
-    assert "requested_at" in payload
-    assert len(message.responses) == 1
-    assert "request was recorded" in message.responses[0]
+    update = _group_update("just chatting to the room")
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot("member"))))
+    chat_service.send_message.assert_not_awaited()
+    assert update.effective_message is not None
+    assert update.effective_message.responses == []
 
 
 @pytest.mark.asyncio
-async def test_beta_command_does_not_overwrite_existing_request(tmp_path: Path) -> None:
+async def test_plain_message_in_private_calls_send_message() -> None:
     chat_service = AsyncMock()
-    registry = TelegramBetaRegistry(base_path=tmp_path)
-    adapter = TelegramAdapter(
+    chat_service.send_message = AsyncMock(return_value="scene reply")
+    adapter = _make_adapter(
         chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization({"123"}),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
+        playthrough_service=FakePlaythroughService(active=_session()),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("I push the door open")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    chat_service.send_message.assert_awaited_once()
+    assert chat_service.send_message.await_args.kwargs["message"] == "I push the door open"
+    assert update.effective_message is not None
+    assert update.effective_message.responses == ["scene reply"]
+
+
+@pytest.mark.asyncio
+async def test_unsupported_command_is_reported() -> None:
+    chat_service = AsyncMock()
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(active=_session()),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("/regenerate")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    chat_service.send_message.assert_not_awaited()
+    assert update.effective_message is not None
+    assert "Unsupported command" in update.effective_message.responses[0]
+
+
+@pytest.mark.asyncio
+async def test_cancel_acknowledges() -> None:
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("/cancel")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    assert update.effective_message is not None
+    assert update.effective_message.responses == ["Nothing to cancel."]
+
+
+@pytest.mark.asyncio
+async def test_long_response_is_split_into_multiple_messages() -> None:
+    chat_service = AsyncMock()
+    chat_service.send_message = AsyncMock(return_value="x" * 9000)
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(active=_session()),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("go on")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    assert update.effective_message is not None
+    assert len(update.effective_message.responses) > 1
+
+
+@pytest.mark.asyncio
+async def test_llm_connection_error_is_reported() -> None:
+    chat_service = AsyncMock()
+    chat_service.send_message = AsyncMock(side_effect=LLMConnectionError("down"))
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(active=_session()),
+        authorization=TelegramAuthorization(set()),
+    )
+    update = _private_update("hello")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    assert update.effective_message is not None
+    assert "unavailable" in update.effective_message.responses[0]
+
+
+# --------------------------------------------------------------------------- #
+# Admin beta management (unchanged behavior)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_admin_can_list_pending_requests_in_chronological_order(tmp_path: Path) -> None:
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    _write_beta_request_file(
+        base_path=tmp_path,
+        telegram_id=987654321,
+        requested_at="2026-07-16T09:18:00+00:00",
+        username="AnotherUser",
+        first_name="Alice",
+    )
+    _write_beta_request_file(
+        base_path=tmp_path,
+        telegram_id=123456789,
+        requested_at="2026-07-15T13:42:00+00:00",
+        username="PabloDonkey",
+        first_name="Pablo",
+    )
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(),
+        authorization=TelegramAuthorization(set()),
+        admin_telegram_user_id="1",
         beta_registry=registry,
     )
+    update = _private_update("/admin_beta_list", user_id=1)
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
+    assert update.effective_message is not None
+    response = update.effective_message.responses[0]
+    assert "Pending Beta Requests" in response
+    assert response.index("Telegram ID: 123456789") < response.index("Telegram ID: 987654321")
 
-    first_message = FakeMessage(text="/beta")
-    first_update = FakeUpdate(
-        effective_message=first_message,
-        effective_user=FakeUser(id=999, username="existing"),
-        effective_chat=FakeChat(id=999, type="private"),
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_list_pending_requests(tmp_path: Path) -> None:
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    _write_beta_request_file(
+        base_path=tmp_path, telegram_id=123456789, requested_at="2026-07-15T13:42:00+00:00"
     )
-    second_message = FakeMessage(text="/beta")
-    second_update = FakeUpdate(
-        effective_message=second_message,
-        effective_user=FakeUser(id=999, username="changed"),
-        effective_chat=FakeChat(id=999, type="private"),
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(),
+        authorization=TelegramAuthorization(set()),
+        admin_telegram_user_id="1",
+        beta_registry=registry,
     )
+    update = _private_update("/admin_beta_list", user_id=2)
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
+    assert update.effective_message is not None
+    assert update.effective_message.responses == []
 
-    await adapter.handle_message(cast(Update, first_update), cast(Any, None))
-    request_path = tmp_path / "telegram" / "beta_requests" / "999.json"
-    first_payload = request_path.read_text(encoding="utf-8")
 
-    await adapter.handle_message(cast(Update, second_update), cast(Any, None))
-    second_payload = request_path.read_text(encoding="utf-8")
+@pytest.mark.asyncio
+async def test_admin_can_approve_by_telegram_id_and_persist_authorization(tmp_path: Path) -> None:
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    await registry.create_request(
+        telegram_id=999, username="PabloDonkey", first_name="Pablo", last_name="Smith"
+    )
+    authorization_dir = tmp_path / "telegram" / "authorization"
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(),
+        authorization=TelegramAuthorization.from_directory(authorization_dir),
+        admin_telegram_user_id="1",
+        beta_registry=registry,
+    )
+    bot = FakeBot()
+    update = _private_update("/admin_beta_accept 999", user_id=1)
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(bot)))
 
-    assert first_payload == second_payload
-    assert len(second_message.responses) == 1
-    assert "already on the closed beta waiting list" in second_message.responses[0]
+    assert update.effective_message is not None
+    assert update.effective_message.responses == [
+        "Approved Telegram ID 999 and updated authorization."
+    ]
+    assert not (tmp_path / "telegram" / "beta_requests" / "999.json").exists()
+    users_payload = json.loads((authorization_dir / "users.json").read_text(encoding="utf-8"))
+    assert users_payload["allowed_user_ids"] == ["999"]
+    bot.send_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_can_reject_pending_request_and_archive_reason(tmp_path: Path) -> None:
+    registry = TelegramBetaRegistry(base_path=tmp_path)
+    await registry.create_request(
+        telegram_id=888, username="reject_me", first_name="Reject", last_name="Me"
+    )
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(),
+        authorization=TelegramAuthorization(set()),
+        admin_telegram_user_id="1",
+        beta_registry=registry,
+    )
+    update = _private_update("/admin_beta_reject 888 incomplete_profile", user_id=1)
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
+
+    assert update.effective_message is not None
+    assert update.effective_message.responses == ["Rejected Telegram ID 888."]
+    assert not (tmp_path / "telegram" / "beta_requests" / "888.json").exists()
+    archived_payload = json.loads(
+        (tmp_path / "telegram" / "beta_rejected" / "888.json").read_text(encoding="utf-8")
+    )
+    assert archived_payload["status"] == "rejected"
+    assert archived_payload["rejection_reason"] == "incomplete_profile"
+
+
+# --------------------------------------------------------------------------- #
+# Identity resolution
+# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.asyncio
@@ -1155,25 +827,21 @@ async def test_identity_resolution_uses_display_name_priority(
     identity_resolver.resolve_identity = AsyncMock(
         return_value=User(id=FIXED_USER_ID, display_name="x")
     )
-
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=identity_resolver,
         group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
+        playthrough_service=FakePlaythroughService(active=_session()),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
     )
-
     update = FakeUpdate(
         effective_message=FakeMessage(text="hello"),
         effective_user=user,
         effective_chat=FakeChat(id=77, type="private"),
     )
-
     await adapter.handle_message(cast(Update, update), cast(Any, None))
-
     resolve_kwargs = identity_resolver.resolve_identity.await_args.kwargs
     assert resolve_kwargs["display_name"] == expected_display_name
 
@@ -1186,17 +854,15 @@ async def test_identity_resolution_prefers_persona_display_name() -> None:
     identity_resolver.resolve_identity = AsyncMock(
         return_value=User(id=FIXED_USER_ID, display_name="x")
     )
-
     adapter = TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=identity_resolver,
         group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
+        playthrough_service=FakePlaythroughService(active=_session()),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
     )
-
     user = FakeUser(
         id=77,
         username="alice",
@@ -1209,258 +875,6 @@ async def test_identity_resolution_prefers_persona_display_name() -> None:
         effective_user=user,
         effective_chat=FakeChat(id=77, type="private"),
     )
-
     await adapter.handle_message(cast(Update, update), cast(Any, None))
-
     resolve_kwargs = identity_resolver.resolve_identity.await_args.kwargs
     assert resolve_kwargs["display_name"] == "Captain Alice"
-
-
-@pytest.mark.asyncio
-async def test_admin_can_list_pending_beta_requests_in_chronological_order(tmp_path: Path) -> None:
-    chat_service = AsyncMock()
-    registry = TelegramBetaRegistry(base_path=tmp_path)
-    _write_beta_request_file(
-        base_path=tmp_path,
-        telegram_id=987654321,
-        requested_at="2026-07-16T09:18:00+00:00",
-        username="AnotherUser",
-        first_name="Alice",
-    )
-    _write_beta_request_file(
-        base_path=tmp_path,
-        telegram_id=123456789,
-        requested_at="2026-07-15T13:42:00+00:00",
-        username="PabloDonkey",
-        first_name="Pablo",
-    )
-
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-        admin_telegram_user_id="1",
-        beta_registry=registry,
-    )
-
-    message = FakeMessage(text="/admin_beta_list")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=1),
-        effective_chat=FakeChat(id=1, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
-
-    assert len(message.responses) == 1
-    response = message.responses[0]
-    assert "Pending Beta Requests" in response
-    assert response.index("Telegram ID: 123456789") < response.index("Telegram ID: 987654321")
-
-
-@pytest.mark.asyncio
-async def test_non_admin_cannot_list_pending_beta_requests(tmp_path: Path) -> None:
-    chat_service = AsyncMock()
-    registry = TelegramBetaRegistry(base_path=tmp_path)
-    _write_beta_request_file(
-        base_path=tmp_path,
-        telegram_id=123456789,
-        requested_at="2026-07-15T13:42:00+00:00",
-    )
-
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-        admin_telegram_user_id="1",
-        beta_registry=registry,
-    )
-
-    message = FakeMessage(text="/admin_beta_list")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=2),
-        effective_chat=FakeChat(id=2, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
-
-    assert message.responses == []
-
-
-@pytest.mark.asyncio
-async def test_admin_can_approve_by_telegram_id_and_persist_authorization(tmp_path: Path) -> None:
-    chat_service = AsyncMock()
-    registry = TelegramBetaRegistry(base_path=tmp_path)
-    await registry.create_request(
-        telegram_id=999,
-        username="PabloDonkey",
-        first_name="Pablo",
-        last_name="Smith",
-    )
-
-    authorization_dir = tmp_path / "telegram" / "authorization"
-    authorization = TelegramAuthorization.from_directory(authorization_dir)
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=authorization,
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-        admin_telegram_user_id="1",
-        beta_registry=registry,
-    )
-
-    bot = FakeBot()
-    message = FakeMessage(text="/admin_beta_accept 999")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=1),
-        effective_chat=FakeChat(id=1, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(bot)))
-
-    assert message.responses == ["Approved Telegram ID 999 and updated authorization."]
-    assert not (tmp_path / "telegram" / "beta_requests" / "999.json").exists()
-    users_payload = json.loads((authorization_dir / "users.json").read_text(encoding="utf-8"))
-    assert users_payload["allowed_user_ids"] == ["999"]
-    bot.send_message.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_admin_can_approve_by_list_index(tmp_path: Path) -> None:
-    chat_service = AsyncMock()
-    registry = TelegramBetaRegistry(base_path=tmp_path)
-    _write_beta_request_file(
-        base_path=tmp_path,
-        telegram_id=222,
-        requested_at="2026-07-15T10:00:00+00:00",
-    )
-    _write_beta_request_file(
-        base_path=tmp_path,
-        telegram_id=333,
-        requested_at="2026-07-15T11:00:00+00:00",
-    )
-
-    authorization_dir = tmp_path / "telegram" / "authorization"
-    authorization = TelegramAuthorization.from_directory(authorization_dir)
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=authorization,
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-        admin_telegram_user_id="1",
-        beta_registry=registry,
-    )
-
-    message = FakeMessage(text="/admin_beta_accept 1")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=1),
-        effective_chat=FakeChat(id=1, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
-
-    assert message.responses == ["Approved Telegram ID 222 and updated authorization."]
-    users_payload = json.loads((authorization_dir / "users.json").read_text(encoding="utf-8"))
-    assert users_payload["allowed_user_ids"] == ["222"]
-    assert not (tmp_path / "telegram" / "beta_requests" / "222.json").exists()
-    assert (tmp_path / "telegram" / "beta_requests" / "333.json").exists()
-
-
-@pytest.mark.asyncio
-async def test_duplicate_admin_approval_reports_already_authorized_and_cleans_pending(
-    tmp_path: Path,
-) -> None:
-    chat_service = AsyncMock()
-    registry = TelegramBetaRegistry(base_path=tmp_path)
-    await registry.create_request(
-        telegram_id=999,
-        username="existing",
-        first_name="Existing",
-        last_name="User",
-    )
-
-    authorization = TelegramAuthorization({"999"})
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=authorization,
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-        admin_telegram_user_id="1",
-        beta_registry=registry,
-    )
-
-    message = FakeMessage(text="/admin_beta_accept 999")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=1),
-        effective_chat=FakeChat(id=1, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
-
-    assert message.responses == [
-        "Telegram ID 999 is already authorized and removed the pending request."
-    ]
-    assert not (tmp_path / "telegram" / "beta_requests" / "999.json").exists()
-
-
-@pytest.mark.asyncio
-async def test_admin_can_reject_pending_request_and_archive_reason(tmp_path: Path) -> None:
-    chat_service = AsyncMock()
-    registry = TelegramBetaRegistry(base_path=tmp_path)
-    await registry.create_request(
-        telegram_id=888,
-        username="reject_me",
-        first_name="Reject",
-        last_name="Me",
-    )
-
-    adapter = TelegramAdapter(
-        chat_service=chat_service,
-        identity_resolver=FakeIdentityResolver(),
-        group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
-        authorization=TelegramAuthorization(set()),
-        unauthorized_message="not authorized",
-        message_max_length=3800,
-        admin_telegram_user_id="1",
-        beta_registry=registry,
-    )
-
-    message = FakeMessage(text="/admin_beta_reject 888 incomplete_profile")
-    update = FakeUpdate(
-        effective_message=message,
-        effective_user=FakeUser(id=1),
-        effective_chat=FakeChat(id=1, type="private"),
-    )
-
-    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
-
-    assert message.responses == ["Rejected Telegram ID 888."]
-    assert not (tmp_path / "telegram" / "beta_requests" / "888.json").exists()
-    archived_payload = json.loads(
-        (tmp_path / "telegram" / "beta_rejected" / "888.json").read_text(encoding="utf-8")
-    )
-    assert archived_payload["status"] == "rejected"
-    assert archived_payload["rejected_by_telegram_id"] == 1
-    assert archived_payload["rejection_reason"] == "incomplete_profile"

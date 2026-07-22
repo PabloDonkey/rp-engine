@@ -1,6 +1,8 @@
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
+from uuid import UUID
 
 from telegram import BotCommand, Update
 from telegram.ext import Application as TelegramApplication
@@ -14,29 +16,37 @@ from rp_engine.adapters.telegram.commands import (
     parse_transport_message,
 )
 from rp_engine.adapters.telegram.feedback import TelegramProcessingFeedbackFactory
-from rp_engine.adapters.telegram.invocation_policy import should_process_message
 from rp_engine.adapters.telegram.models import TelegramCommand
 from rp_engine.adapters.telegram.splitter import split_message
-from rp_engine.application.services.character_service import CharacterSelectionResult
 from rp_engine.application.services.chat_service import ChatService
-from rp_engine.application.services.commands import SelectCharacterCommand
+from rp_engine.application.services.playthrough_service import PlaythroughStart
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import LLMConnectionError, LLMGenerationError, LLMTimeoutError
 from rp_engine.core.memory.models import ConversationIdentity
-from rp_engine.core.scenario.scenario_session import ScenarioSession
+from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
+from rp_engine.core.scenario.scenario_session import ScenarioSession, SessionOwnerKind
 from rp_engine.core.user.user import User
 
 logger = logging.getLogger(__name__)
 
-AUTHORIZED_START_MESSAGE = (
-    "Welcome. I am ready to roleplay.\n"
-    "Use /chat <message> to talk to the active character (especially in groups).\n"
-    "Commands: /chat, /continue, /regenerate, /clear."
+AUTHORIZED_START_NO_PLAY_MESSAGE = (
+    "Welcome back. You don't have an adventure in progress.\n"
+    "Browse the library with /scenarios, then begin one with /play <id>."
 )
 
-AUTHORIZED_START_PRIVATE_MESSAGE = (
-    "\nIn private chats, you can also send normal messages directly."
+AUTHORIZED_START_RESUME_MESSAGE = "Resuming your adventure...\n\n"
+
+AUTHORIZED_START_RESUME_FALLBACK = (
+    "You're in the middle of an adventure. Send a message to continue, "
+    "or /restart to begin again."
 )
+
+NO_ACTIVE_PLAYTHROUGH_MESSAGE = (
+    "You don't have an adventure in progress.\n"
+    "Use /scenarios to browse, then /play <id> to begin."
+)
+
+GROUP_ADMIN_ONLY_MESSAGE = "Only group administrators can use this command."
 
 UNAUTHORIZED_START_MESSAGE = (
     "Welcome. This bot is currently in closed beta.\n"
@@ -44,6 +54,15 @@ UNAUTHORIZED_START_MESSAGE = (
     "Use /beta to request a seat.\n"
     "If you request access, your Telegram username and ID are recorded for admin review."
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _OwnerContext:
+    owner_kind: SessionOwnerKind
+    owner_id: UUID
+    is_group: bool
+    resolved_user: User
+    resolved_group: Group | None
 
 BETA_REGISTERED_MESSAGE = (
     "Thanks. You are already on the closed beta waiting list. "
@@ -67,32 +86,32 @@ class IdentityResolverPort(Protocol):
     ) -> User: ...
 
 
-class CharacterServicePort(Protocol):
-    async def select_character_for_user(
+class PlaythroughServicePort(Protocol):
+    def list_scenarios(self) -> list[ScenarioDefinition]: ...
+
+    async def get_active(
         self,
         *,
-        user_id: Any,
-        command: SelectCharacterCommand,
-    ) -> CharacterSelectionResult: ...
+        owner_kind: SessionOwnerKind,
+        owner_id: Any,
+    ) -> ScenarioSession | None: ...
 
-    async def select_character_for_group(
+    async def start(
         self,
         *,
-        group_id: Any,
-        actor_user_id: Any,
-        command: SelectCharacterCommand,
-    ) -> CharacterSelectionResult: ...
+        owner_kind: SessionOwnerKind,
+        owner_id: Any,
+        scenario_id: str,
+    ) -> PlaythroughStart | None: ...
 
-    async def ensure_active_session_for_user(self, *, user_id: Any) -> ScenarioSession: ...
-
-    async def ensure_active_session_for_group(
+    async def restart(
         self,
         *,
-        group_id: Any,
-        actor_user_id: Any,
-    ) -> ScenarioSession: ...
+        owner_kind: SessionOwnerKind,
+        owner_id: Any,
+    ) -> PlaythroughStart | None: ...
 
-    async def describe_session_entry(self, *, session: ScenarioSession) -> str | None: ...
+    async def resume_text(self, *, session: ScenarioSession) -> str | None: ...
 
 
 class GroupIdentityResolverPort(Protocol):
@@ -106,72 +125,16 @@ class GroupIdentityResolverPort(Protocol):
     ) -> Group: ...
 
 
-class CharacterCommandServicePort(Protocol):
-    async def start_creation(self, *, user_id: Any) -> Any: ...
-
-    async def start_edit(self, *, user_id: Any, character_name: str) -> Any: ...
-
-    async def show_character(self, *, user_id: Any, character_name: str) -> Any: ...
-
-    async def validate_character(self, *, user_id: Any, character_name: str) -> Any: ...
-
-    async def cancel(self, *, user_id: Any) -> Any: ...
-
-    async def has_active_workflow(self, *, user_id: Any) -> bool: ...
-
-    async def handle_user_input(self, *, user_id: Any, text: str) -> Any | None: ...
-
-
-class NoOpCharacterCommandService:
-    async def start_creation(self, *, user_id: Any) -> Any:
-        del user_id
-        return _SimpleWorkflowResponse(message="Character workflows are not configured.")
-
-    async def start_edit(self, *, user_id: Any, character_name: str) -> Any:
-        del user_id
-        del character_name
-        return _SimpleWorkflowResponse(message="Character workflows are not configured.")
-
-    async def show_character(self, *, user_id: Any, character_name: str) -> Any:
-        del user_id
-        del character_name
-        return _SimpleWorkflowResponse(message="Character workflows are not configured.")
-
-    async def validate_character(self, *, user_id: Any, character_name: str) -> Any:
-        del user_id
-        del character_name
-        return _SimpleWorkflowResponse(message="Character workflows are not configured.")
-
-    async def cancel(self, *, user_id: Any) -> Any:
-        del user_id
-        return _SimpleWorkflowResponse(message="No active operation to cancel.")
-
-    async def has_active_workflow(self, *, user_id: Any) -> bool:
-        del user_id
-        return False
-
-    async def handle_user_input(self, *, user_id: Any, text: str) -> Any | None:
-        del user_id
-        del text
-        return None
-
-
-class _SimpleWorkflowResponse:
-    def __init__(self, *, message: str) -> None:
-        self.message = message
-
-
 class TelegramAdapter:
     def __init__(
         self,
         chat_service: ChatService,
         identity_resolver: IdentityResolverPort,
         group_identity_resolver: GroupIdentityResolverPort,
-        character_service: CharacterServicePort,
+        playthrough_service: PlaythroughServicePort,
         authorization: TelegramAuthorization,
         unauthorized_message: str,
         message_max_length: int,
-        character_command_service: CharacterCommandServicePort | None = None,
         admin_telegram_user_id: str = "",
         processing_feedback_factory: TelegramProcessingFeedbackFactory | None = None,
         beta_registry: TelegramBetaRegistry | None = None,
@@ -179,8 +142,7 @@ class TelegramAdapter:
         self._chat_service = chat_service
         self._identity_resolver = identity_resolver
         self._group_identity_resolver = group_identity_resolver
-        self._character_service = character_service
-        self._character_command_service = character_command_service or NoOpCharacterCommandService()
+        self._playthrough_service = playthrough_service
         self._authorization = authorization
         self._admin_telegram_user_id = admin_telegram_user_id
         self._unauthorized_message = unauthorized_message
@@ -215,17 +177,32 @@ class TelegramAdapter:
             )
             return
 
-        if parsed_message.command == TelegramCommand.START:
-            if self._is_authorized(chat_type=chat_type, user_id=user_id, chat=chat):
-                welcome = AUTHORIZED_START_MESSAGE
-                if chat_type == "private":
-                    welcome = f"{welcome}{AUTHORIZED_START_PRIVATE_MESSAGE}"
-                await self._reply_with_split(message=message, text=welcome)
-                return
+        authorized = self._is_authorized(chat_type=chat_type, user_id=user_id, chat=chat)
 
-            await self._reply_with_split(message=message, text=UNAUTHORIZED_START_MESSAGE)
+        # /start — state-aware entry point.
+        if parsed_message.command == TelegramCommand.START:
+            if not authorized:
+                await self._reply_with_split(message=message, text=UNAUTHORIZED_START_MESSAGE)
+                return
+            owner = await self._resolve_owner(user=user, chat=chat, chat_type=chat_type)
+            active = await self._playthrough_service.get_active(
+                owner_kind=owner.owner_kind, owner_id=owner.owner_id
+            )
+            if active is None:
+                await self._reply_with_split(
+                    message=message, text=AUTHORIZED_START_NO_PLAY_MESSAGE
+                )
+                return
+            resume = await self._playthrough_service.resume_text(session=active)
+            resume_text = (
+                f"{AUTHORIZED_START_RESUME_MESSAGE}{resume}"
+                if resume
+                else AUTHORIZED_START_RESUME_FALLBACK
+            )
+            await self._reply_with_split(message=message, text=resume_text)
             return
 
+        # /beta — available to everyone; it is how access is requested.
         if parsed_message.command == TelegramCommand.BETA:
             if user is None:
                 await self._reply_with_split(
@@ -246,7 +223,14 @@ class TelegramAdapter:
             )
             return
 
-        if not self._is_authorized(chat_type=chat_type, user_id=user_id, chat=chat):
+        # /help — available to everyone, tailored to the caller's access level.
+        if parsed_message.command == TelegramCommand.HELP:
+            await self._reply_with_split(
+                message=message, text=build_help_message(authorized=authorized)
+            )
+            return
+
+        if not authorized:
             logger.info(
                 "Telegram request denied",
                 extra={"user_id": user_id, "chat_type": chat_type},
@@ -254,233 +238,126 @@ class TelegramAdapter:
             await self._reply_with_split(message=message, text=self._unauthorized_message)
             return
 
-        resolved_user = await self._identity_resolver.resolve_identity(
-            provider="telegram",
-            external_id=user_id,
-            display_name=self._resolve_user_display_name(user=user),
-            metadata={
-                "username": user.username or "",
-                "first_name": user.first_name or "",
-                "last_name": user.last_name or "",
-            }
-            if user is not None
-            else {},
-        )
+        owner = await self._resolve_owner(user=user, chat=chat, chat_type=chat_type)
 
-        if not should_process_message(chat_type, parsed_message):
-            return
-
+        # /cancel — no scripted menus exist in this pass; acknowledge and move on.
         if parsed_message.command == TelegramCommand.CANCEL:
-            cancel_response = await self._character_command_service.cancel(user_id=resolved_user.id)
-            await self._reply_with_split(message=message, text=cancel_response.message)
+            await self._reply_with_split(message=message, text="Nothing to cancel.")
             return
 
-        if (
-            not parsed_message.is_command
-            and await self._character_command_service.has_active_workflow(
-                user_id=resolved_user.id
-            )
-        ):
-            workflow_response = await self._character_command_service.handle_user_input(
-                user_id=resolved_user.id,
-                text=parsed_message.text,
-            )
-            if workflow_response is not None:
-                await self._reply_with_split(message=message, text=workflow_response.message)
-                return
-
-        is_group_chat = chat_type in {"group", "supergroup"}
-        resolved_group: Group | None = None
-        if is_group_chat:
-            group_external_id = str(chat.id) if chat is not None else ""
-            resolved_group = await self._group_identity_resolver.resolve_identity(
-                provider="telegram",
-                external_id=group_external_id,
-                display_name=self._resolve_group_display_name(chat=chat),
-                metadata={"chat_type": chat_type or "unknown"},
-            )
-
-        if parsed_message.command == TelegramCommand.CHARACTER:
-            character_name = parsed_message.argument
-            if character_name is None:
-                await self._reply_with_split(
-                    message=message,
-                    text=(
-                        "Usage:\n"
-                        "/character <name>\n"
-                        "/character create\n"
-                        "/character edit <character>\n"
-                        "/character show <character>\n"
-                        "/character validate <character>"
-                    ),
-                )
-                return
-
-            subcommand, subcommand_arg = self._split_character_subcommand(character_name)
-            if subcommand == "create":
-                create_response = await self._character_command_service.start_creation(
-                    user_id=resolved_user.id
-                )
-                await self._reply_with_split(message=message, text=create_response.message)
-                return
-
-            if subcommand == "edit":
-                edit_response = await self._character_command_service.start_edit(
-                    user_id=resolved_user.id,
-                    character_name=subcommand_arg or "",
-                )
-                await self._reply_with_split(message=message, text=edit_response.message)
-                return
-
-            if subcommand == "show":
-                show_response = await self._character_command_service.show_character(
-                    user_id=resolved_user.id,
-                    character_name=subcommand_arg or "",
-                )
-                await self._reply_with_split(message=message, text=show_response.message)
-                return
-
-            if subcommand == "validate":
-                validate_response = await self._character_command_service.validate_character(
-                    user_id=resolved_user.id,
-                    character_name=subcommand_arg or "",
-                )
-                await self._reply_with_split(message=message, text=validate_response.message)
-                return
-
-            try:
-                if resolved_group is None:
-                    selection = await self._character_service.select_character_for_user(
-                        user_id=resolved_user.id,
-                        command=SelectCharacterCommand(character_name=character_name),
-                    )
-                else:
-                    selection = await self._character_service.select_character_for_group(
-                        group_id=resolved_group.id,
-                        actor_user_id=resolved_user.id,
-                        command=SelectCharacterCommand(character_name=character_name),
-                    )
-            except ValueError as exc:
-                await self._reply_with_split(message=message, text=str(exc))
-                return
-
-            if selection.status == "already_active":
-                await self._reply_with_split(
-                    message=message,
-                    text=f"Character '{selection.character_id}' is already active.",
-                )
-                return
-
-            session_entry = await self._character_service.describe_session_entry(
-                session=selection.session
-            )
+        # /scenarios — browse the curated library.
+        if parsed_message.command == TelegramCommand.SCENARIOS:
             await self._reply_with_split(
                 message=message,
-                text=session_entry
-                or (
-                    f"Active character set to '{selection.character_id}' in "
-                    f"world '{selection.world_id}'."
-                ),
+                text=self._format_scenarios(self._playthrough_service.list_scenarios()),
             )
             return
 
-        if resolved_group is None:
-            active_session = await self._character_service.ensure_active_session_for_user(
-                user_id=resolved_user.id
+        # /play <id> — begin (or replace) a playthrough. Story control -> group admins only.
+        if parsed_message.command == TelegramCommand.PLAY:
+            if owner.is_group and not await self._is_group_admin(context=context, update=update):
+                await self._reply_with_split(message=message, text=GROUP_ADMIN_ONLY_MESSAGE)
+                return
+            scenario_id = (parsed_message.argument or "").strip()
+            if not scenario_id:
+                await self._reply_with_split(
+                    message=message,
+                    text="Usage: /play <id>\n\n"
+                    + self._format_scenarios(self._playthrough_service.list_scenarios()),
+                )
+                return
+            started = await self._playthrough_service.start(
+                owner_kind=owner.owner_kind,
+                owner_id=owner.owner_id,
+                scenario_id=scenario_id,
             )
-        else:
-            active_session = await self._character_service.ensure_active_session_for_group(
-                group_id=resolved_group.id,
-                actor_user_id=resolved_user.id,
-            )
-        conversation_identity = ConversationIdentity.for_session(str(active_session.id))
+            if started is None:
+                await self._reply_with_split(
+                    message=message,
+                    text=f"No scenario '{scenario_id}'. Use /scenarios to see the library.",
+                )
+                return
+            await self._reply_with_split(message=message, text=self._format_start(started))
+            return
 
+        # The remaining commands operate on the active playthrough.
+        active_session = await self._playthrough_service.get_active(
+            owner_kind=owner.owner_kind, owner_id=owner.owner_id
+        )
+        if active_session is None:
+            # Groups address the story only via /chat, so ignore their plain chatter.
+            if owner.is_group and not parsed_message.is_command:
+                return
+            await self._reply_with_split(message=message, text=NO_ACTIVE_PLAYTHROUGH_MESSAGE)
+            return
+        conversation_identity = ConversationIdentity.for_session(str(active_session.id))
         logger.info(
             "Telegram message received",
             extra={"memory_key": conversation_identity.to_memory_key().value},
         )
 
-        group_user_id = str(resolved_user.id) if is_group_chat else None
-        group_username = user.username if user is not None and is_group_chat else None
-        group_display_name = user.full_name if user is not None and is_group_chat else None
+        # /restart — story control -> group admins only.
+        if parsed_message.command == TelegramCommand.RESTART:
+            if owner.is_group and not await self._is_group_admin(context=context, update=update):
+                await self._reply_with_split(message=message, text=GROUP_ADMIN_ONLY_MESSAGE)
+                return
+            restarted = await self._playthrough_service.restart(
+                owner_kind=owner.owner_kind, owner_id=owner.owner_id
+            )
+            if restarted is None:
+                await self._reply_with_split(message=message, text=NO_ACTIVE_PLAYTHROUGH_MESSAGE)
+                return
+            await self._reply_with_split(
+                message=message, text=self._format_start(restarted, restarted=True)
+            )
+            return
+
+        group_user_id = str(owner.resolved_user.id) if owner.is_group else None
+        group_username = user.username if user is not None and owner.is_group else None
+        group_display_name = user.full_name if user is not None and owner.is_group else None
 
         try:
-            if parsed_message.command == TelegramCommand.HELP:
-                await self._reply_with_split(message=message, text=build_help_message())
-                return
-
-            if parsed_message.command == TelegramCommand.CONTINUE:
-                if chat_type in {"group", "supergroup"} and not await self._is_group_admin(
-                    context=context,
-                    update=update,
+            # /continue and /retry — story control -> group admins only.
+            if parsed_message.command in {TelegramCommand.CONTINUE, TelegramCommand.RETRY}:
+                if owner.is_group and not await self._is_group_admin(
+                    context=context, update=update
                 ):
-                    await self._reply_with_split(
-                        message=message,
-                        text="Only group administrators can use this command.",
-                    )
+                    await self._reply_with_split(message=message, text=GROUP_ADMIN_ONLY_MESSAGE)
                     return
-                response = await self._chat_service.continue_story(
-                    conversation_identity=conversation_identity,
-                    processing_feedback=self._processing_feedback_factory.create(
-                        context=context,
-                        source_message=message,
-                    ),
+                feedback = self._processing_feedback_factory.create(
+                    context=context, source_message=message
                 )
+                if parsed_message.command == TelegramCommand.CONTINUE:
+                    response = await self._chat_service.continue_story(
+                        conversation_identity=conversation_identity,
+                        processing_feedback=feedback,
+                    )
+                else:
+                    response = await self._chat_service.regenerate_last_response(
+                        conversation_identity=conversation_identity,
+                        processing_feedback=feedback,
+                    )
                 await self._reply_with_split(message=message, text=response)
                 return
 
-            if parsed_message.command == TelegramCommand.REGENERATE:
-                if chat_type in {"group", "supergroup"} and not await self._is_group_admin(
-                    context=context,
-                    update=update,
-                ):
-                    await self._reply_with_split(
-                        message=message,
-                        text="Only group administrators can use this command.",
-                    )
-                    return
-                response = await self._chat_service.regenerate_last_response(
-                    conversation_identity=conversation_identity,
-                    processing_feedback=self._processing_feedback_factory.create(
-                        context=context,
-                        source_message=message,
-                    ),
-                )
-                await self._reply_with_split(message=message, text=response)
-                return
-
-            if parsed_message.command == TelegramCommand.CLEAR:
-                if chat_type in {"group", "supergroup"} and not await self._is_group_admin(
-                    context=context,
-                    update=update,
-                ):
-                    await self._reply_with_split(
-                        message=message,
-                        text="Only group administrators can use this command.",
-                    )
-                    return
-                await self._chat_service.clear_conversation(
-                    conversation_identity=conversation_identity,
-                )
-                await self._reply_with_split(message=message, text="Conversation memory cleared.")
-                return
-
-            outgoing_message = parsed_message.text
+            # /chat <message> is the group interaction command; in private chats plain
+            # messages are the primary way to play.
             if parsed_message.command == TelegramCommand.CHAT:
                 if parsed_message.argument is None:
-                    await self._reply_with_split(
-                        message=message,
-                        text="Usage: /chat <message>",
-                    )
+                    await self._reply_with_split(message=message, text="Usage: /chat <message>")
                     return
                 outgoing_message = parsed_message.argument
-
-            if parsed_message.is_command and parsed_message.command != TelegramCommand.CHAT:
+            elif parsed_message.is_command:
                 await self._reply_with_split(
                     message=message,
                     text="Unsupported command. Use /help to see available commands.",
                 )
                 return
+            elif owner.is_group:
+                # Ignore plain messages in groups; they must use /chat to address the story.
+                return
+            else:
+                outgoing_message = parsed_message.text
 
             response = await self._chat_service.send_message(
                 conversation_identity=conversation_identity,
@@ -836,17 +713,67 @@ class TelegramAdapter:
 
         return "telegram_user_anonymous"
 
+    async def _resolve_owner(
+        self,
+        *,
+        user: Any,
+        chat: Any,
+        chat_type: str | None,
+    ) -> _OwnerContext:
+        external_id = str(user.id) if user is not None else "anonymous"
+        resolved_user = await self._identity_resolver.resolve_identity(
+            provider="telegram",
+            external_id=external_id,
+            display_name=self._resolve_user_display_name(user=user),
+            metadata={
+                "username": user.username or "",
+                "first_name": user.first_name or "",
+                "last_name": user.last_name or "",
+            }
+            if user is not None
+            else {},
+        )
+
+        is_group = chat_type in {"group", "supergroup"}
+        if not is_group:
+            return _OwnerContext(
+                owner_kind="user",
+                owner_id=resolved_user.id,
+                is_group=False,
+                resolved_user=resolved_user,
+                resolved_group=None,
+            )
+
+        group_external_id = str(chat.id) if chat is not None else ""
+        resolved_group = await self._group_identity_resolver.resolve_identity(
+            provider="telegram",
+            external_id=group_external_id,
+            display_name=self._resolve_group_display_name(chat=chat),
+            metadata={"chat_type": chat_type or "unknown"},
+        )
+        return _OwnerContext(
+            owner_kind="group",
+            owner_id=resolved_group.id,
+            is_group=True,
+            resolved_user=resolved_user,
+            resolved_group=resolved_group,
+        )
+
     @staticmethod
-    def _split_character_subcommand(argument: str) -> tuple[str | None, str | None]:
-        cleaned = argument.strip()
-        if not cleaned:
-            return None, None
-        parts = cleaned.split(maxsplit=1)
-        command = parts[0].strip().lower()
-        if command not in {"create", "edit", "show", "validate"}:
-            return None, None
-        remainder = parts[1].strip() if len(parts) > 1 else None
-        return command, remainder
+    def _format_scenarios(scenarios: list[ScenarioDefinition]) -> str:
+        if not scenarios:
+            return "No adventures are available yet. Check back soon."
+        lines = ["Available adventures:", ""]
+        for scenario in scenarios:
+            summary = scenario.description.strip()
+            lines.append(f"• {scenario.name}" + (f" — {summary}" if summary else ""))
+            lines.append(f"  /play {scenario.id}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_start(start: PlaythroughStart, *, restarted: bool = False) -> str:
+        verb = "Restarted" if restarted else "Starting"
+        return f"{verb}: {start.scenario.name}\n\n{start.opening}"
 
 
 class TelegramRuntime:

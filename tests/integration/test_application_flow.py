@@ -8,9 +8,8 @@ from telegram import Update
 
 from rp_engine.adapters.telegram.adapter import TelegramAdapter
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
-from rp_engine.application.services.character_service import CharacterSelectionResult
 from rp_engine.application.services.chat_service import ChatService
-from rp_engine.application.services.commands import SelectCharacterCommand
+from rp_engine.application.services.playthrough_service import PlaythroughStart
 from rp_engine.core.character.character import Character
 from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.conversation.conversation import Conversation
@@ -93,52 +92,37 @@ class FakeIdentityResolver:
         return User(id=FIXED_USER_ID, display_name=display_name)
 
 
-class FakeCharacterService:
-    async def ensure_active_session_for_user(self, *, user_id: UUID) -> ScenarioSession:
-        del user_id
-        return _fixed_session()
+class FakePlaythroughService:
+    """Reports a fixed active playthrough so plain messages reach the chat service."""
 
-    async def ensure_active_session_for_group(
-        self,
-        *,
-        group_id: UUID,
-        actor_user_id: UUID,
-    ) -> ScenarioSession:
-        del group_id
-        del actor_user_id
-        return _fixed_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
+    def __init__(self, *, active: ScenarioSession | None = None) -> None:
+        self._active = active if active is not None else _fixed_session()
 
-    async def select_character_for_user(
-        self,
-        *,
-        user_id: UUID,
-        command: SelectCharacterCommand,
-    ) -> CharacterSelectionResult:
-        del user_id
-        return CharacterSelectionResult(
-            session=_fixed_session(),
-            character_id=command.character_name.lower(),
-            world_id="default",
-            status="activated",
+    def list_scenarios(self) -> list[ScenarioDefinition]:
+        return [_default_definition()]
+
+    async def get_active(self, *, owner_kind: str, owner_id: UUID) -> ScenarioSession | None:
+        del owner_id
+        if owner_kind == "group":
+            return _fixed_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
+        return self._active
+
+    async def start(
+        self, *, owner_kind: str, owner_id: UUID, scenario_id: str
+    ) -> PlaythroughStart | None:
+        del owner_id, scenario_id
+        session = _fixed_session(owner_kind=owner_kind, owner_id=FIXED_USER_ID)
+        return PlaythroughStart(
+            session=session, scenario=_default_definition(), opening="Opening."
         )
 
-    async def select_character_for_group(
-        self,
-        *,
-        group_id: UUID,
-        actor_user_id: UUID,
-        command: SelectCharacterCommand,
-    ) -> CharacterSelectionResult:
-        del group_id
-        del actor_user_id
-        return CharacterSelectionResult(
-            session=_fixed_session(owner_kind="group", owner_id=FIXED_GROUP_ID),
-            character_id=command.character_name.lower(),
-            world_id="default",
-            status="activated",
+    async def restart(self, *, owner_kind: str, owner_id: UUID) -> PlaythroughStart | None:
+        del owner_kind, owner_id
+        return PlaythroughStart(
+            session=_fixed_session(), scenario=_default_definition(), opening="Opening."
         )
 
-    async def describe_session_entry(self, *, session: ScenarioSession) -> str | None:
+    async def resume_text(self, *, session: ScenarioSession) -> str | None:
         del session
         return None
 
@@ -401,7 +385,7 @@ async def test_application_smoke_flow_without_external_services() -> None:
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
         group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
+        playthrough_service=FakePlaythroughService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -440,7 +424,7 @@ async def test_continue_command_is_not_saved_as_literal_command() -> None:
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
         group_identity_resolver=FakeGroupIdentityResolver(),
-        character_service=FakeCharacterService(),
+        playthrough_service=FakePlaythroughService(),
         authorization=TelegramAuthorization(set()),
         unauthorized_message="not authorized",
         message_max_length=3800,
