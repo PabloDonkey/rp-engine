@@ -3,6 +3,8 @@ from rp_engine.infrastructure.postgres.db import create_engine, create_session_f
 from rp_engine.infrastructure.postgres.repositories import (
     PostgresCharacterStore,
     PostgresConversationStore,
+    PostgresScenarioDefinitionStore,
+    PostgresScenarioSessionStore,
     PostgresSessionStore,
 )
 
@@ -12,5 +14,7 @@ __all__ = [
     "create_session_factory",
     "PostgresCharacterStore",
     "PostgresConversationStore",
+    "PostgresScenarioDefinitionStore",
+    "PostgresScenarioSessionStore",
     "PostgresSessionStore",
 ]

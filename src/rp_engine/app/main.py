@@ -96,8 +96,8 @@ def build_container(settings: Settings) -> AppContainer:
         postgres_session_factory = create_session_factory(postgres_engine)
         character_store = PostgresCharacterStore(postgres_session_factory)
         conversation_store = PostgresConversationStore(postgres_session_factory)
-        scenario_definition_store = PostgresScenarioDefinitionStore()
-        scenario_session_store = PostgresScenarioSessionStore()
+        scenario_definition_store = PostgresScenarioDefinitionStore(postgres_session_factory)
+        scenario_session_store = PostgresScenarioSessionStore(postgres_session_factory)
     else:
         character_store = JsonCharacterStore()
         conversation_store = JsonConversationStore()

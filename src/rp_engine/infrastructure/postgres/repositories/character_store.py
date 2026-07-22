@@ -59,7 +59,7 @@ class PostgresCharacterStore(CharacterStore):
             "description": f"Character profile for {name}.",
             "personality": "Open-ended roleplay persona.",
             "greeting": "",
-            "metadata": {},
+            "payload_metadata": {},
         }
         statement = insert(CharacterRecord).values(values)
         statement = statement.on_conflict_do_nothing(index_elements=[CharacterRecord.character_id])
@@ -82,7 +82,7 @@ class PostgresCharacterStore(CharacterStore):
             "description": character.description,
             "personality": character.personality,
             "greeting": character.greeting,
-            "metadata": metadata,
+            "payload_metadata": metadata,
         }
         statement = insert(CharacterRecord).values(values)
         statement = statement.on_conflict_do_update(

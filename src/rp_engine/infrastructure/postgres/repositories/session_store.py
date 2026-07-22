@@ -48,7 +48,7 @@ class PostgresSessionStore(SessionStore):
             "character_id": session.character_id,
             "world_id": session.world_id,
             "created_at": session.created_at,
-            "metadata": session.metadata,
+            "payload_metadata": session.metadata,
         }
         statement = insert(SessionRecord).values(values)
         statement = statement.on_conflict_do_update(

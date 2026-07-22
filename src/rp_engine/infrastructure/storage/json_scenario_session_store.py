@@ -1,12 +1,15 @@
 import asyncio
 import json
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_session import ScenarioSession, SessionOwnerKind
+from rp_engine.infrastructure.scenario_serialization import (
+    scenario_session_from_payload,
+    scenario_session_to_payload,
+)
 
 
 class JsonScenarioSessionStore(ScenarioSessionStore):
@@ -21,7 +24,7 @@ class JsonScenarioSessionStore(ScenarioSessionStore):
             return None
 
         payload = await asyncio.to_thread(self._read_payload, session_file)
-        return self._to_scenario_session(payload)
+        return scenario_session_from_payload(payload)
 
     async def find_by_owner(
         self,
@@ -55,17 +58,7 @@ class JsonScenarioSessionStore(ScenarioSessionStore):
             session_dir = self._sessions_path / str(session.id)
             session_dir.mkdir(parents=True, exist_ok=True)
 
-            payload: dict[str, Any] = {
-                "id": str(session.id),
-                "scenario_definition_id": session.scenario_definition_id,
-                "owner_kind": session.owner_kind,
-                "owner_id": str(session.owner_id),
-                "active_participants": session.active_participants,
-                "world_state": session.world_state,
-                "story_progress": session.story_progress,
-                "created_at": session.created_at.isoformat(),
-                "metadata": session.metadata,
-            }
+            payload = scenario_session_to_payload(session)
             await asyncio.to_thread(
                 self._write_payload,
                 session_dir / "session.json",
@@ -119,7 +112,7 @@ class JsonScenarioSessionStore(ScenarioSessionStore):
             if not session_file.exists():
                 continue
             payload = await asyncio.to_thread(self._read_payload, session_file)
-            session = self._to_scenario_session(payload)
+            session = scenario_session_from_payload(payload)
             if session is not None:
                 sessions.append(session)
         return sessions
@@ -151,20 +144,3 @@ class JsonScenarioSessionStore(ScenarioSessionStore):
             import shutil
 
             shutil.rmtree(path)
-
-    @staticmethod
-    def _to_scenario_session(payload: dict[str, Any]) -> ScenarioSession | None:
-        try:
-            return ScenarioSession(
-                id=UUID(payload["id"]),
-                scenario_definition_id=payload["scenario_definition_id"],
-                owner_kind=payload["owner_kind"],
-                owner_id=UUID(payload["owner_id"]),
-                active_participants=payload.get("active_participants", {}),
-                world_state=payload.get("world_state", {}),
-                story_progress=payload.get("story_progress", {}),
-                created_at=datetime.fromisoformat(payload["created_at"]),
-                metadata=payload.get("metadata", {}),
-            )
-        except (KeyError, ValueError, TypeError):
-            return None

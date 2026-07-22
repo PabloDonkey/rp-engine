@@ -104,6 +104,60 @@ JSONB usage:
 
 - metadata stores extensible character attributes without premature table normalization.
 
+### scenario_definitions
+
+Stores reusable scenario blueprints (`ScenarioDefinition`).
+
+Columns:
+
+- id (TEXT, PK — application-owned scenario id)
+- owner_id (UUID, indexed)
+- name (TEXT)
+- description (TEXT)
+- world (JSONB, nullable — serialized `World`)
+- role_profiles (JSONB — {role: RoleProfile})
+- characters (JSONB — {role: Character})
+- rules (JSONB — list of strings)
+- story_graph (JSONB, nullable — serialized `StoryGraph`)
+- initial_context (TEXT)
+- metadata (JSONB)
+- created_at (timestamptz)
+- updated_at (timestamptz)
+
+Nested structures (world, characters, role profiles, story graph) are stored as JSONB
+rather than normalized into separate tables. The same serialization is shared with the
+JSON backend via `infrastructure/scenario_serialization.py`, guaranteeing byte-for-byte
+parity between backends.
+
+### scenario_sessions
+
+Stores runtime scenario instances (`ScenarioSession`).
+
+Columns:
+
+- id (UUID, PK)
+- scenario_definition_id (TEXT, indexed — the blueprint this session runs)
+- owner_kind (TEXT: user or group)
+- owner_id (UUID)
+- active_participants (JSONB — {role: character_id})
+- world_state (JSONB — runtime variables)
+- story_progress (JSONB — narrative progress)
+- created_at (timestamptz)
+- metadata (JSONB)
+
+Composite index on (owner_kind, owner_id, scenario_definition_id) backs session reuse
+lookup on character selection.
+
+### active_scenario_sessions
+
+Active session pointer per owner context (mirrors `active_sessions`).
+
+Columns:
+
+- owner_kind (PK part)
+- owner_id (PK part)
+- session_id (UUID, FK -> scenario_sessions.id ON DELETE CASCADE)
+
 ## Repository Mapping
 
 - SessionStore -> PostgresSessionStore
@@ -123,7 +177,22 @@ JSONB usage:
   - find_by_name
   - create_minimal
 
-The same interfaces are implemented by JSON stores. The composition root decides which implementation to wire.
+- ScenarioDefinitionStore -> PostgresScenarioDefinitionStore
+  - get_by_id
+  - find_by_owner
+  - save
+  - delete
+
+- ScenarioSessionStore -> PostgresScenarioSessionStore
+  - get_by_id
+  - find_by_owner
+  - find_by_definition
+  - save
+  - set_active_for_owner
+  - get_active_for_owner
+  - delete
+
+The same interfaces are implemented by JSON stores. The composition root decides which implementation to wire. A shared serialization module keeps the JSON and PostgreSQL representations identical, and one behavioral contract suite runs against both backends.
 
 ## Migration Strategy
 
