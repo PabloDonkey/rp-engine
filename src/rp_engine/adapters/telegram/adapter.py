@@ -17,6 +17,7 @@ from rp_engine.adapters.telegram.commands import (
 )
 from rp_engine.adapters.telegram.feedback import TelegramProcessingFeedbackFactory
 from rp_engine.adapters.telegram.models import TelegramCommand
+from rp_engine.adapters.telegram.narrator_store import TelegramNarratorStore
 from rp_engine.adapters.telegram.splitter import split_message
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.playthrough_service import PlaythroughStart
@@ -138,6 +139,7 @@ class TelegramAdapter:
         admin_telegram_user_id: str = "",
         processing_feedback_factory: TelegramProcessingFeedbackFactory | None = None,
         beta_registry: TelegramBetaRegistry | None = None,
+        narrator_store: TelegramNarratorStore | None = None,
     ) -> None:
         self._chat_service = chat_service
         self._identity_resolver = identity_resolver
@@ -151,6 +153,7 @@ class TelegramAdapter:
             processing_feedback_factory or TelegramProcessingFeedbackFactory()
         )
         self._beta_registry = beta_registry or TelegramBetaRegistry()
+        self._narrator_store = narrator_store or TelegramNarratorStore()
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
@@ -332,12 +335,15 @@ class TelegramAdapter:
                         conversation_identity=conversation_identity,
                         processing_feedback=feedback,
                     )
-                else:
-                    response = await self._chat_service.regenerate_last_response(
-                        conversation_identity=conversation_identity,
-                        processing_feedback=feedback,
-                    )
-                await self._reply_with_split(message=message, text=response)
+                    await self._send_narrator_reply(message=message, chat=chat, text=response)
+                    return
+                # /retry: regenerate, then replace the previous narrator message in place.
+                response = await self._chat_service.regenerate_last_response(
+                    conversation_identity=conversation_identity,
+                    processing_feedback=feedback,
+                )
+                await self._delete_tracked_narrator(context=context, chat=chat)
+                await self._send_narrator_reply(message=message, chat=chat, text=response)
                 return
 
             # /chat <message> is the group interaction command; in private chats plain
@@ -419,7 +425,7 @@ class TelegramAdapter:
             )
             return
 
-        await self._reply_with_split(message=message, text=response)
+        await self._send_narrator_reply(message=message, chat=chat, text=response)
 
     async def _handle_admin_command(
         self,
@@ -671,6 +677,45 @@ class TelegramAdapter:
 
         for chunk in chunks:
             await message.reply_text(chunk)
+
+    async def _send_narrator_reply(self, *, message: Any, chat: Any, text: str) -> None:
+        """Send a narrator (story) reply and remember its message ids for `/retry`."""
+        chunks = split_message(text, self._message_max_length)
+        message_ids: list[int] = []
+        for chunk in chunks:
+            sent = await message.reply_text(chunk)
+            sent_id = getattr(sent, "message_id", None)
+            if isinstance(sent_id, int):
+                message_ids.append(sent_id)
+
+        chat_id = self._chat_id(chat)
+        if chat_id is not None and message_ids:
+            await self._narrator_store.set(chat_id=chat_id, message_ids=message_ids)
+
+    async def _delete_tracked_narrator(self, *, context: Any, chat: Any) -> None:
+        """Best-effort delete the previously tracked narrator message(s) for this chat."""
+        chat_id = self._chat_id(chat)
+        if chat_id is None:
+            return
+        bot = getattr(context, "bot", None) if context is not None else None
+        message_ids = await self._narrator_store.get(chat_id=chat_id)
+        if bot is not None:
+            for message_id in message_ids:
+                try:
+                    await bot.delete_message(chat_id=chat.id, message_id=message_id)
+                except Exception:
+                    logger.debug(
+                        "Failed to delete previous narrator message",
+                        extra={"chat_id": chat_id, "message_id": message_id},
+                    )
+        await self._narrator_store.clear(chat_id=chat_id)
+
+    @staticmethod
+    def _chat_id(chat: Any) -> str | None:
+        if chat is None:
+            return None
+        chat_id = getattr(chat, "id", None)
+        return str(chat_id) if chat_id is not None else None
 
     @staticmethod
     def _resolve_group_display_name(*, chat: Any) -> str:

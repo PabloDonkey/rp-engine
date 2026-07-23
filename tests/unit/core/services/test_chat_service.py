@@ -163,7 +163,7 @@ async def test_chat_service_builds_conversation_and_calls_orchestrator(
                 ConversationMessage(
                     role=ConversationRole.CHARACTER,
                     content="scene response",
-                    metadata={},
+                    metadata={"finish_reason": "stop"},
                 ),
             ),
         ]
@@ -217,7 +217,70 @@ async def test_chat_service_continue_saves_character_message(
         ConversationMessage(
             role=ConversationRole.CHARACTER,
             content="continued scene",
-            metadata={},
+            metadata={"finish_reason": "stop"},
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_continue_advances_when_last_reply_finished_normally(
+    scenario_context: ScenarioContext,
+) -> None:
+    service, orchestrator, conversation_store = _build_service(scenario_context=scenario_context)
+    conversation_store.load_messages = AsyncMock(
+        return_value=[
+            ConversationMessage(role=ConversationRole.USER, content="I look around", metadata={}),
+            ConversationMessage(
+                role=ConversationRole.CHARACTER,
+                content="A door creaks open.",
+                metadata={"finish_reason": "stop"},
+            ),
+        ]
+    )
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="advanced"))
+
+    response = await service.continue_story(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+
+    assert response == "advanced"
+    directive = orchestrator.generate_reply.await_args.args[0].conversation.messages[-1]
+    assert directive.metadata == {"source": "continue_command"}
+    assert "Continue the narration" in directive.content
+
+
+@pytest.mark.asyncio
+async def test_continue_resumes_when_last_reply_was_truncated(
+    scenario_context: ScenarioContext,
+) -> None:
+    service, orchestrator, conversation_store = _build_service(scenario_context=scenario_context)
+    conversation_store.load_messages = AsyncMock(
+        return_value=[
+            ConversationMessage(role=ConversationRole.USER, content="I look around", metadata={}),
+            ConversationMessage(
+                role=ConversationRole.CHARACTER,
+                content="A door creaks open and behind it",
+                metadata={"finish_reason": "length"},
+            ),
+        ]
+    )
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content=" stands a figure."))
+
+    response = await service.continue_story(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+
+    assert response == " stands a figure."
+    directive = orchestrator.generate_reply.await_args.args[0].conversation.messages[-1]
+    assert directive.metadata == {"source": "resume_command"}
+    assert "cut off" in directive.content
+    # The resumed continuation is appended as its own narrator turn.
+    conversation_store.save_message.assert_awaited_with(
+        MemoryKey(f"session_{SESSION_ID}"),
+        ConversationMessage(
+            role=ConversationRole.CHARACTER,
+            content=" stands a figure.",
+            metadata={"finish_reason": "stop"},
         ),
     )
 
@@ -255,7 +318,7 @@ async def test_chat_service_regenerate_replaces_last_character_message(
                 ConversationMessage(
                     role=ConversationRole.CHARACTER,
                     content="new reply",
-                    metadata={},
+                    metadata={"finish_reason": "stop"},
                 ),
             ),
         ]
@@ -301,7 +364,7 @@ async def test_chat_service_regenerate_after_continue_uses_assistant_context(
                 ConversationMessage(
                     role=ConversationRole.CHARACTER,
                     content="new continuation",
-                    metadata={},
+                    metadata={"finish_reason": "stop"},
                 ),
             ),
         ]

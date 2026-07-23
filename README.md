@@ -1,15 +1,15 @@
 # RP Engine
 
-A local-first roleplay engine built around a clean domain architecture, long-term memory, and interchangeable LLM providers.
+A local-first, scenario-driven interactive-fiction engine built around a clean domain architecture, long-term memory, and interchangeable LLM providers.
 
-The project exposes its capabilities through adapters such as Telegram and a REST API while keeping the core engine independent of any specific interface or model provider.
+Players pick from a developer-curated library of scenarios (reusable blueprints of a world, characters, rules, and an opening) and play them as adventures. The project exposes its capabilities through adapters such as Telegram and a REST API while keeping the core engine independent of any specific interface or model provider.
 
 ## Goals
 
 * Local-first by default
 * Provider-agnostic LLM integration
 * Long-term conversation memory
-* Character card and lore-driven continuity
+* Scenario-driven continuity (world + characters + rules as reusable blueprints)
 * Spec-driven development
 * Modular, testable architecture
 * Async-first implementation
@@ -28,16 +28,16 @@ The project exposes its capabilities through adapters such as Telegram and a RES
 ## Current
 
 * FastAPI application
-* Telegram bot adapter
+* Telegram bot adapter (scenario-driven command surface)
 * LM Studio provider
-* Session management
-* Conversation orchestration
+* Curated scenario library (JSON catalog) and playthrough management
+* Conversation orchestration with truncation-aware `/continue` and in-place `/retry`
+* Dual persistence backends (JSON and PostgreSQL)
 
 ## Planned
 
 * Multiple LLM providers
-* Character management
-* World and lore management
+* Story-graph progression and world-state mechanics
 * Memory summarization
 * Tool calling
 * Image generation
@@ -124,6 +124,7 @@ Optional application variables:
 * `RP_ENGINE_DEBUG_STATUS_ENABLED`
 * `RP_ENGINE_DEBUG_GENERATION_TRACE` (`off`, `errors`, or `all`; default `off`)
 * `RP_ENGINE_PERSISTENCE_BACKEND` (`json` or `postgres`; default `json`)
+* `RP_ENGINE_SCENARIO_CATALOG_DIR` (directory of curated scenario JSON files; default `data/catalog`)
 
 PostgreSQL application variables (used when `RP_ENGINE_PERSISTENCE_BACKEND=postgres`):
 
@@ -275,10 +276,10 @@ Run all tests with PostgreSQL integration tests enabled:
 RP_ENGINE_RUN_POSTGRES_TESTS=1 /home/pablo/projects/rp-engine/.venv/bin/python -m pytest
 ```
 
-Run only PostgreSQL character contract tests:
+Run only the PostgreSQL store contract tests (character + scenario):
 
 ```bash
-RP_ENGINE_RUN_POSTGRES_TESTS=1 /home/pablo/projects/rp-engine/.venv/bin/python -m pytest tests/integration/infrastructure/test_character_store_contract_postgres.py
+RP_ENGINE_RUN_POSTGRES_TESTS=1 /home/pablo/projects/rp-engine/.venv/bin/python -m pytest tests/integration/infrastructure/
 ```
 
 If you see import errors like missing `fastapi`, `telegram`, or `lmstudio`, you are likely using a system `pytest` instead of the project virtual environment. Use one of these options:
@@ -305,20 +306,38 @@ RP_ENGINE_RUN_POSTGRES_TESTS=1 /home/pablo/projects/rp-engine/.venv/bin/python -
 
 ## Telegram Commands
 
-Registered Telegram menu commands:
+RP Engine plays like an interactive-fiction adventure: players pick a scenario from a
+curated library and play through plain chat messages. Commands are only for game/session
+management.
 
-* `/start` - Show welcome and usage information.
-* `/chat <message>` - Send a message to the active character (recommended in groups).
-* `/continue` - Continue the previous assistant reply.
-* `/regenerate` - Replace only the latest assistant reply.
-* `/clear` - Clear the current conversation.
+Registered Telegram menu commands (authorized players):
+
+* `/start` - State-aware entry point. If you have an adventure in progress it auto-resumes
+  it (like reopening a saved game); otherwise it points you at `/scenarios`.
+* `/scenarios` - Browse the curated library of available adventures.
+* `/play <id>` - Start (or replace) a playthrough of the chosen scenario.
+* `/continue` - Let the story advance with no input. If the previous narrator reply was
+  cut off at the model's token limit, `/continue` instead resumes that truncated reply.
+* `/retry` - Regenerate the most recent narrator reply. In Telegram, the previous narrator
+  message is deleted and replaced in place, so the story stays a single evolving thread.
+* `/restart` - Delete the current playthrough and restart the scenario from the beginning.
+* `/cancel` - Cancel the current menu/scripted interaction.
+* `/help` - Show the commands available at your access level.
 * `/beta` - Request a closed-beta seat (stores one JSON request per Telegram user).
 
-`/regenerate` behavior:
+Unauthorized users only see `/start`, `/help`, and `/beta`.
 
-* After a normal user -> assistant turn, it regenerates from the latest user message.
-* After `/continue`, it regenerates as a continuation from the previous assistant reply.
-* Repeated `/regenerate` calls always replace only the latest assistant reply.
+Playing the story:
+
+* In **private chats**, plain messages are the primary way to play — just type what you do.
+* In **group chats**, address the story explicitly with `/chat <message>`; plain group
+  chatter is ignored so the bot does not respond to every message.
+* In group chats, story/session-control commands (`/play`, `/restart`, `/continue`,
+  `/retry`) are restricted to chat administrators and creators.
+
+Scenarios are authored as JSON files in the catalog directory
+(`RP_ENGINE_SCENARIO_CATALOG_DIR`, default `data/catalog/`). See `docs/SCENARIOS.md` for
+the authoring guide.
 
 ## Telegram Admin Commands (Hidden)
 
@@ -380,7 +399,9 @@ mapped into RP Engine's internal character domain model.
 | `VISION.md`       | Project goals and philosophy  |
 | `SPEC.md`         | Functional requirements       |
 | `SPEC_V3.md`      | Character Card v3 specification |
+| `SCENARIOS.md`    | Scenario authoring guide (JSON catalog) |
 | `DOMAIN_MODEL.md` | Domain model and terminology  |
+| `DATABASE_MODEL.md` | PostgreSQL persistence mapping |
 | `ARCHITECTURE.md` | System architecture           |
 | `API.md`          | HTTP API specification        |
 | `DECISIONS.md`    | Architecture decision records |

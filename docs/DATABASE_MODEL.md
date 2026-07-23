@@ -37,7 +37,13 @@ JSON character persistence is card-based. Legacy `state.json` compatibility outp
 
 ## Entity Overview
 
-### sessions
+> **Removed tables.** The `sessions`, `active_sessions`, and `characters` tables below are
+> **no longer used** and were dropped in Alembic migration `20260722_0004`. They are kept
+> here only as historical documentation of the character-centric era. The live runtime
+> uses `scenario_definitions`, `scenario_sessions`, `active_scenario_sessions`, and
+> `conversation_messages`. See ADR-023 and `DOMAIN_MODEL.md`.
+
+### sessions (removed)
 
 Maps to domain Session.
 

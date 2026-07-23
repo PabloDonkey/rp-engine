@@ -61,6 +61,38 @@ class ConversationBuilder:
         )
 
     def build_continue(self, payload: ScenarioConversationInput) -> Conversation:
+        return self._build_directive(
+            payload,
+            directive=(
+                "Continue the narration naturally from the current context. "
+                "Write one reply only."
+            ),
+            source="continue_command",
+        )
+
+    def build_resume(self, payload: ScenarioConversationInput) -> Conversation:
+        """Continue a narrator reply that was cut off at the token limit.
+
+        The truncated reply is the last message in history; this asks the model to keep
+        writing from exactly where it stopped rather than starting a new beat.
+        """
+        return self._build_directive(
+            payload,
+            directive=(
+                "Your previous reply was cut off before it finished. Continue it from "
+                "exactly where it stopped. Do not repeat any earlier text, do not restate "
+                "what already happened, and write only the missing continuation."
+            ),
+            source="resume_command",
+        )
+
+    def _build_directive(
+        self,
+        payload: ScenarioConversationInput,
+        *,
+        directive: str,
+        source: str,
+    ) -> Conversation:
         character = self._resolve_active_character(payload)
         system_messages = self._build_system_messages(payload, character)
         history_messages = [
@@ -71,16 +103,13 @@ class ConversationBuilder:
             )
             for message in payload.memory_messages
         ]
-        continue_message = ConversationMessage(
+        directive_message = ConversationMessage(
             role=ConversationRole.USER,
-            content=(
-                "Continue the narration naturally from the current context. "
-                "Write one reply only."
-            ),
-            metadata={"source": "continue_command"},
+            content=directive,
+            metadata={"source": source},
         )
         return Conversation(
-            messages=[*system_messages, *history_messages, continue_message],
+            messages=[*system_messages, *history_messages, directive_message],
             metadata={"session_id": str(payload.session.id)},
         )
 

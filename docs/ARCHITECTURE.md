@@ -91,8 +91,8 @@ For Telegram, authorization and permissions are transport concerns handled in th
 
 * Private chats use user-level whitelist authorization.
 * Group chats use group-level whitelist authorization.
-* In authorized groups, all members can send normal messages.
-* Destructive/story-control commands (`/clear`, `/continue`, `/regenerate`) are restricted to Telegram chat administrators and creators.
+* In authorized groups, all members can advance the story via `/chat <message>`; plain group messages are ignored.
+* Story/session-control commands (`/play`, `/restart`, `/continue`, `/retry`) are restricted to Telegram chat administrators and creators in group chats.
 * Telegram message-size limits are handled by adapter-level message splitting during delivery.
 * Telegram external identities are resolved into internal engine users before calling use cases.
 * Telegram command menu registration (`set_my_commands`) is adapter/runtime-owned.
@@ -112,15 +112,18 @@ Transport commands belong to adapters.
 
 Example for Telegram:
 
-* `/start` is handled entirely by the Telegram adapter
-* `/chat <message>` is translated to `ChatService.send_message(...)`
-* `/help` is handled entirely by the Telegram adapter
-* `/continue` is translated to `ChatService.continue_story(...)`
-* `/regenerate` is translated to `ChatService.regenerate_last_response(...)`
-* `/clear` is translated to `ChatService.clear_conversation(...)`
-* `/beta` is handled entirely by the Telegram adapter
+* `/start` is handled by the adapter (state-aware: auto-resume via `PlaythroughService.get_active(...)` + `resume_text(...)`, or invite to `/scenarios`)
+* `/scenarios` is translated to `PlaythroughService.list_scenarios()`
+* `/play <id>` is translated to `PlaythroughService.start(...)`
+* `/restart` is translated to `PlaythroughService.restart(...)`
+* `/continue` is translated to `ChatService.continue_story(...)` (which itself resumes a truncated reply or advances)
+* `/retry` is translated to `ChatService.regenerate_last_response(...)`, then the adapter replaces the previous narrator message in place
+* `/chat <message>` (groups) and plain private messages are translated to `ChatService.send_message(...)`
+* `/help`, `/cancel`, and `/beta` are handled entirely by the Telegram adapter
 
-The engine and application services never parse Telegram command syntax.
+The engine and application services never parse Telegram command syntax. Persisting the
+Telegram message id of the last narrator reply (for in-place `/retry`) is a transport
+concern owned by the adapter, never by the domain or application layers.
 
 ---
 
@@ -143,14 +146,15 @@ The application layer exposes explicit, transport-agnostic use cases.
 Current use-case API:
 
 * `ChatService.send_message(...)`
-* `ChatService.continue_story(...)`
+* `ChatService.continue_story(...)` (truncation-aware: resumes a cut-off reply or advances)
+* `ChatService.regenerate_last_response(...)`
 * `ChatService.clear_conversation(...)`
-* `CharacterService.select_character_for_user(...)`
-* `CharacterService.select_character_for_group(...)`
-* `CharacterService.ensure_active_session_for_user(...)`
-* `CharacterService.ensure_active_session_for_group(...)`
+* `PlaythroughService.list_scenarios()`
+* `PlaythroughService.start(...)` / `PlaythroughService.restart(...)`
+* `PlaythroughService.get_active(...)` / `PlaythroughService.resume_text(...)`
 
-Adapters call these use cases directly.
+Adapters call these use cases directly. Scenario selection is driven by the curated
+catalog and `PlaythroughService`; there is no user-facing character creation/selection.
 
 FastAPI and Telegram are both adapters over the same application API.
 
@@ -193,24 +197,25 @@ The domain layer contains the business concepts.
 
 Examples:
 
+* ScenarioDefinition (reusable blueprint: world + characters + role profiles + rules + story graph + initial context)
+* ScenarioSession (runtime instance: owner + active participants + world state + story progress)
 * Conversation
-* Session
-* Character
+* Character (an optional, reusable asset used within a scenario — no longer the root entity)
 * World
 * Memory
 * Message
 
-Session is the roleplay ownership boundary:
+`ScenarioSession` is the roleplay ownership boundary:
 
 * Sessions are owned by a domain owner context (`user` or `group`).
-* Sessions bind owner + character + world.
+* A session references a `ScenarioDefinition` and holds all evolving runtime state.
 * Conversation memory is keyed by session identity, not external adapter IDs.
 
-The domain should contain no framework dependencies.
+See `DOMAIN_MODEL.md` for the full entity definitions. The legacy character-centric
+`Session` remains documented there as superseded.
 
-Character card validation and mapping rules belong to domain/application boundaries, not to
-transport adapters. Adapters may collect command input (for example Telegram `/character ...`
-flows) but must delegate Character Card v3 validation and persistence to application services.
+The domain should contain no framework dependencies. Character Card v3 validation and
+mapping rules belong to domain/application boundaries, not to transport adapters.
 
 ---
 
@@ -437,7 +442,15 @@ Telegram reply
 ```
 
 ```text
-/chat <message>
+/scenarios                         /play <id>
+    ↓                                  ↓
+Telegram Adapter                   Telegram Adapter
+    ↓                                  ↓
+PlaythroughService.list_scenarios  PlaythroughService.start(...)
+```
+
+```text
+plain message (private) / /chat <message> (group)
     ↓
 Telegram Adapter
     ↓
@@ -451,27 +464,27 @@ RP Engine
     ↓
 Telegram Adapter
     ↓
-ChatService.continue_story(...)
+ChatService.continue_story(...)   # resumes a truncated reply, or advances
     ↓
 RP Engine
 ```
 
 ```text
-/regenerate
+/retry
     ↓
 Telegram Adapter
     ↓
 ChatService.regenerate_last_response(...)
     ↓
-RP Engine
+Telegram Adapter deletes the previous narrator message and sends the new one
 ```
 
 ```text
-/clear
+/restart
     ↓
 Telegram Adapter
     ↓
-ChatService.clear_conversation(...)
+PlaythroughService.restart(...)
 ```
 
 ```text
@@ -507,28 +520,30 @@ Authorization flow:
 
 # Runtime Context Model
 
-The current engine runtime is centered on four active concepts:
+The current engine runtime is centered on these active concepts:
 
-* Character Definition (character card)
+* Scenario Definition (curated blueprint: world + characters + rules + opening)
+* Scenario Session (runtime playthrough owned by a user or group)
 * Conversation
 * Memory
 * Lore (world context)
 
-## Character Definition
+## Scenario Definition
 
-* Name and persona traits
-* Description and behavior guidance
-* Optional greeting and metadata
+* World, optional characters (by role), role profiles, rules, optional story graph
+* Initial context (the opening narration)
+* Reusable, immutable blueprint authored as JSON in the catalog (see `docs/SCENARIOS.md`)
 
-Character definitions are reusable templates and do not mutate per turn.
+Character definitions remain reusable templates used *within* a scenario and do not mutate
+per turn.
 
 ---
 
 ## Conversation
 
 * Ordered user and character messages
-* Session-scoped continuity
-* Regenerate/continue/clear lifecycle
+* Scenario-session-scoped continuity
+* Advance/resume (`/continue`), regenerate-in-place (`/retry`), and restart (`/restart`) lifecycle
 
 ---
 

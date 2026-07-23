@@ -290,31 +290,14 @@ Definition vs runtime separation:
 * Evolving state (participants, world state, story progress) lives on `ScenarioSession`.
 * Multiple sessions can run the same definition with independent state.
 
-## Session (legacy)
+## Session (removed)
 
-> **Migration note.** `Session` is the previous character-centric runtime entity and is
-> being replaced by `ScenarioSession`. It remains documented while application services
-> and adapters are migrated. Backward compatibility with pre-migration sessions is **not**
-> guaranteed during the beta; existing sessions may need to be recreated.
-
-Roleplay context is owned by `Session`, not directly by adapter identities.
-
-`Session` fields:
-
-* `id` (`UUID`) - canonical session key.
-* `owner_kind` (`"user" | "group"`) - owner category.
-* `owner_id` (`UUID`) - internal engine owner identifier.
-* `character_id` (`str`) - selected character.
-* `world_id` (`str`) - selected world.
-* `created_at` (`datetime`) - creation timestamp.
-* `metadata` (`dict[str, str]`) - optional session metadata.
-
-Session-scoped conversation persistence and memory keys are derived from `Session.id`.
-
-Session ownership examples:
-
-* private flow: `owner_kind="user"`, `owner_id=<User.id>`
-* group flow: `owner_kind="group"`, `owner_id=<Group.id>`
+> **Historical note.** The character-centric `Session` entity (which bound
+> `owner + character + world`) was removed once the runtime became fully scenario-native.
+> `ScenarioSession` is the sole roleplay ownership boundary. The legacy `Session` domain
+> type, its `SessionStore` port, the JSON/PostgreSQL session stores, and the `sessions` /
+> `active_sessions` tables were deleted (Alembic migration `20260722_0004`). See ADR-023.
+> Pre-migration session data is not carried forward.
 
 ## ConversationRole
 

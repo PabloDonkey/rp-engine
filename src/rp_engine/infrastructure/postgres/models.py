@@ -11,45 +11,6 @@ class Base(DeclarativeBase):
     pass
 
 
-class SessionRecord(Base):
-    __tablename__ = "sessions"
-
-    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
-    owner_kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
-    character_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    world_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    payload_metadata: Mapped[dict[str, object]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-        default=dict,
-    )
-
-    __table_args__ = (
-        Index(
-            "ix_sessions_owner_relationship",
-            "owner_kind",
-            "owner_id",
-            "character_id",
-            "world_id",
-        ),
-    )
-
-
-class ActiveSessionRecord(Base):
-    __tablename__ = "active_sessions"
-
-    owner_kind: Mapped[str] = mapped_column(String(16), primary_key=True)
-    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
-    session_id: Mapped[UUID] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("sessions.id", ondelete="CASCADE"),
-        nullable=False,
-    )
-
-
 class ConversationMessageRecord(Base):
     __tablename__ = "conversation_messages"
 
@@ -71,36 +32,6 @@ class ConversationMessageRecord(Base):
     )
 
     __table_args__ = (Index("ix_conversation_messages_memory_order", "memory_key", "created_at"),)
-
-
-class CharacterRecord(Base):
-    __tablename__ = "characters"
-
-    pk: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
-    character_id: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
-    owner_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
-    visibility: Mapped[str] = mapped_column(String(16), nullable=False)
-    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    personality: Mapped[str] = mapped_column(Text, nullable=False)
-    greeting: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    payload_metadata: Mapped[dict[str, object]] = mapped_column(
-        "metadata",
-        JSONB,
-        nullable=False,
-        default=dict,
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
-    )
 
 
 class ScenarioDefinitionRecord(Base):

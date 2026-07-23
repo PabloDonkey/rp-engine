@@ -36,6 +36,11 @@ from rp_engine.core.world.world import World
 
 logger = logging.getLogger(__name__)
 
+# Conversation-message metadata key recording the LLM's stop reason for a narrator turn.
+FINISH_REASON_METADATA_KEY = "finish_reason"
+# finish_reason value that means the model hit its token limit mid-reply.
+FINISH_REASON_LENGTH = "length"
+
 
 @dataclass(frozen=True, slots=True)
 class _ScenarioContext:
@@ -159,7 +164,7 @@ class ChatService:
         )
         await self._conversation_store.save_message(
             memory_key,
-            ConversationMessage(role=ConversationRole.CHARACTER, content=character_response),
+            self._narrator_message(llm_response),
         )
         return character_response
 
@@ -181,13 +186,17 @@ class ChatService:
         async with processing_feedback_scope(feedback, context=self._feedback_context(context)):
             history = await self._conversation_store.load_messages(memory_key)
             context_messages = self._memory_strategy.build_context(history)
-            conversation = self._conversation_builder.build_continue(
-                self._build_input(
-                    context,
-                    memory_messages=context_messages,
-                    user_message="continue",
-                )
+            builder_input = self._build_input(
+                context,
+                memory_messages=context_messages,
+                user_message="continue",
             )
+            # If the last narrator reply was cut off at the token limit, resume it
+            # in place; otherwise advance the story with no player input.
+            if self._should_resume(history):
+                conversation = self._conversation_builder.build_resume(builder_input)
+            else:
+                conversation = self._conversation_builder.build_continue(builder_input)
             request = GenerationRequest(
                 memory_key=memory_key,
                 conversation=conversation,
@@ -226,7 +235,7 @@ class ChatService:
             character_response = llm_response.content
         await self._conversation_store.save_message(
             memory_key,
-            ConversationMessage(role=ConversationRole.CHARACTER, content=character_response),
+            self._narrator_message(llm_response),
         )
         return character_response
 
@@ -327,7 +336,7 @@ class ChatService:
             await self._conversation_store.save_message(memory_key, message)
         await self._conversation_store.save_message(
             memory_key,
-            ConversationMessage(role=ConversationRole.CHARACTER, content=character_response),
+            self._narrator_message(llm_response),
         )
         return character_response
 
@@ -415,6 +424,32 @@ class ChatService:
     @staticmethod
     def _group_to_user(group: Group) -> User:
         return User(id=group.id, display_name=group.display_name)
+
+    @staticmethod
+    def _should_resume(history: list[ConversationMessage]) -> bool:
+        if not history:
+            return False
+        last = history[-1]
+        return (
+            last.role == ConversationRole.CHARACTER
+            and last.metadata.get(FINISH_REASON_METADATA_KEY) == FINISH_REASON_LENGTH
+        )
+
+    @staticmethod
+    def _narrator_message(llm_response: LLMResponse) -> ConversationMessage:
+        """Build the stored narrator turn, recording why generation stopped.
+
+        The finish reason lets `/continue` tell a truncated reply (``length``) from a
+        naturally-ended one, so it can resume the cut-off text instead of advancing.
+        """
+        metadata: dict[str, str] = {}
+        if llm_response.finish_reason:
+            metadata[FINISH_REASON_METADATA_KEY] = llm_response.finish_reason
+        return ConversationMessage(
+            role=ConversationRole.CHARACTER,
+            content=llm_response.content,
+            metadata=metadata,
+        )
 
     @staticmethod
     def _resolve_turn(history: list[ConversationMessage]) -> int:

@@ -148,13 +148,36 @@ class FakeChat:
     type: str
 
 
+@dataclass
+class _SentMessage:
+    message_id: int
+
+
 class FakeMessage:
+    _next_id = 1000
+
     def __init__(self, text: str | None) -> None:
         self.text = text
         self.responses: list[str] = []
 
-    async def reply_text(self, text: str) -> None:
+    async def reply_text(self, text: str) -> _SentMessage:
         self.responses.append(text)
+        FakeMessage._next_id += 1
+        return _SentMessage(message_id=FakeMessage._next_id)
+
+
+class FakeNarratorStore:
+    def __init__(self) -> None:
+        self.data: dict[str, list[int]] = {}
+
+    async def get(self, *, chat_id: str) -> list[int]:
+        return list(self.data.get(chat_id, []))
+
+    async def set(self, *, chat_id: str, message_ids: list[int]) -> None:
+        self.data[chat_id] = list(message_ids)
+
+    async def clear(self, *, chat_id: str) -> None:
+        self.data.pop(chat_id, None)
 
 
 @dataclass
@@ -173,6 +196,7 @@ class FakeBot:
     def __init__(self, member_status: str = "member") -> None:
         self._member_status = member_status
         self.send_message = AsyncMock()
+        self.delete_message = AsyncMock()
 
     async def get_chat_member(self, *, chat_id: int, user_id: int) -> FakeChatMember:
         del chat_id, user_id
@@ -191,6 +215,7 @@ def _make_adapter(
     authorization: TelegramAuthorization,
     admin_telegram_user_id: str = "",
     beta_registry: TelegramBetaRegistry | None = None,
+    narrator_store: FakeNarratorStore | None = None,
 ) -> TelegramAdapter:
     return TelegramAdapter(
         chat_service=chat_service,
@@ -202,6 +227,7 @@ def _make_adapter(
         message_max_length=3800,
         admin_telegram_user_id=admin_telegram_user_id,
         beta_registry=beta_registry,
+        narrator_store=cast(Any, narrator_store or FakeNarratorStore()),
     )
 
 
@@ -533,10 +559,55 @@ async def test_retry_calls_regenerate_last_response() -> None:
         authorization=TelegramAuthorization(set()),
     )
     update = _private_update("/retry")
-    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
     chat_service.regenerate_last_response.assert_awaited_once()
     assert update.effective_message is not None
     assert update.effective_message.responses == ["a new take"]
+
+
+@pytest.mark.asyncio
+async def test_narrator_reply_is_tracked_for_retry() -> None:
+    chat_service = AsyncMock()
+    chat_service.send_message = AsyncMock(return_value="the story reply")
+    store = FakeNarratorStore()
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(active=_session()),
+        authorization=TelegramAuthorization(set()),
+        narrator_store=store,
+    )
+    update = _private_update("I open the door", user_id=42)
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    # The narrator reply's telegram message id was recorded for chat "42".
+    assert store.data["42"]
+    assert update.effective_message is not None
+    assert update.effective_message.responses == ["the story reply"]
+
+
+@pytest.mark.asyncio
+async def test_retry_deletes_previous_message_and_records_new_one() -> None:
+    chat_service = AsyncMock()
+    chat_service.regenerate_last_response = AsyncMock(return_value="regenerated take")
+    store = FakeNarratorStore()
+    store.data["42"] = [777]  # a previously-sent narrator message
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(active=_session()),
+        authorization=TelegramAuthorization(set()),
+        narrator_store=store,
+    )
+    bot = FakeBot()
+    update = _private_update("/retry", user_id=42)
+    await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(bot)))
+
+    # The previous narrator message was deleted in place...
+    bot.delete_message.assert_awaited_once_with(chat_id=42, message_id=777)
+    # ...the regenerated reply was sent...
+    assert update.effective_message is not None
+    assert update.effective_message.responses == ["regenerated take"]
+    # ...and the new message id replaced the old one (no longer 777).
+    assert store.data["42"] and store.data["42"] != [777]
 
 
 @pytest.mark.asyncio

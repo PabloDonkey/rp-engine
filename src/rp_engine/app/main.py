@@ -10,9 +10,9 @@ from rp_engine.adapters.telegram.adapter import (
     create_telegram_application,
 )
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
+from rp_engine.adapters.telegram.narrator_store import TelegramNarratorStore
 from rp_engine.app.lifespan import create_lifespan
 from rp_engine.app.runtime_state import RuntimeState
-from rp_engine.application.services.character_service import CharacterService
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.group_identity_resolver import GroupIdentityResolver
 from rp_engine.application.services.identity_resolver import IdentityResolver
@@ -21,7 +21,6 @@ from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.ports import (
-    CharacterStore,
     ConversationStore,
     LLMProvider,
     ScenarioDefinitionStore,
@@ -29,9 +28,8 @@ from rp_engine.core.ports import (
 )
 from rp_engine.infrastructure.catalog import ScenarioCatalog
 from rp_engine.infrastructure.config.settings import Settings, get_settings
-from rp_engine.infrastructure.llm.lmstudio import LMStudioConversationSummarizer, LMStudioProvider
+from rp_engine.infrastructure.llm.lmstudio import LMStudioProvider
 from rp_engine.infrastructure.postgres import (
-    PostgresCharacterStore,
     PostgresConfig,
     PostgresConversationStore,
     create_engine,
@@ -42,14 +40,12 @@ from rp_engine.infrastructure.postgres.repositories import (
     PostgresScenarioSessionStore,
 )
 from rp_engine.infrastructure.storage import (
-    JsonCharacterStore,
     JsonConversationStore,
     JsonGenerationTraceStore,
     JsonGroupIdentityStore,
     JsonScenarioDefinitionStore,
     JsonScenarioSessionStore,
     JsonUserIdentityStore,
-    JsonWorldStore,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,7 +69,7 @@ class AppContainer:
     chat_service: ChatService
     identity_resolver: IdentityResolver
     group_identity_resolver: GroupIdentityResolver
-    character_service: CharacterService
+    playthrough_service: PlaythroughService
     telegram_runtime: TelegramRuntime | None
     runtime_state: RuntimeState
 
@@ -88,19 +84,16 @@ def build_container(settings: Settings) -> AppContainer:
         temperature=settings.lmstudio_temperature,
     )
     conversation_store: ConversationStore
-    character_store: CharacterStore
     scenario_definition_store: ScenarioDefinitionStore
     scenario_session_store: ScenarioSessionStore
     if settings.persistence_backend == "postgres":
         postgres_config = PostgresConfig.from_settings(settings)
         postgres_engine = create_engine(postgres_config)
         postgres_session_factory = create_session_factory(postgres_engine)
-        character_store = PostgresCharacterStore(postgres_session_factory)
         conversation_store = PostgresConversationStore(postgres_session_factory)
         scenario_definition_store = PostgresScenarioDefinitionStore(postgres_session_factory)
         scenario_session_store = PostgresScenarioSessionStore(postgres_session_factory)
     else:
-        character_store = JsonCharacterStore()
         conversation_store = JsonConversationStore()
         scenario_definition_store = JsonScenarioDefinitionStore()
         scenario_session_store = JsonScenarioSessionStore()
@@ -108,19 +101,8 @@ def build_container(settings: Settings) -> AppContainer:
     generation_trace_store = JsonGenerationTraceStore()
     user_identity_store = JsonUserIdentityStore()
     group_identity_store = JsonGroupIdentityStore()
-    world_store = JsonWorldStore()
     identity_resolver = IdentityResolver(store=user_identity_store)
     group_identity_resolver = GroupIdentityResolver(store=group_identity_store)
-    conversation_summarizer = LMStudioConversationSummarizer(llm_provider=llm_provider)
-    character_service = CharacterService(
-        character_store=character_store,
-        conversation_store=conversation_store,
-        conversation_summarizer=conversation_summarizer,
-        world_store=world_store,
-        scenario_definition_store=scenario_definition_store,
-        scenario_session_store=scenario_session_store,
-        default_world_id=settings.default_world_id,
-    )
     scenario_catalog = ScenarioCatalog.from_directory(settings.scenario_catalog_dir)
     playthrough_service = PlaythroughService(
         catalog=scenario_catalog,
@@ -170,6 +152,7 @@ def build_container(settings: Settings) -> AppContainer:
             admin_telegram_user_id=settings.telegram_admin_user_id,
             unauthorized_message=settings.telegram_unauthorized_message,
             message_max_length=settings.telegram_message_max_length,
+            narrator_store=TelegramNarratorStore(),
         )
         telegram_application = create_telegram_application(
             token=settings.telegram_bot_token,
@@ -196,7 +179,7 @@ def build_container(settings: Settings) -> AppContainer:
         chat_service=chat_service,
         identity_resolver=identity_resolver,
         group_identity_resolver=group_identity_resolver,
-        character_service=character_service,
+        playthrough_service=playthrough_service,
         telegram_runtime=telegram_runtime,
         runtime_state=RuntimeState(),
     )
