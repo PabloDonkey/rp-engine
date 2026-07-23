@@ -11,14 +11,18 @@ playthrough at runtime.
 
 ## The catalog
 
-Curated scenarios live as `*.json` files in the catalog directory:
+Curated scenarios live as `*.json` files in one or more catalog directories:
 
 * Default: `data/catalog/`
-* Configurable: `RP_ENGINE_SCENARIO_CATALOG_DIR`
+* Configurable: `RP_ENGINE_SCENARIO_CATALOG_DIRS` — a comma-delimited list of directories,
+  e.g. `data/catalog,data/catalog-local` to layer a local/private catalog on top of the
+  curated one.
 
-At startup the engine loads every `*.json` file in that directory into a read-only
-`ScenarioCatalog`. Files that are missing required fields or are not valid JSON are
-skipped (with a warning) — one bad file never breaks the rest of the library.
+At startup the engine loads every `*.json` file in each configured directory (in order)
+into a read-only `ScenarioCatalog`. Files that are missing required fields or are not
+valid JSON are skipped (with a warning) — one bad file never breaks the rest of the
+library. If the same scenario `id` appears in more than one directory, the copy from the
+**later** directory wins.
 
 `/scenarios` lists the catalog (sorted by name). `/play <id>` looks a scenario up by its
 `id` and starts a playthrough.

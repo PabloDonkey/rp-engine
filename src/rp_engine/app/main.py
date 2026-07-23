@@ -103,7 +103,7 @@ def build_container(settings: Settings) -> AppContainer:
     group_identity_store = JsonGroupIdentityStore()
     identity_resolver = IdentityResolver(store=user_identity_store)
     group_identity_resolver = GroupIdentityResolver(store=group_identity_store)
-    scenario_catalog = ScenarioCatalog.from_directory(settings.scenario_catalog_dir)
+    scenario_catalog = ScenarioCatalog.from_directories(settings.scenario_catalog_dirs)
     playthrough_service = PlaythroughService(
         catalog=scenario_catalog,
         scenario_definition_store=scenario_definition_store,

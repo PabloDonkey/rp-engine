@@ -51,3 +51,42 @@ def test_invalid_files_are_skipped(tmp_path: Path) -> None:
     catalog = ScenarioCatalog.from_directory(tmp_path)
 
     assert [s.id for s in catalog.list()] == ["good"]
+
+
+def _write_scenario(directory: Path, scenario_id: str, name: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{scenario_id}.json").write_text(
+        json.dumps(
+            {
+                "id": scenario_id,
+                "owner_id": str(SYSTEM_OWNER_ID),
+                "name": name,
+                "description": "",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_from_directories_merges_distinct_scenarios(tmp_path: Path) -> None:
+    curated = tmp_path / "curated"
+    local = tmp_path / "local"
+    _write_scenario(curated, "sealed-vault", "Sealed Vault")
+    _write_scenario(local, "haunted-manor", "Haunted Manor")
+
+    catalog = ScenarioCatalog.from_directories([curated, local])
+
+    assert {s.id for s in catalog.list()} == {"sealed-vault", "haunted-manor"}
+
+
+def test_from_directories_later_directory_wins_on_id_collision(tmp_path: Path) -> None:
+    curated = tmp_path / "curated"
+    local = tmp_path / "local"
+    _write_scenario(curated, "sealed-vault", "Curated Vault")
+    _write_scenario(local, "sealed-vault", "Local Override Vault")
+
+    catalog = ScenarioCatalog.from_directories([curated, local])
+
+    scenario = catalog.get("sealed-vault")
+    assert scenario is not None
+    assert scenario.name == "Local Override Vault"

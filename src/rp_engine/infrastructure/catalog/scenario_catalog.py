@@ -8,6 +8,7 @@ turns into a per-player `ScenarioSession`.
 
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from uuid import UUID
 
@@ -26,10 +27,27 @@ class ScenarioCatalog:
 
     @classmethod
     def from_directory(cls, path: Path | str) -> "ScenarioCatalog":
+        return cls(cls._load_directory(path))
+
+    @classmethod
+    def from_directories(cls, paths: Iterable[Path | str]) -> "ScenarioCatalog":
+        """Load and merge scenarios from multiple catalog directories.
+
+        Directories are loaded in order; if the same scenario id appears in more than
+        one directory, the one from the later directory wins (so a local/private catalog
+        listed after the curated one can override a curated scenario).
+        """
+        scenarios: list[ScenarioDefinition] = []
+        for path in paths:
+            scenarios.extend(cls._load_directory(path))
+        return cls(scenarios)
+
+    @classmethod
+    def _load_directory(cls, path: Path | str) -> list[ScenarioDefinition]:
         directory = Path(path)
         if not directory.exists():
             logger.warning("Scenario catalog directory not found", extra={"path": str(directory)})
-            return cls([])
+            return []
 
         scenarios: list[ScenarioDefinition] = []
         for file in sorted(directory.glob("*.json")):
@@ -47,8 +65,11 @@ class ScenarioCatalog:
                 continue
             scenarios.append(scenario)
 
-        logger.info("Scenario catalog loaded", extra={"count": len(scenarios)})
-        return cls(scenarios)
+        logger.info(
+            "Scenario catalog directory loaded",
+            extra={"path": str(directory), "count": len(scenarios)},
+        )
+        return scenarios
 
     def list(self) -> list[ScenarioDefinition]:
         return sorted(self._by_id.values(), key=lambda scenario: scenario.name.lower())

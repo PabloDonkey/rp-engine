@@ -138,3 +138,28 @@ def test_build_container_uses_postgres_stores_when_enabled() -> None:
 def test_empty_postgres_host_fails_validation() -> None:
     with pytest.raises(ValidationError, match="RP_ENGINE_POSTGRES_HOST must not be empty"):
         Settings(postgres_host="   ")
+
+
+def test_scenario_catalog_dirs_defaults_to_data_catalog() -> None:
+    # _env_file=None isolates this from the developer's local .env, which may set
+    # RP_ENGINE_SCENARIO_CATALOG_DIRS for real use.
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.scenario_catalog_dirs == ["data/catalog"]
+
+
+def test_scenario_catalog_dirs_parses_comma_delimited_string() -> None:
+    settings = Settings(scenario_catalog_dirs="data/catalog, data/catalog-local")  # type: ignore[arg-type]
+
+    assert settings.scenario_catalog_dirs == ["data/catalog", "data/catalog-local"]
+
+
+def test_scenario_catalog_dirs_accepts_a_list() -> None:
+    settings = Settings(scenario_catalog_dirs=["data/catalog", "data/catalog-local"])
+
+    assert settings.scenario_catalog_dirs == ["data/catalog", "data/catalog-local"]
+
+
+def test_scenario_catalog_dirs_rejects_empty_value() -> None:
+    with pytest.raises(ValidationError, match="RP_ENGINE_SCENARIO_CATALOG_DIRS must not be empty"):
+        Settings(scenario_catalog_dirs="")  # type: ignore[arg-type]

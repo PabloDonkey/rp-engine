@@ -124,7 +124,8 @@ Optional application variables:
 * `RP_ENGINE_DEBUG_STATUS_ENABLED`
 * `RP_ENGINE_DEBUG_GENERATION_TRACE` (`off`, `errors`, or `all`; default `off`)
 * `RP_ENGINE_PERSISTENCE_BACKEND` (`json` or `postgres`; default `json`)
-* `RP_ENGINE_SCENARIO_CATALOG_DIR` (directory of curated scenario JSON files; default `data/catalog`)
+* `RP_ENGINE_SCENARIO_CATALOG_DIRS` (comma-delimited list of scenario catalog directories,
+  merged in load order with later directories winning on id collisions; default `data/catalog`)
 
 PostgreSQL application variables (used when `RP_ENGINE_PERSISTENCE_BACKEND=postgres`):
 
@@ -335,8 +336,8 @@ Playing the story:
 * In group chats, story/session-control commands (`/play`, `/restart`, `/continue`,
   `/retry`) are restricted to chat administrators and creators.
 
-Scenarios are authored as JSON files in the catalog directory
-(`RP_ENGINE_SCENARIO_CATALOG_DIR`, default `data/catalog/`). See `docs/SCENARIOS.md` for
+Scenarios are authored as JSON files in one or more catalog directories
+(`RP_ENGINE_SCENARIO_CATALOG_DIRS`, default `data/catalog/`). See `docs/SCENARIOS.md` for
 the authoring guide.
 
 ## Telegram Admin Commands (Hidden)

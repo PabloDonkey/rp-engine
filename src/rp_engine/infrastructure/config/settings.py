@@ -1,8 +1,8 @@
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 DEFAULT_TELEGRAM_UNAUTHORIZED_MESSAGE = (
     "This bot is currently in closed beta, and you are not authorized yet. "
@@ -56,7 +56,13 @@ class Settings(BaseSettings):
     debug_status_enabled: bool = False
     debug_generation_trace: Literal["off", "errors", "all"] = "off"
     default_world_id: str = "default"
-    scenario_catalog_dir: str = "data/catalog"
+    # Comma-delimited list of catalog directories, merged in order (later dirs win on
+    # scenario id collisions). See ScenarioCatalog.from_directories.
+    # NoDecode: pydantic-settings otherwise tries to JSON-parse a list-typed env var
+    # before our field_validator runs, which rejects a plain comma-delimited string.
+    scenario_catalog_dirs: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["data/catalog"]
+    )
 
     @field_validator("lmstudio_max_tokens", mode="before")
     @classmethod
@@ -154,6 +160,22 @@ class Settings(BaseSettings):
     @classmethod
     def validate_debug_generation_trace(cls, value: str) -> str:
         return value.strip().lower()
+
+    @field_validator("scenario_catalog_dirs", mode="before")
+    @classmethod
+    def _split_scenario_catalog_dirs(cls, value: object) -> object:
+        # pydantic-settings would otherwise require a JSON array for a list-typed env var;
+        # accept a comma-delimited string instead (e.g. "data/catalog,data/catalog-local").
+        if isinstance(value, str):
+            return [entry.strip() for entry in value.split(",") if entry.strip()]
+        return value
+
+    @field_validator("scenario_catalog_dirs")
+    @classmethod
+    def validate_scenario_catalog_dirs(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("RP_ENGINE_SCENARIO_CATALOG_DIRS must not be empty.")
+        return value
 
 
 @lru_cache(maxsize=1)
