@@ -121,16 +121,17 @@ Columns:
 - name (TEXT)
 - description (TEXT)
 - world (JSONB, nullable — serialized `World`)
-- role_profiles (JSONB — {role: RoleProfile})
 - characters (JSONB — {role: Character})
 - rules (JSONB — list of strings)
 - story_graph (JSONB, nullable — serialized `StoryGraph`)
 - initial_context (TEXT)
+- visibility (TEXT — PUBLIC, UNLISTED, RESTRICTED)
+- allowed_group_chat_ids (JSONB — list of Telegram chat ids)
 - metadata (JSONB)
 - created_at (timestamptz)
 - updated_at (timestamptz)
 
-Nested structures (world, characters, role profiles, story graph) are stored as JSONB
+Nested structures (world, characters, story graph) are stored as JSONB
 rather than normalized into separate tables. The same serialization is shared with the
 JSON backend via `infrastructure/scenario_serialization.py`, guaranteeing byte-for-byte
 parity between backends.

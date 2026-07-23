@@ -2,11 +2,10 @@ from dataclasses import replace
 from uuid import UUID
 
 from rp_engine.core.character.character import Character
-from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
-from rp_engine.core.scenario.role_profile import RoleProfile
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.story_graph import StoryBeat, StoryGraph
+from rp_engine.core.scenario.visibility import ScenarioVisibility
 from rp_engine.core.world.world import World
 
 OWNER_ID = UUID("00000000-0000-0000-0000-000000000010")
@@ -26,21 +25,9 @@ def _rich_scenario(scenario_id: str = "scenario-1") -> ScenarioDefinition:
             rules=("magic exists", "dragons are real"),
             metadata={"tone": "grim"},
         ),
-        role_profiles={
-            "protagonist": RoleProfile(
-                id="protagonist",
-                name="Protagonist",
-                description="The hero",
-                objectives=("open the vault",),
-                constraints=("stay in character",),
-                metadata={"importance": "high"},
-            )
-        },
         characters={
             "protagonist": Character(
                 id="aria",
-                owner_id=OWNER_ID,
-                visibility=CharacterVisibility.PRIVATE,
                 name="Aria",
                 description="A cunning thief",
                 personality="Bold",
@@ -49,6 +36,8 @@ def _rich_scenario(scenario_id: str = "scenario-1") -> ScenarioDefinition:
             )
         },
         rules=["no meta commentary", "be concise"],
+        visibility=ScenarioVisibility.RESTRICTED,
+        allowed_group_chat_ids=("-100123",),
         story_graph=StoryGraph(
             beats={
                 "start": StoryBeat(

@@ -63,9 +63,17 @@ def test_empty_telegram_unauthorized_message_fails_validation() -> None:
         Settings(telegram_unauthorized_message="   ")
 
 
-def test_lmstudio_max_tokens_rejects_non_positive_values() -> None:
+def test_lmstudio_max_tokens_rejects_negative_values() -> None:
     with pytest.raises(ValidationError):
-        Settings(lmstudio_max_tokens=0)
+        Settings(lmstudio_max_tokens=-1)
+
+
+def test_lmstudio_max_tokens_zero_means_unlimited() -> None:
+    assert Settings(lmstudio_max_tokens=0).lmstudio_max_tokens == 0
+
+
+def test_lmstudio_max_tokens_empty_string_means_unlimited() -> None:
+    assert Settings(lmstudio_max_tokens="").lmstudio_max_tokens == 0  # type: ignore[arg-type]
 
 
 def test_lmstudio_temperature_rejects_negative_values() -> None:

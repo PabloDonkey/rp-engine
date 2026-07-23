@@ -37,11 +37,12 @@ domain model (see `DOMAIN_MODEL.md`).
 | `name`            | string                   | yes      | Display name shown by `/scenarios`. |
 | `description`     | string                   | yes      | One-line pitch shown by `/scenarios`. May be empty. |
 | `world`           | object or `null`         | no       | The environment. See **World** below. |
-| `role_profiles`   | object (role → profile)  | no       | Abstract roles; optional, reserved for richer casts. |
 | `characters`      | object (role → character)| no       | Concrete characters keyed by role. A narration-style scenario typically has one `narrator`. |
-| `rules`           | array of strings         | no       | Scenario-specific instructions injected into the system prompt. |
+| `rules`           | array of strings         | no       | The scenario's roleplay rules, injected verbatim into the system prompt. This is where roleplay behavior lives — the engine adds only a fixed response-format contract. |
 | `story_graph`     | object or `null`         | no       | Optional narrative structure (inert data; see `DOMAIN_MODEL.md`). |
 | `initial_context` | string                   | no       | The opening narration. Sent to the player when the playthrough starts. |
+| `visibility`      | string                   | no       | `PUBLIC` (default), `UNLISTED`, or `RESTRICTED`. See **Access** below. |
+| `allowed_group_chat_ids` | array of strings  | no       | Telegram chat ids allowed to see/play a `RESTRICTED` scenario. Ignored otherwise. |
 | `metadata`        | object (string → string) | no       | Free-form tags (e.g. `{"genre": "heist"}`). |
 
 Omitted optional fields default to empty (`{}` / `[]` / `null` / `""`).
@@ -67,8 +68,6 @@ the active character to build the prompt and to resolve `{{char}}`.
 "characters": {
   "narrator": {
     "id": "narrator-sealed-vault",
-    "owner_id": "00000000-0000-0000-0000-000000000000",
-    "visibility": "PUBLIC",
     "name": "Narrator",
     "description": "An omniscient guide voicing the world.",
     "personality": "Atmospheric and terse.",
@@ -78,8 +77,45 @@ the active character to build the prompt and to resolve `{{char}}`.
 }
 ```
 
+A character is a pure persona (identity + description + personality). Ownership and
+visibility are properties of the **scenario**, not the character.
+
 A scenario with no `characters` is **characterless** (freeform): the prompt is built from
 the world and rules only, and `{{char}}` resolves to "the character".
+
+### Rules
+
+`rules` is the scenario's own list of roleplay instructions, injected verbatim into the
+system prompt under a `[Rules]` heading. Roleplay behavior lives entirely in the card, so
+each scenario is free to define exactly the rules it needs (a solo-narrator adventure need
+not carry multi-character rules, and vice versa). The engine itself contributes only a
+fixed `[Response Format]` contract describing how replies are shaped for the transport
+(actions in `*italics*`, dialogue in quotes, no labels) — that is a rendering concern, not
+roleplay content, and is not authored per scenario.
+
+### Access
+
+`visibility` controls who can browse and start a scenario. Access is evaluated per
+caller; group callers are identified by their **Telegram chat id**.
+
+| Visibility   | Shown in `/scenarios`        | Playable via `/play <id>`     |
+| ------------ | ---------------------------- | ----------------------------- |
+| `PUBLIC`     | everyone                     | everyone                      |
+| `UNLISTED`   | nobody                       | anyone who knows the id       |
+| `RESTRICTED` | only allow-listed groups     | only allow-listed groups      |
+
+* **Hide a scenario** — set `"visibility": "UNLISTED"`. It disappears from `/scenarios`
+  but still starts for anyone who knows its `id` (a secret/easter-egg adventure).
+* **Lock a scenario to a group** — set `"visibility": "RESTRICTED"` and list the group's
+  Telegram chat id in `allowed_group_chat_ids`. It is hidden from and unplayable by
+  everyone else; an outsider's `/play <id>` gets the same "no such scenario" reply as a
+  bad id, so the lock never leaks the scenario's existence. Direct (1:1) chats have no
+  group chat id and are always outsiders for a `RESTRICTED` scenario.
+
+```json
+"visibility": "RESTRICTED",
+"allowed_group_chat_ids": ["-1001234567890"]
+```
 
 ### Templates
 
@@ -108,12 +144,9 @@ Text fields may use these placeholders, resolved at prompt-build time:
     "rules": ["Magic is rare and feared.", "The city guard is never far."],
     "metadata": {}
   },
-  "role_profiles": {},
   "characters": {
     "narrator": {
       "id": "narrator-sealed-vault",
-      "owner_id": "00000000-0000-0000-0000-000000000000",
-      "visibility": "PUBLIC",
       "name": "Narrator",
       "description": "An omniscient guide voicing the world and everyone in it.",
       "personality": "Atmospheric and terse. Describes only what {{user}} can perceive.",
@@ -122,6 +155,8 @@ Text fields may use these placeholders, resolved at prompt-build time:
     }
   },
   "rules": [
+    "Remain in character at all times.",
+    "The user controls only their own character.",
     "Address the player in the second person.",
     "Keep each reply to a few vivid sentences.",
     "End on a beat that invites the player to act."

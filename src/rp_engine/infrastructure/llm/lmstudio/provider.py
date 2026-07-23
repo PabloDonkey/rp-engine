@@ -82,11 +82,13 @@ class LMStudioProvider(LLMProvider):
 
         result = model.respond(chat, config=config)
 
-        logger.info(f"LLM response: {result}")
-        logger.info(f"Content: {result.content}")
+        content = self._extract_content(result)
+        logger.info(f"LLM response content: {content}")
 
         # Clean the LM Studio internal reasoning string out of the final text
-        parts = re.split(r'__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[a-f0-9]+__', result.content)
+        parts = re.split(
+            r"__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[a-f0-9]+__", content
+        )
         clean_text = parts[-1].strip()
 
         stats = getattr(result, "stats", None)
@@ -105,8 +107,11 @@ class LMStudioProvider(LLMProvider):
         )
 
     def _get_config(self, settings: GenerationSettings) -> lms.LlmPredictionConfig:
+        # A positive per-request cap wins; otherwise fall back to the configured default.
+        # A resolved cap of 0 means "no limit" — pass None so LM Studio leaves it unbounded.
+        resolved_max_tokens = settings.max_tokens or self._default_max_tokens
         config = lms.LlmPredictionConfig(
-            max_tokens=settings.max_tokens if settings.max_tokens else self._default_max_tokens,
+            max_tokens=resolved_max_tokens if resolved_max_tokens > 0 else None,
             temperature=(
                 settings.temperature if settings.temperature >= 0 else self._default_temperature
             ),
@@ -125,26 +130,21 @@ class LMStudioProvider(LLMProvider):
 
     @staticmethod
     def _extract_content(result: Any) -> str:
-        """Extracts the primary, user-facing content from the raw model response."""
-        # Check for structured 'thought' blocks and strip them out before returning the content.
+        """Extract the primary, user-facing content from the raw model response.
+
+        `model.respond` may hand back an object exposing `.content`, a mapping with a
+        "content" key, or a bare string. Normalize all three to a string.
+        """
         if isinstance(result, dict):
-            # Assuming thought/process might be stored in a key like 'thinking_process' or similar structure
-            # This logic needs to be tailored based on what 'result' actually looks like when thoughts are present.
-            # For general cleanup: we prioritize finding the final, clean string content.
             content = result.get("content")
         elif hasattr(result, "content"):
             content = result.content
         else:
             content = None
 
-        if isinstance(content, str) and not ("thought process" in content.lower() or "thinking:" in content.lower()):
-            return content
-        
-        # Fallback to converting the entire object if extraction fails, but this is dangerous.
-        # We assume if structured data was returned, we take the cleanest string available.
         if isinstance(content, str):
             return content
-        
+
         return str(result)
 
     @staticmethod

@@ -6,7 +6,6 @@ import pytest
 
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.core.character.character import Character
-from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
@@ -33,8 +32,6 @@ ScenarioContext = tuple[ScenarioSession, ScenarioDefinition, User]
 def _character() -> Character:
     return Character(
         id="belzebuth",
-        owner_id=USER_ID,
-        visibility=CharacterVisibility.PRIVATE,
         name="Belzebuth",
         description="{{char}} is a dragon companion of {{user}}.",
         personality="Protective and witty.",

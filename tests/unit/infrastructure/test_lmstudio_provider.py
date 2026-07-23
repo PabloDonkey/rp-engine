@@ -180,6 +180,44 @@ async def test_lmstudio_provider_passes_prediction_config(
 
 
 @pytest.mark.asyncio
+async def test_lmstudio_provider_unlimited_max_tokens_passes_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_instances: list[FakeModel] = []
+
+    def fake_configure_default_client(_: str) -> None:
+        return None
+
+    def fake_llm(_: str) -> FakeModel:
+        model = FakeModel(lambda _chat: "ok")
+        model_instances.append(model)
+        return model
+
+    monkeypatch.setattr(
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.configure_default_client",
+        fake_configure_default_client,
+    )
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.llm", fake_llm)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.Chat", FakeChat)
+    monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
+
+    # Both the provider default and the per-request setting are 0 (unlimited).
+    provider = LMStudioProvider(
+        model_name="model-a",
+        api_host="127.0.0.1:1234",
+        max_tokens=0,
+        temperature=0.7,
+    )
+
+    await provider.generate(
+        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="hi")]),
+        GenerationSettings(max_tokens=0),
+    )
+
+    assert model_instances[0].last_config.max_tokens is None
+
+
+@pytest.mark.asyncio
 async def test_lmstudio_provider_maps_length_finish_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

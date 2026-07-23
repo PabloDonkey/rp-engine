@@ -1,7 +1,6 @@
 from uuid import UUID
 
 from rp_engine.core.character.character import Character
-from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.conversation.builder import ConversationBuilder, ScenarioConversationInput
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
@@ -17,8 +16,6 @@ SESSION_ID = UUID("00000000-0000-0000-0000-000000000001")
 def _character(**overrides: object) -> Character:
     defaults: dict[str, object] = dict(
         id="belzebuth",
-        owner_id=OWNER_ID,
-        visibility=CharacterVisibility.PRIVATE,
         name="Belzebuth",
         description="{{char}} likes {{user}}",
         personality="Bold",
@@ -84,7 +81,8 @@ def test_builder_resolves_templates_and_orders_messages() -> None:
         )
     )
 
-    # 4 system messages (character, world, rules, memory hint) + history + user turn.
+    # 4 system messages (character, world, response format, memory hint) + history + user
+    # turn. This scenario has no rules, so no [Rules] message is emitted.
     assert len(conversation.messages) == 6
     assert [message.role for message in conversation.messages[:4]] == [
         ConversationRole.SYSTEM,
@@ -183,7 +181,7 @@ def test_builder_includes_world_template_and_scenario_rules() -> None:
 
     all_content = "\n".join(message.content for message in conversation.messages)
     assert "in Eldoria?" in all_content
-    assert "[Scenario Rules]" in all_content
+    assert "[Rules]" in all_content
     assert "Never mention the modern world." in all_content
 
 

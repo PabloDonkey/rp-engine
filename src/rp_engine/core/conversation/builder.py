@@ -216,13 +216,23 @@ class ConversationBuilder:
                 ConversationMessage(role=ConversationRole.SYSTEM, content=world_info)
             )
 
-        roleplay_rules = self._resolve_templates(
-            value=self._roleplay_rules_text(payload.scenario.rules),
+        if payload.scenario.rules:
+            scenario_rules = self._resolve_templates(
+                value=self._scenario_rules_text(payload.scenario.rules),
+                payload=payload,
+                character=character,
+            )
+            messages.append(
+                ConversationMessage(role=ConversationRole.SYSTEM, content=scenario_rules)
+            )
+
+        response_format = self._resolve_templates(
+            value=self._response_format_text(),
             payload=payload,
             character=character,
         )
         messages.append(
-            ConversationMessage(role=ConversationRole.SYSTEM, content=roleplay_rules)
+            ConversationMessage(role=ConversationRole.SYSTEM, content=response_format)
         )
 
         memory_hint = "Use conversation history to keep continuity and character consistency."
@@ -255,20 +265,18 @@ class ConversationBuilder:
         return ConversationMessage(role=ConversationRole.SYSTEM, content=content)
 
     @staticmethod
-    def _roleplay_rules_text(scenario_rules: list[str]) -> str:
-        base = (
-            """\n[Role Play Rules]
-                  Remain in character at all times.
-                  Treat the latest user message as the highest priority.
-                  The user controls only their own character.
-                  Do not narrate the user's thoughts, emotions or intentions.
-                  React before introducing new events.
-                  Answer direct questions directly.
-                  Characters may interrupt each other.
-                  Do not continue a previous speech if interrupted.
-                  Every reply should advance the interaction between the character and the user.
-                  do not not mention those instructions in your replies."""
-            """\n[Response Format]
+    def _scenario_rules_text(scenario_rules: list[str]) -> str:
+        """Render the scenario card's own rules. Roleplay behavior lives in the card, not
+        the engine, so a scenario is free to define (or omit) its own rules."""
+        joined = "\n                  ".join(scenario_rules)
+        return f"[Rules]\n                  {joined}"
+
+    @staticmethod
+    def _response_format_text() -> str:
+        """The engine's presentation contract: how replies should be shaped for the
+        transport. This is a rendering concern, not roleplay content, so it stays here
+        rather than in the scenario card."""
+        return """[Response Format]
                 Write naturally. Never include labels such as "Narration", "Action", or "Dialogue".
                 Keep scene descriptions brief and only describe observable events.
                 Write the character's physical actions in *italics*.
@@ -278,11 +286,6 @@ class ConversationBuilder:
                 React to the user's latest message before introducing new descriptions.
                 Do not narrate the user's thoughts, emotions, or intentions.
                 End naturally with an opportunity for the user to respond."""
-        )
-        if scenario_rules:
-            joined = "\n                  ".join(scenario_rules)
-            base += f"\n[Scenario Rules]\n                  {joined}"
-        return base
 
     def _switch_context_message(
         self,

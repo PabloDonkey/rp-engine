@@ -44,7 +44,9 @@ class Settings(BaseSettings):
 
     lmstudio_api_host: str = "localhost:1234"
     lmstudio_model: str = "qwen/qwen3-4b-2507"
-    lmstudio_max_tokens: int = Field(default=600, ge=1)
+    # Maximum tokens per reply. 0 means "no limit" (generate until the model stops or the
+    # context is full). Absent or empty in the environment is treated as 0.
+    lmstudio_max_tokens: int = Field(default=0, ge=0)
     lmstudio_temperature: float = Field(default=0.8, ge=0.0)
     lmstudio_top_k_sampling: int = Field(default=40, ge=1)
     lmstudio_repeat_penalty: float = Field(default=1.1, ge=0.0)
@@ -55,6 +57,15 @@ class Settings(BaseSettings):
     debug_generation_trace: Literal["off", "errors", "all"] = "off"
     default_world_id: str = "default"
     scenario_catalog_dir: str = "data/catalog"
+
+    @field_validator("lmstudio_max_tokens", mode="before")
+    @classmethod
+    def _empty_max_tokens_means_unlimited(cls, value: object) -> object:
+        # An absent variable already falls back to the default (0); this also maps an
+        # explicitly empty value (RP_ENGINE_LMSTUDIO_MAX_TOKENS=) to 0 rather than failing.
+        if value is None or (isinstance(value, str) and value.strip() == ""):
+            return 0
+        return value
 
     @field_validator("lmstudio_api_host")
     @classmethod

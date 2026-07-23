@@ -55,13 +55,14 @@ External platforms are represented as linked identities.
 
 ## Character
 
-Roleplay personas are represented as reusable `Character` entities.
+Roleplay personas are represented as `Character` entities. A character is a **pure
+persona** — identity and behavior only. It is embedded in a `ScenarioDefinition` (keyed by
+role) and has no independent ownership or visibility of its own: those are properties of
+the scenario that contains it (see `ScenarioDefinition` and `ScenarioVisibility`).
 
 `Character` fields:
 
 * `id` (`str`) - stable application-owned identifier (slug or UUID).
-* `owner_id` (`UUID`) - canonical owner user identifier.
-* `visibility` (`CharacterVisibility`) - access level (`PRIVATE`, `SHARED`, `PUBLIC`).
 * `name` (`str`) - display name.
 * `description` (`str`) - high-level identity description.
 * `personality` (`str`) - behavior profile.
@@ -69,27 +70,6 @@ Roleplay personas are represented as reusable `Character` entities.
 * `metadata` (`dict[str, str]`) - optional structured tags.
 
 Character static definition is stored separately from session memory.
-
-## Character Ownership
-
-Every `Character` has exactly one owner.
-
-Ownership rules:
-
-* `User` owns `Character`.
-* One `User` can own many `Character` entities.
-* One `Character` has exactly one owner.
-* Ownership is permanent unless explicitly transferred (future feature).
-* Characters exist independently from conversations.
-
-```mermaid
-flowchart LR
-	User -->|owns| Character
-```
-
-Cardinality:
-
-* `User` (1) ---> (*) `Character`
 
 ## Character Definition vs Character Memory
 
@@ -121,10 +101,9 @@ Core Character Card v3 mapping (non-exhaustive):
 
 Engine-specific fields are not part of the Character Card v3 object:
 
-* `owner_id`
-* `visibility`
 * session identity and conversation history
 * memory persistence and retrieval metadata
+* scenario-level ownership and visibility (see `ScenarioDefinition`)
 
 Runtime continuity is currently represented by conversation memory, not by a dedicated
 structured `CharacterState` entity.
@@ -149,25 +128,20 @@ flowchart TD
 Structured runtime state (for example inventory, health, quest flags, simulation variables)
 is explicitly deferred until a concrete feature requires deterministic mechanics.
 
-## CharacterVisibility
+## ScenarioVisibility
 
-Character visibility is represented by `CharacterVisibility`.
+Access control lives on the scenario, not the character. Visibility is represented by
+`ScenarioVisibility`.
 
-`CharacterVisibility` values:
+`ScenarioVisibility` values:
 
-* `PRIVATE`
-* `SHARED`
-* `PUBLIC`
+* `PUBLIC` - listed in `/scenarios` and playable by anyone (default).
+* `UNLISTED` - hidden from `/scenarios`, but playable by anyone who knows the id.
+* `RESTRICTED` - listed and playable only for the Telegram group chat ids in the
+  scenario's `allowed_group_chat_ids`; hidden from everyone else.
 
-Visibility semantics:
-
-* `PRIVATE` - only the owner can use the character (current implementation).
-* `SHARED` - future feature; available only to explicitly authorized users or groups.
-* `PUBLIC` - future feature; discoverable and usable by everyone.
-
-Visibility affects access only.
-
-Ownership remains unchanged regardless of visibility.
+Access is evaluated per caller. Group callers are identified by their Telegram chat id;
+direct (1:1) chats are outsiders for a `RESTRICTED` scenario.
 
 ## World
 
@@ -219,29 +193,19 @@ no runtime state.
 * `name` (`str`) - display name.
 * `description` (`str`) - high-level summary.
 * `world` (`World | None`) - optional environment.
-* `role_profiles` (`dict[str, RoleProfile]`) - abstract roles keyed by role name.
 * `characters` (`dict[str, Character]`) - concrete characters keyed by role name.
-* `rules` (`list[str]`) - scenario-specific constraints.
+* `rules` (`list[str]`) - the scenario's roleplay rules.
 * `story_graph` (`StoryGraph | None`) - optional narrative structure.
 * `initial_context` (`str`) - opening narrative context.
+* `visibility` (`ScenarioVisibility`) - `PUBLIC`, `UNLISTED`, or `RESTRICTED`.
+* `allowed_group_chat_ids` (`tuple[str, ...]`) - Telegram chat ids allowed to see/play a
+  `RESTRICTED` scenario.
 * `metadata` (`dict[str, str]`) - optional structured tags.
 
 Characters are optional. A scenario may define only a world and rules (freeform), or
-bind concrete characters to declared roles (cast), or anything in between.
-
-## RoleProfile
-
-`RoleProfile` describes an abstract role in a scenario, independent of any concrete
-character. At runtime a `ScenarioSession` maps a character onto each role.
-
-`RoleProfile` fields:
-
-* `id` (`str`) - stable role identifier.
-* `name` (`str`) - display name.
-* `description` (`str`) - what the role is.
-* `objectives` (`tuple[str, ...]`) - optional in-scenario goals.
-* `constraints` (`tuple[str, ...]`) - optional behavioural constraints.
-* `metadata` (`dict[str, str]`) - optional structured tags.
+bind concrete characters to declared roles (cast), or anything in between. Roles are cast
+to concrete characters directly via a session's `active_participants`; there is no
+abstract role type.
 
 ## StoryGraph
 

@@ -11,7 +11,6 @@ from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.playthrough_service import PlaythroughStart
 from rp_engine.core.character.character import Character
-from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
@@ -37,8 +36,6 @@ ROLE = "character"
 def _default_character() -> Character:
     return Character(
         id="default",
-        owner_id=FIXED_USER_ID,
-        visibility=CharacterVisibility.PRIVATE,
         name="Belzebuth",
         description="{{char}} is a dragon companion of {{user}}.",
         personality="Protective and witty.",
@@ -279,61 +276,6 @@ class FakeGroupStore:
         if group_id != FIXED_GROUP_ID:
             return None
         return Group(id=FIXED_GROUP_ID, display_name="Test Group")
-
-
-class FakeCharacterStore:
-    async def get_by_id(self, character_id: str) -> Character | None:
-        if character_id != "default":
-            return None
-        return Character(
-            id="default",
-            owner_id=FIXED_USER_ID,
-            visibility=CharacterVisibility.PRIVATE,
-            name="Belzebuth",
-            description="{{char}} is a dragon companion of {{user}}.",
-            personality="Protective and witty.",
-            greeting="Welcome back, {{user}}.",
-        )
-
-    async def find_by_name(self, name: str) -> Character | None:
-        del name
-        return None
-
-    async def create_minimal(
-        self,
-        *,
-        character_id: str,
-        owner_id: UUID,
-        name: str,
-        visibility: CharacterVisibility = CharacterVisibility.PRIVATE,
-    ) -> Character:
-        return Character(
-            id=character_id,
-            owner_id=owner_id,
-            visibility=visibility,
-            name=name,
-            description=f"Character profile for {name}.",
-            personality="Open-ended roleplay persona.",
-        )
-
-
-class FakeWorldStore:
-    async def get_by_id(self, world_id: str) -> World | None:
-        if world_id != "default":
-            return None
-        return World(
-            id="default",
-            name="Main World",
-            description="{{user}} explores a realm with {{char}}.",
-            rules=("Stay in character.",),
-        )
-
-    async def create_default(self, *, world_id: str) -> World:
-        return World(
-            id=world_id,
-            name="Default World",
-            description="A flexible world with minimal predefined constraints.",
-        )
 
 
 @dataclass

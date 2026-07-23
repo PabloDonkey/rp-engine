@@ -10,11 +10,10 @@ from typing import Any
 from uuid import UUID
 
 from rp_engine.core.character.character import Character
-from rp_engine.core.character.visibility import CharacterVisibility
-from rp_engine.core.scenario.role_profile import RoleProfile
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.story_graph import StoryBeat, StoryGraph
+from rp_engine.core.scenario.visibility import ScenarioVisibility
 from rp_engine.core.world.world import World
 
 
@@ -45,8 +44,6 @@ def world_from_payload(data: dict[str, Any] | None) -> World | None:
 def character_to_payload(character: Character) -> dict[str, Any]:
     return {
         "id": character.id,
-        "owner_id": str(character.owner_id),
-        "visibility": character.visibility.value,
         "name": character.name,
         "description": character.description,
         "personality": character.personality,
@@ -58,34 +55,10 @@ def character_to_payload(character: Character) -> dict[str, Any]:
 def character_from_payload(data: dict[str, Any]) -> Character:
     return Character(
         id=data["id"],
-        owner_id=UUID(data["owner_id"]),
-        visibility=CharacterVisibility(data["visibility"]),
         name=data["name"],
         description=data["description"],
         personality=data["personality"],
         greeting=data.get("greeting", ""),
-        metadata=data.get("metadata", {}),
-    )
-
-
-def role_profile_to_payload(profile: RoleProfile) -> dict[str, Any]:
-    return {
-        "id": profile.id,
-        "name": profile.name,
-        "description": profile.description,
-        "objectives": list(profile.objectives),
-        "constraints": list(profile.constraints),
-        "metadata": profile.metadata,
-    }
-
-
-def role_profile_from_payload(data: dict[str, Any]) -> RoleProfile:
-    return RoleProfile(
-        id=data["id"],
-        name=data["name"],
-        description=data.get("description", ""),
-        objectives=tuple(data.get("objectives", [])),
-        constraints=tuple(data.get("constraints", [])),
         metadata=data.get("metadata", {}),
     )
 
@@ -127,14 +100,6 @@ def story_graph_from_payload(data: dict[str, Any] | None) -> StoryGraph | None:
     )
 
 
-def role_profiles_to_payload(profiles: dict[str, RoleProfile]) -> dict[str, Any]:
-    return {role: role_profile_to_payload(profile) for role, profile in profiles.items()}
-
-
-def role_profiles_from_payload(data: dict[str, Any]) -> dict[str, RoleProfile]:
-    return {role: role_profile_from_payload(value) for role, value in data.items()}
-
-
 def characters_to_payload(characters: dict[str, Character]) -> dict[str, Any]:
     return {role: character_to_payload(character) for role, character in characters.items()}
 
@@ -150,11 +115,12 @@ def scenario_definition_to_payload(scenario: ScenarioDefinition) -> dict[str, An
         "name": scenario.name,
         "description": scenario.description,
         "world": world_to_payload(scenario.world),
-        "role_profiles": role_profiles_to_payload(scenario.role_profiles),
         "characters": characters_to_payload(scenario.characters),
         "rules": scenario.rules,
         "story_graph": story_graph_to_payload(scenario.story_graph),
         "initial_context": scenario.initial_context,
+        "visibility": scenario.visibility.value,
+        "allowed_group_chat_ids": list(scenario.allowed_group_chat_ids),
         "metadata": scenario.metadata,
     }
 
@@ -167,11 +133,12 @@ def scenario_definition_from_payload(payload: dict[str, Any]) -> ScenarioDefinit
             name=payload["name"],
             description=payload["description"],
             world=world_from_payload(payload.get("world")),
-            role_profiles=role_profiles_from_payload(payload.get("role_profiles", {})),
             characters=characters_from_payload(payload.get("characters", {})),
             rules=payload.get("rules", []),
             story_graph=story_graph_from_payload(payload.get("story_graph")),
             initial_context=payload.get("initial_context", ""),
+            visibility=ScenarioVisibility(payload.get("visibility", ScenarioVisibility.PUBLIC)),
+            allowed_group_chat_ids=tuple(payload.get("allowed_group_chat_ids", ())),
             metadata=payload.get("metadata", {}),
         )
     except (KeyError, ValueError, TypeError):

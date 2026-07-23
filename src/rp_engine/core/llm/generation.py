@@ -9,8 +9,8 @@ class GenerationSettings:
     stop_sequences: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        if self.max_tokens < 1:
-            raise ValueError("max_tokens must be greater than zero.")
+        if self.max_tokens < 0:
+            raise ValueError("max_tokens must be zero (unlimited) or greater.")
         if self.temperature < 0:
             raise ValueError("temperature must be greater than or equal to zero.")
         if self.top_p is not None and not 0 <= self.top_p <= 1:

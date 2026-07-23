@@ -10,7 +10,6 @@ from rp_engine.infrastructure.postgres.models import ScenarioDefinitionRecord
 from rp_engine.infrastructure.postgres.transaction import session_scope
 from rp_engine.infrastructure.scenario_serialization import (
     characters_to_payload,
-    role_profiles_to_payload,
     scenario_definition_from_payload,
     story_graph_to_payload,
     world_to_payload,
@@ -46,11 +45,12 @@ class PostgresScenarioDefinitionStore(ScenarioDefinitionStore):
             "name": scenario.name,
             "description": scenario.description,
             "world": world_to_payload(scenario.world),
-            "role_profiles": role_profiles_to_payload(scenario.role_profiles),
             "characters": characters_to_payload(scenario.characters),
             "rules": list(scenario.rules),
             "story_graph": story_graph_to_payload(scenario.story_graph),
             "initial_context": scenario.initial_context,
+            "visibility": scenario.visibility.value,
+            "allowed_group_chat_ids": list(scenario.allowed_group_chat_ids),
             "payload_metadata": dict(scenario.metadata),
         }
         statement = insert(ScenarioDefinitionRecord).values(values)
@@ -61,11 +61,12 @@ class PostgresScenarioDefinitionStore(ScenarioDefinitionStore):
                 "name": statement.excluded.name,
                 "description": statement.excluded.description,
                 "world": statement.excluded.world,
-                "role_profiles": statement.excluded.role_profiles,
                 "characters": statement.excluded.characters,
                 "rules": statement.excluded.rules,
                 "story_graph": statement.excluded.story_graph,
                 "initial_context": statement.excluded.initial_context,
+                "visibility": statement.excluded.visibility,
+                "allowed_group_chat_ids": statement.excluded.allowed_group_chat_ids,
                 "metadata": statement.excluded.metadata,
             },
         )
@@ -89,11 +90,12 @@ class PostgresScenarioDefinitionStore(ScenarioDefinitionStore):
             "name": record.name,
             "description": record.description,
             "world": record.world,
-            "role_profiles": record.role_profiles or {},
             "characters": record.characters or {},
             "rules": record.rules or [],
             "story_graph": record.story_graph,
             "initial_context": record.initial_context,
+            "visibility": record.visibility or "PUBLIC",
+            "allowed_group_chat_ids": record.allowed_group_chat_ids or [],
             "metadata": record.payload_metadata or {},
         }
         return scenario_definition_from_payload(payload)

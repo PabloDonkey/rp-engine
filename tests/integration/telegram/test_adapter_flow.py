@@ -97,7 +97,10 @@ class FakePlaythroughService:
         self.started: list[tuple[str, UUID, str]] = []
         self.restarted: list[tuple[str, UUID]] = []
 
-    def list_scenarios(self) -> list[ScenarioDefinition]:
+    def list_scenarios(
+        self, *, caller_group_chat_id: str | None = None
+    ) -> list[ScenarioDefinition]:
+        del caller_group_chat_id
         return self._scenarios
 
     async def get_active(self, *, owner_kind: str, owner_id: UUID) -> ScenarioSession | None:
@@ -105,8 +108,14 @@ class FakePlaythroughService:
         return self._active
 
     async def start(
-        self, *, owner_kind: str, owner_id: UUID, scenario_id: str
+        self,
+        *,
+        owner_kind: str,
+        owner_id: UUID,
+        scenario_id: str,
+        caller_group_chat_id: str | None = None,
     ) -> PlaythroughStart | None:
+        del caller_group_chat_id
         self.started.append((owner_kind, owner_id, scenario_id))
         scenario = self._known.get(scenario_id)
         if scenario is None:

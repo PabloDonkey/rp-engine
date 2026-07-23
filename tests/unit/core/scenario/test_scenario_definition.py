@@ -3,8 +3,8 @@ from uuid import UUID
 import pytest
 
 from rp_engine.core.character.character import Character
-from rp_engine.core.character.visibility import CharacterVisibility
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
+from rp_engine.core.scenario.visibility import ScenarioVisibility
 from rp_engine.core.world.world import World
 
 
@@ -23,8 +23,6 @@ def sample_world() -> World:
 def sample_character() -> Character:
     return Character(
         id="test_char",
-        owner_id=UUID("12345678-1234-5678-1234-567812345678"),
-        visibility=CharacterVisibility.PRIVATE,
         name="Test Character",
         description="A test character",
         personality="Friendly and helpful",
@@ -177,4 +175,48 @@ def test_scenario_definition_factory_with_defaults():
     assert scenario.characters == {}
     assert scenario.rules == []
     assert scenario.initial_context == ""
+    assert scenario.visibility is ScenarioVisibility.PUBLIC
+    assert scenario.allowed_group_chat_ids == ()
     assert scenario.metadata == {}
+
+
+def _scenario(**overrides: object) -> ScenarioDefinition:
+    base: dict[str, object] = {
+        "id": "s1",
+        "owner_id": UUID("12345678-1234-5678-1234-567812345678"),
+        "name": "S",
+        "description": "d",
+    }
+    base.update(overrides)
+    return ScenarioDefinition(**base)  # type: ignore[arg-type]
+
+
+def test_public_scenario_is_listed_and_playable_for_everyone():
+    scenario = _scenario(visibility=ScenarioVisibility.PUBLIC)
+
+    assert scenario.is_listed_for(None) is True
+    assert scenario.is_listed_for("g1") is True
+    assert scenario.is_playable_by(None) is True
+
+
+def test_unlisted_scenario_is_hidden_but_playable():
+    scenario = _scenario(visibility=ScenarioVisibility.UNLISTED)
+
+    assert scenario.is_listed_for(None) is False
+    assert scenario.is_listed_for("g1") is False
+    assert scenario.is_playable_by(None) is True
+
+
+def test_restricted_scenario_only_for_allowed_group():
+    scenario = _scenario(
+        visibility=ScenarioVisibility.RESTRICTED,
+        allowed_group_chat_ids=("g1",),
+    )
+
+    assert scenario.is_listed_for("g1") is True
+    assert scenario.is_playable_by("g1") is True
+    # Outsiders (other groups and direct chats) are excluded from both.
+    assert scenario.is_listed_for("g2") is False
+    assert scenario.is_playable_by("g2") is False
+    assert scenario.is_listed_for(None) is False
+    assert scenario.is_playable_by(None) is False

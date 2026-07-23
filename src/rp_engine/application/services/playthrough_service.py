@@ -43,8 +43,20 @@ class PlaythroughService:
         self._scenario_session_store = scenario_session_store
         self._conversation_store = conversation_store
 
-    def list_scenarios(self) -> list[ScenarioDefinition]:
-        return self._catalog.list()
+    def list_scenarios(
+        self, *, caller_group_chat_id: str | None = None
+    ) -> list[ScenarioDefinition]:
+        """Scenarios the caller may browse.
+
+        `caller_group_chat_id` is the Telegram chat id for group callers (None for
+        direct chats). UNLISTED scenarios are always excluded; RESTRICTED ones appear
+        only for the groups they are locked to.
+        """
+        return [
+            scenario
+            for scenario in self._catalog.list()
+            if scenario.is_listed_for(caller_group_chat_id)
+        ]
 
     async def get_active(
         self,
@@ -63,9 +75,12 @@ class PlaythroughService:
         owner_kind: SessionOwnerKind,
         owner_id: UUID,
         scenario_id: str,
+        caller_group_chat_id: str | None = None,
     ) -> PlaythroughStart | None:
         scenario = self._catalog.get(scenario_id)
-        if scenario is None:
+        # A caller who may not access a RESTRICTED scenario is treated as if it does not
+        # exist, so locking never leaks the id through a distinct error.
+        if scenario is None or not scenario.is_playable_by(caller_group_chat_id):
             return None
         return await self._begin(owner_kind=owner_kind, owner_id=owner_id, scenario=scenario)
 

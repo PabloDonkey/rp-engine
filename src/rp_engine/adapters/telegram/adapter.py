@@ -88,7 +88,9 @@ class IdentityResolverPort(Protocol):
 
 
 class PlaythroughServicePort(Protocol):
-    def list_scenarios(self) -> list[ScenarioDefinition]: ...
+    def list_scenarios(
+        self, *, caller_group_chat_id: str | None = None
+    ) -> list[ScenarioDefinition]: ...
 
     async def get_active(
         self,
@@ -103,6 +105,7 @@ class PlaythroughServicePort(Protocol):
         owner_kind: SessionOwnerKind,
         owner_id: Any,
         scenario_id: str,
+        caller_group_chat_id: str | None = None,
     ) -> PlaythroughStart | None: ...
 
     async def restart(
@@ -242,6 +245,9 @@ class TelegramAdapter:
             return
 
         owner = await self._resolve_owner(user=user, chat=chat, chat_type=chat_type)
+        # Scenario access is locked to Telegram group chats, so only group callers carry a
+        # chat id; direct chats are outsiders for RESTRICTED scenarios.
+        caller_group_chat_id = self._chat_id(chat) if owner.is_group else None
 
         # /cancel — no scripted menus exist in this pass; acknowledge and move on.
         if parsed_message.command == TelegramCommand.CANCEL:
@@ -252,7 +258,11 @@ class TelegramAdapter:
         if parsed_message.command == TelegramCommand.SCENARIOS:
             await self._reply_with_split(
                 message=message,
-                text=self._format_scenarios(self._playthrough_service.list_scenarios()),
+                text=self._format_scenarios(
+                    self._playthrough_service.list_scenarios(
+                        caller_group_chat_id=caller_group_chat_id
+                    )
+                ),
             )
             return
 
@@ -266,13 +276,18 @@ class TelegramAdapter:
                 await self._reply_with_split(
                     message=message,
                     text="Usage: /play <id>\n\n"
-                    + self._format_scenarios(self._playthrough_service.list_scenarios()),
+                    + self._format_scenarios(
+                        self._playthrough_service.list_scenarios(
+                            caller_group_chat_id=caller_group_chat_id
+                        )
+                    ),
                 )
                 return
             started = await self._playthrough_service.start(
                 owner_kind=owner.owner_kind,
                 owner_id=owner.owner_id,
                 scenario_id=scenario_id,
+                caller_group_chat_id=caller_group_chat_id,
             )
             if started is None:
                 await self._reply_with_split(

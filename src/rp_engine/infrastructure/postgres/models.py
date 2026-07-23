@@ -42,11 +42,14 @@ class ScenarioDefinitionRecord(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     world: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    role_profiles: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
     characters: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
     rules: Mapped[list[object]] = mapped_column(JSONB, nullable=False, default=list)
     story_graph: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     initial_context: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    visibility: Mapped[str] = mapped_column(String(16), nullable=False, default="PUBLIC")
+    allowed_group_chat_ids: Mapped[list[object]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
     payload_metadata: Mapped[dict[str, object]] = mapped_column(
         "metadata",
         JSONB,
