@@ -21,7 +21,7 @@
 - **S005** · Conversation store contract (both backends) — `PostgresConversationStore` has zero test coverage; extract shared contract, run JSON + PG. → [epic](epics/S005-conversation-store-contract.md)
 - **S006** · Migration-vs-model integrity tests — PG contracts use `create_all`, never Alembic; migrations are untested. Add upgrade/downgrade round-trip + migrate-then-contract. → [epic](epics/S006-migration-integrity-tests.md)
 - **S007** · DB startup health probe + `/health` — no boot-time connectivity check; failures surface lazily. Add `SELECT 1` probe + `db` in `/health`. → [epic](epics/S007-db-startup-health-probe.md)
-- **S008** · WorldStore resolution + DB docs refresh — dangling unwired `WorldStore` port; `DATABASE_MODEL.md` still character-centric. → [epic](epics/S008-worldstore-resolution-docs.md)
+- **S008** · Remove legacy WorldStore + DB docs refresh — delete the unwired character-era `WorldStore` port/impl/test + orphaned `default_world_id`; rewrite character-centric `DATABASE_MODEL.md`. → [epic](epics/S008-remove-worldstore-docs.md)
 
 ## 🟢 In Progress
 
