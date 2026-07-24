@@ -1,10 +1,19 @@
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from rp_engine.app.main import create_app
 from rp_engine.infrastructure.config.settings import Settings
+
+# Nothing listens on port 1 (a reserved/privileged port), so connecting here fails fast
+# with "connection refused" instead of hanging or requiring a real Postgres in unit tests.
+_UNREACHABLE_POSTGRES_SETTINGS = {
+    "persistence_backend": "postgres",
+    "postgres_host": "127.0.0.1",
+    "postgres_port": 1,
+}
 
 
 def test_health_endpoint_reports_service_statuses() -> None:
@@ -21,8 +30,33 @@ def test_health_endpoint_reports_service_statuses() -> None:
         "services": {
             "llm": "available",
             "telegram": "disabled",
+            "db": "n/a",
         },
     }
+
+
+def test_postgres_backend_fails_fast_at_startup_when_db_unreachable() -> None:
+    settings = Settings(telegram_enabled=False, **_UNREACHABLE_POSTGRES_SETTINGS)
+    app = create_app(settings)
+
+    with pytest.raises(RuntimeError, match="unreachable"), TestClient(app):
+        pass
+
+
+def test_postgres_backend_health_reports_unavailable_when_fail_fast_disabled() -> None:
+    settings = Settings(
+        telegram_enabled=False,
+        postgres_startup_check_fail_fast=False,
+        **_UNREACHABLE_POSTGRES_SETTINGS,
+    )
+    app = create_app(settings)
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    payload = cast(dict[str, Any], response.json())
+    assert payload["services"]["db"] == "unavailable"
 
 
 def test_debug_status_endpoint_disabled_by_default() -> None:

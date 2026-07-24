@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     postgres_ssl_mode: Literal["disable", "require"] = "disable"
     postgres_pool_size: int = Field(default=10, ge=1)
     postgres_max_overflow: int = Field(default=10, ge=0)
+    # Whether an unreachable Postgres at startup (persistence_backend="postgres") aborts
+    # boot. When False, startup logs the failure and continues; /health then reports
+    # db: unavailable rather than crashing the process.
+    postgres_startup_check_fail_fast: bool = True
 
     telegram_enabled: bool = False
     telegram_bot_token: str = ""

@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -22,9 +23,12 @@ from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.ports import (
     ConversationStore,
+    GenerationTraceStore,
+    GroupIdentityStore,
     LLMProvider,
     ScenarioDefinitionStore,
     ScenarioSessionStore,
+    UserIdentityStore,
 )
 from rp_engine.infrastructure.catalog import ScenarioCatalog
 from rp_engine.infrastructure.config.settings import Settings, get_settings
@@ -32,12 +36,16 @@ from rp_engine.infrastructure.llm.lmstudio import LMStudioProvider
 from rp_engine.infrastructure.postgres import (
     PostgresConfig,
     PostgresConversationStore,
+    PostgresHealthProbe,
     create_engine,
     create_session_factory,
 )
 from rp_engine.infrastructure.postgres.repositories import (
+    PostgresGenerationTraceStore,
+    PostgresGroupIdentityStore,
     PostgresScenarioDefinitionStore,
     PostgresScenarioSessionStore,
+    PostgresUserIdentityStore,
 )
 from rp_engine.infrastructure.storage import (
     JsonConversationStore,
@@ -72,6 +80,8 @@ class AppContainer:
     playthrough_service: PlaythroughService
     telegram_runtime: TelegramRuntime | None
     runtime_state: RuntimeState
+    db_health_probe: PostgresHealthProbe | None
+    db_startup_check_fail_fast: bool
 
 
 def build_container(settings: Settings) -> AppContainer:
@@ -86,6 +96,10 @@ def build_container(settings: Settings) -> AppContainer:
     conversation_store: ConversationStore
     scenario_definition_store: ScenarioDefinitionStore
     scenario_session_store: ScenarioSessionStore
+    generation_trace_store: GenerationTraceStore
+    user_identity_store: UserIdentityStore
+    group_identity_store: GroupIdentityStore
+    db_health_probe: PostgresHealthProbe | None = None
     if settings.persistence_backend == "postgres":
         postgres_config = PostgresConfig.from_settings(settings)
         postgres_engine = create_engine(postgres_config)
@@ -93,14 +107,20 @@ def build_container(settings: Settings) -> AppContainer:
         conversation_store = PostgresConversationStore(postgres_session_factory)
         scenario_definition_store = PostgresScenarioDefinitionStore(postgres_session_factory)
         scenario_session_store = PostgresScenarioSessionStore(postgres_session_factory)
+        generation_trace_store = PostgresGenerationTraceStore(postgres_session_factory)
+        user_identity_store = PostgresUserIdentityStore(postgres_session_factory)
+        group_identity_store = PostgresGroupIdentityStore(postgres_session_factory)
+        db_health_probe = PostgresHealthProbe(
+            postgres_engine, alembic_ini_path=Path.cwd() / "alembic.ini"
+        )
     else:
         conversation_store = JsonConversationStore()
         scenario_definition_store = JsonScenarioDefinitionStore()
         scenario_session_store = JsonScenarioSessionStore()
+        generation_trace_store = JsonGenerationTraceStore()
+        user_identity_store = JsonUserIdentityStore()
+        group_identity_store = JsonGroupIdentityStore()
 
-    generation_trace_store = JsonGenerationTraceStore()
-    user_identity_store = JsonUserIdentityStore()
-    group_identity_store = JsonGroupIdentityStore()
     identity_resolver = IdentityResolver(store=user_identity_store)
     group_identity_resolver = GroupIdentityResolver(store=group_identity_store)
     scenario_catalog = ScenarioCatalog.from_directories(settings.scenario_catalog_dirs)
@@ -182,6 +202,8 @@ def build_container(settings: Settings) -> AppContainer:
         playthrough_service=playthrough_service,
         telegram_runtime=telegram_runtime,
         runtime_state=RuntimeState(),
+        db_health_probe=db_health_probe,
+        db_startup_check_fail_fast=settings.postgres_startup_check_fail_fast,
     )
 
 
@@ -199,11 +221,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict[str, object]:
         llm_status = "available" if container.settings.lmstudio_model else "unavailable"
         telegram_status = "running" if container.telegram_runtime is not None else "disabled"
+        if container.db_health_probe is None:
+            db_status = "n/a"
+        else:
+            db_status = "available" if await container.db_health_probe.ping() else "unavailable"
         return {
             "status": "ok",
             "services": {
                 "llm": llm_status,
                 "telegram": telegram_status,
+                "db": db_status,
             },
         }
 

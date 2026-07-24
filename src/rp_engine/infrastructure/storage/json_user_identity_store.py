@@ -6,6 +6,7 @@ from uuid import UUID
 
 from rp_engine.core.user.identity import UserIdentity
 from rp_engine.core.user.user import User
+from rp_engine.infrastructure.identity_serialization import identity_from_payload
 
 
 class JsonUserIdentityStore:
@@ -70,21 +71,12 @@ class JsonUserIdentityStore:
             for provider, raw in identities_map.items():
                 if not isinstance(provider, str) or not isinstance(raw, dict):
                     continue
-                external_id = raw.get("external_id")
-                metadata = raw.get("metadata", {})
-                if not isinstance(external_id, str) or not isinstance(metadata, dict):
+                parsed = identity_from_payload(raw)
+                if parsed is None:
                     continue
-                normalized_metadata = {
-                    key: value
-                    for key, value in metadata.items()
-                    if isinstance(key, str) and isinstance(value, str)
-                }
+                external_id, metadata = parsed
                 identities.append(
-                    UserIdentity(
-                        provider=provider,
-                        external_id=external_id,
-                        metadata=normalized_metadata,
-                    )
+                    UserIdentity(provider=provider, external_id=external_id, metadata=metadata)
                 )
 
         return User(

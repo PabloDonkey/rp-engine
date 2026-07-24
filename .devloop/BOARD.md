@@ -7,34 +7,27 @@
 
 ## 🟡 Up Next
 
-### **S004** · PG parity for identity + trace stores — GenerationTrace/UserIdentity/GroupIdentity still hard-wired to JSON even in `postgres` mode; add models + migration 0007 + PG stores + contracts. _(core gap)_ → [epic](epics/S004-pg-identity-trace-stores.md)
-
-
-### **S005** · Conversation store contract (both backends) — `PostgresConversationStore` has zero test coverage; extract shared contract, run JSON + PG. → [epic](epics/S005-conversation-store-contract.md)
-
-
-### **S006** · Migration-vs-model integrity tests — PG contracts use `create_all`, never Alembic; migrations are untested. Add upgrade/downgrade round-trip + migrate-then-contract. → [epic](epics/S006-migration-integrity-tests.md)
-
-
-### **S007** · DB startup health probe + `/health` — no boot-time connectivity check; failures surface lazily. Add `SELECT 1` probe + `db` in `/health`. → [epic](epics/S007-db-startup-health-probe.md)
-
+_(nothing queued — see Backlog)_
 
 ## 🟢 In Progress
 
 ## ✅ Done (recent)
 
-### **S003 · 2026-07-23 · Multiple scenario catalog paths + fix `.env.example`** — `scenario_catalog_dirs: list[str]` (comma-delimited), `ScenarioCatalog.from_directories(...)` merges dirs (later wins on id collision), `.env.example`/README/SCENARIOS.md updated. Verified: 214 passed / 2 skipped, mypy clean on `src/`, ruff clean. → [archive](archive/S003-2026-07-23-multi-catalog-paths.md)
+### **S007 · 2026-07-23 · DB startup health probe + `/health`** — `PostgresHealthProbe` (`ping` + schema-version drift warning) wired into lifespan via a protocol (no SQLAlchemy leak); fails fast by default on unreachable DB (`RP_ENGINE_POSTGRES_STARTUP_CHECK_FAIL_FAST`); `/health` gained `db`. Live-verified: real boot shows `available`; a forced one-step downgrade fired the drift warning without blocking startup. 221 passed / 12 skipped, mypy + ruff clean. → [archive](archive/S007-2026-07-23-db-startup-health-probe.md)
 
 
-### **S002 · 2026-07-23 · Fix LM Studio `result.content` crash** — fix already landed with the scenario migration (`_extract_content` normalizes str/dict/object; log uses normalized content). Verified: 6/6 provider tests, 208 passed / 2 skipped, mypy + ruff clean. → [archive](archive/S002-2026-07-23-lmstudio-content-fix.md)
+### **S006 · 2026-07-23 · Migration-vs-model integrity tests** — Upgrade/downgrade round-trip, autogenerate drift guard, migrate-then-contract fixture running all 7 store contracts against a real-migration schema; single-head check. **Caught a real bug**: `GenerationTraceRecord.session_id` had `index=True` with no matching migration index — fixed. Live PG 12/12 passed. → [archive](archive/S006-2026-07-23-migration-integrity-tests.md)
 
 
-### **2026-07-22 · Scenario access control + drop RoleProfile** — `ScenarioVisibility` (PUBLIC / UNLISTED / RESTRICTED) + `allowed_group_chat_ids` allow-list; migrations 0005/0006; RoleProfile removed. Commit `59dc049`.
+### **S005 · 2026-07-23 · Conversation store contract (both backends)** — Shared `conversation_store_contract.py` run against JSON (unit) + PG (gated integration, live-verified); PG-only tests for created_at tie-break + `session_id` population. Found metadata "non-str key" filtering is unreachable dead code (JSON-object semantics coerce keys to str first). → [archive](archive/S005-2026-07-23-conversation-store-contract.md)
 
 
-### **S001 · 2026-07-22 · Scenario-centric migration (Phase 0–7)** — character-centric → scenario-native engine, JSON + Postgres at parity. → [archive](archive/S001-2026-07-22-scenario-migration.md) · ADR-023
+### **S004 · 2026-07-23 · PG parity for identity + trace stores** — `PostgresUserIdentityStore`/`PostgresGroupIdentityStore`/`PostgresGenerationTraceStore` + migration 0007; wired into `build_container`'s postgres branch; shared `identity_serialization.py`; contract tests (JSON + gated PG). Live-verified: caught + fixed a flush-order FK bug. → [archive](archive/S004-2026-07-23-pg-identity-trace-stores.md)
 
 
-### **S008** · Remove legacy WorldStore + DB docs refresh — delete the unwired character-era `WorldStore` port/impl/test + orphaned `default_world_id`; rewrite character-centric `DATABASE_MODEL.md`. → [epic](epics/S008-remove-worldstore-docs.md)
+<!-- Trimmed 2026-07-23: S001-S003 and the unlabeled 2026-07-22 access-control card are still
+     in archive/ with full detail; removed here to keep this column glanceable. -->
+
+### **S008** · Remove legacy WorldStore + DB docs refresh — delete the unwired character-era `WorldStore` port/impl/test + orphaned `default_world_id`; rewrite character-centric `DATABASE_MODEL.md`. **Note (2026-07-23): mis-filed here — checklist is still all unchecked and the code is still present; not actually done.** → [epic](epics/S008-remove-worldstore-docs.md)
 
 

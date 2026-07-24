@@ -109,3 +109,72 @@ class ActiveScenarioSessionRecord(Base):
         ForeignKey("scenario_sessions.id", ondelete="CASCADE"),
         nullable=False,
     )
+
+
+class UserRecord(Base):
+    __tablename__ = "users"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class UserIdentityRecord(Base):
+    __tablename__ = "user_identities"
+
+    provider: Mapped[str] = mapped_column(String(64), primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    identity_metadata: Mapped[dict[str, str]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        default=dict,
+    )
+
+
+class GroupRecord(Base):
+    __tablename__ = "groups"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class GroupIdentityRecord(Base):
+    __tablename__ = "group_identities"
+
+    provider: Mapped[str] = mapped_column(String(64), primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    group_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    identity_metadata: Mapped[dict[str, str]] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=False,
+        default=dict,
+    )
+
+
+class GenerationTraceRecord(Base):
+    __tablename__ = "generation_traces"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    # No index=True here: the composite index below already covers session_id lookups via
+    # its leftmost column, so a standalone index would just be redundant.
+    session_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    record: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (Index("ix_generation_traces_session_created", "session_id", "created_at"),)

@@ -137,6 +137,8 @@ PostgreSQL application variables (used when `RP_ENGINE_PERSISTENCE_BACKEND=postg
 * `RP_ENGINE_POSTGRES_SSL_MODE` (`disable` or `require`)
 * `RP_ENGINE_POSTGRES_POOL_SIZE`
 * `RP_ENGINE_POSTGRES_MAX_OVERFLOW`
+* `RP_ENGINE_POSTGRES_STARTUP_CHECK_FAIL_FAST` (default `true`; abort startup if Postgres is
+  unreachable — set `false` to log and continue instead, with `/health` reporting `db: unavailable`)
 
 Generation trace behavior:
 
