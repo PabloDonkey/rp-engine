@@ -2,7 +2,9 @@
 
 ## 🔵 Backlog
 
-### **S010** · Admin panel — scenario catalog management — list/view/create/edit `ScenarioDefinition`s from the panel instead of hand-editing JSON. Open Q: edit JSON files vs. DB-backed store. Follows S009. → [epic](epics/S010-admin-scenario-catalog-mgmt.md)
+### **S013** · Retire JSON persistence backend — Postgres becomes the sole runtime backend (ADR-024): delete all 6 JSON stores, rewire `PlaythroughService` off the JSON `ScenarioCatalog` onto `ScenarioDefinitionStore`, recycle the catalog loader into an admin-panel import/export utility (scenarios + sessions), add an auto-managed Postgres test fixture. Blocks S010. → [epic](epics/S013-retire-json-persistence.md)
+
+### **S010** · Admin panel — scenario catalog management — list/view/create/edit `ScenarioDefinition`s from the panel instead of hand-editing JSON. Resolved (2026-07-24, ADR-024): Postgres is source of truth, JSON is import/export only. Blocked on S013. Follows S009. → [epic](epics/S010-admin-scenario-catalog-mgmt.md)
 
 ### **S011** · Admin panel — ops dashboard — landing overview: active sessions, DB health (reuses S007 `/health`), recent LLM latency/errors. Read-only. Follows S009. → [epic](epics/S011-admin-ops-dashboard.md)
 
