@@ -23,6 +23,15 @@ class PostgresUserIdentityStore(UserIdentityStore):
             identities = await self._load_identities(db_session, user_id)
             return self._to_domain(user_record, identities)
 
+    async def list_users(self) -> list[User]:
+        async with self._session_factory() as db_session:
+            user_records = (await db_session.scalars(select(UserRecord))).all()
+            users: list[User] = []
+            for user_record in user_records:
+                identities = await self._load_identities(db_session, user_record.id)
+                users.append(self._to_domain(user_record, identities))
+            return users
+
     async def get_user_by_identity(self, *, provider: str, external_id: str) -> User | None:
         statement = select(UserIdentityRecord).where(
             UserIdentityRecord.provider == provider,

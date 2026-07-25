@@ -31,6 +31,16 @@ class JsonUserIdentityStore:
     async def get_by_id(self, user_id: UUID) -> User | None:
         return await self._load_user_by_id(str(user_id))
 
+    async def list_users(self) -> list[User]:
+        if not self._users_path.exists():
+            return []
+        users: list[User] = []
+        for directory in await asyncio.to_thread(self._list_subdirectories, self._users_path):
+            user = await self._load_user_by_id(directory.name)
+            if user is not None:
+                users.append(user)
+        return users
+
     async def create_user_with_identity(
         self,
         *,
@@ -119,6 +129,10 @@ class JsonUserIdentityStore:
 
     def _identity_index_path(self, provider: str) -> Path:
         return self._adapters_path / provider / "identity_index.json"
+
+    @staticmethod
+    def _list_subdirectories(path: Path) -> list[Path]:
+        return [entry for entry in path.iterdir() if entry.is_dir()]
 
     @staticmethod
     def _read_payload(path: Path) -> dict[str, Any]:

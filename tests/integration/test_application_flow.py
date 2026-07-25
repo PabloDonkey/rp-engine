@@ -109,9 +109,7 @@ class FakePlaythroughService:
     ) -> PlaythroughStart | None:
         del owner_id, scenario_id
         session = _fixed_session(owner_kind=owner_kind, owner_id=FIXED_USER_ID)
-        return PlaythroughStart(
-            session=session, scenario=_default_definition(), opening="Opening."
-        )
+        return PlaythroughStart(session=session, scenario=_default_definition(), opening="Opening.")
 
     async def restart(self, *, owner_kind: str, owner_id: UUID) -> PlaythroughStart | None:
         del owner_kind, owner_id
@@ -260,6 +258,9 @@ class FakeUserStore:
         if user_id != FIXED_USER_ID:
             return None
         return User(id=FIXED_USER_ID, display_name="Pablo")
+
+    async def list_users(self) -> list[User]:
+        return [User(id=FIXED_USER_ID, display_name="Pablo")]
 
 
 class FakeGroupStore:

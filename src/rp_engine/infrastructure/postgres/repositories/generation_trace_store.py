@@ -1,5 +1,6 @@
 from uuid import UUID, uuid4
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rp_engine.core.ports.generation_trace_store import GenerationTraceStore
@@ -14,3 +15,13 @@ class PostgresGenerationTraceStore(GenerationTraceStore):
     async def append(self, *, session_id: UUID, record: dict[str, object]) -> None:
         async with session_scope(self._session_factory) as db_session:
             db_session.add(GenerationTraceRecord(id=uuid4(), session_id=session_id, record=record))
+
+    async def list_for_session(self, session_id: UUID) -> list[dict[str, object]]:
+        statement = (
+            select(GenerationTraceRecord)
+            .where(GenerationTraceRecord.session_id == session_id)
+            .order_by(GenerationTraceRecord.created_at.asc(), GenerationTraceRecord.id.asc())
+        )
+        async with self._session_factory() as db_session:
+            records = (await db_session.scalars(statement)).all()
+        return [record.record for record in records]

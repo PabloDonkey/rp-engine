@@ -11,9 +11,11 @@
 
 ## 🟡 Up Next
 
-### **S009** · Admin panel — session/conversation debugging (MVP) — Vue SPA (tailflow stack) + JSON admin API on FastAPI. Browse users → sessions → transcript + generation traces ("why did the bot say that"). Write actions: delete/reset session, block/unblock user. **No auth — trusted over Tailscale, incl. phone.** → [epic](epics/S009-admin-panel-session-debugging.md)
+_(nothing queued — see Backlog)_
 
 ## 🟢 In Progress
+
+### **S009** · Admin panel — session/conversation debugging (MVP) — Vue SPA + JSON admin API on FastAPI, backend + core flow built and live-verified against real Postgres data (2026-07-24). Users → sessions → transcript + generation traces; delete session; block/unblock user. No auth (Tailscale trust). Remaining: browser/phone eyeball check, static-serve wiring, tests, ADR — see epic. → [epic](epics/S009-admin-panel-session-debugging.md)
 
 ## ✅ Done (recent)
 

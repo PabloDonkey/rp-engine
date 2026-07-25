@@ -17,7 +17,7 @@ _UNREACHABLE_POSTGRES_SETTINGS = {
 
 
 def test_health_endpoint_reports_service_statuses() -> None:
-    settings = Settings(telegram_enabled=False)
+    settings = Settings(telegram_enabled=False, persistence_backend="json")
     app = create_app(settings)
 
     with TestClient(app) as client:

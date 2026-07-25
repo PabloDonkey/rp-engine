@@ -70,6 +70,28 @@ def test_authorization_from_directory_still_allows_admin_when_file_missing(tmp_p
     assert auth.is_private_chat_authorized("any-user") is False
 
 
+def test_remove_private_user_blocks_a_previously_allowed_user() -> None:
+    auth = TelegramAuthorization(allowed_user_ids={"123"})
+
+    assert auth.remove_private_user("123") is True
+    assert auth.is_private_chat_authorized("123") is False
+
+
+def test_remove_private_user_is_a_no_op_when_not_present() -> None:
+    auth = TelegramAuthorization(allowed_user_ids={"123"})
+
+    assert auth.remove_private_user("999") is False
+    assert auth.is_private_chat_authorized("123") is True
+
+
+def test_remove_private_user_does_not_block_the_admin() -> None:
+    auth = TelegramAuthorization(allowed_user_ids={"124105002"}, admin_user_id="124105002")
+
+    auth.remove_private_user("124105002")
+
+    assert auth.is_private_chat_authorized("124105002") is True
+
+
 def test_group_authorization_uses_group_whitelist() -> None:
     auth = TelegramAuthorization(
         allowed_user_ids=set(),

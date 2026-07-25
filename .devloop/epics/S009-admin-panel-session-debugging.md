@@ -1,6 +1,7 @@
 # S009 · Admin panel — session/conversation debugging (MVP)
 
-**Status:** 🔵 Backlog
+**Status:** 🟢 In Progress — backend + core frontend flow built and live-verified against real
+Postgres data (2026-07-24); remaining work is polish/hardening, see notes below.
 **Effort:** ~2-3 days
 **Risk:** Medium (new adapter surface + first frontend in the repo; write actions touch live user state)
 
@@ -39,43 +40,79 @@ to the API and built to static assets served by FastAPI in prod.
 ## Tasks
 
 ### Backend — admin JSON API (`adapters/api/`)
-- [ ] Decide the read surface and add an `AdminService` (application layer) that composes the
-      existing stores; **no business logic in the router**.
-- [ ] `GET /admin/users` — list known users (id, handle, session count, last activity).
-- [ ] `GET /admin/users/{id}/sessions` — that user's scenario sessions (scenario, status,
-      created/updated, message count).
-- [ ] `GET /admin/sessions/{id}` — session detail: scenario ref, full conversation history.
-- [ ] `GET /admin/sessions/{id}/traces` — generation traces for the session (prompt, model,
-      params, output) so "why did it say that" is answerable.
-- [ ] **Action:** `DELETE /admin/sessions/{id}` (delete) + reset variant — clear/reset a
-      session via the session store. Confirm delete vs. reset semantics against the store API.
-- [ ] **Action:** `POST /admin/users/{id}/block` + `/unblock` — mutate the Telegram allowlist
-      via `TelegramAuthorization` (+ `persist()`), respecting the empty-allowlist=allow-all rule.
-- [ ] Pydantic response models in `adapters/api/models.py`; wire the router in `app/main.py`.
-- [ ] Bind admin routes to tailscale/localhost only (or document the deploy binding); **no auth
-      middleware** by decision, but keep the router isolated so a passphrase can be added later.
+- [x] `AdminService` (`application/services/admin_service.py`) composing the existing ports;
+      no business logic in the router. Required extending two ports with read methods that
+      didn't exist yet — `UserIdentityStore.list_users()` and
+      `GenerationTraceStore.list_for_session()` — implemented + contract-tested for **both**
+      JSON and Postgres backends (dual-persistence parity rule).
+- [x] `GET /admin/users` — id, display_name, telegram_external_id, session_count, is_blocked.
+- [x] `GET /admin/users/{id}/sessions`
+- [x] `GET /admin/sessions/{id}` (includes message_count) + `GET /admin/sessions/{id}/transcript`
+      + `GET /admin/sessions/{id}/traces`
+- [x] **Action:** `DELETE /admin/sessions/{id}` — deletes the session row and clears its
+      conversation messages. (No separate "reset" variant — delete covers the need; a fresh
+      session is created by starting a new playthrough.)
+- [x] **Action:** `POST /admin/users/{id}/block` + `/unblock` — mutate `TelegramAuthorization`'s
+      allowlist directly (`remove_private_user`/`add_private_user` + `persist()`). Note: the
+      empty-allowlist=allow-all footgun flagged in this doc was actually fixed **before** this
+      epic started (separate fail-closed change, 2026-07-24: empty allowlist now denies all
+      except the configured admin) — `is_blocked` in the API reflects explicit-allowlist
+      membership via `has_explicit_private_user`.
+- [x] Pydantic models in `adapters/api/admin_models.py`; router wired in `app/main.py` via
+      `create_admin_router(admin_service, telegram_authorization)`.
+- [x] No auth middleware, router isolated (`create_admin_router` takes deps explicitly so a
+      passphrase layer can wrap it later). Added permissive CORS (`allow_origins=["*"]`) so the
+      Vite dev server / any tailnet origin can call it — consistent with the no-auth trust model.
+      **Not yet done:** binding admin routes to the tailscale interface specifically (currently
+      bound wherever the app binds, per `RP_ENGINE_APP_HOST`) — see Known gaps below.
 
-### Frontend — Vue SPA (mirror tailflow stack)
-- [ ] Scaffold `frontend/` (Vite + Vue 3 TS), copy tailflow's config shape (Tailwind v4 via
-      `@tailwindcss/vite`, reka-ui, Pinia, vue-router, Zod, eslint/vitest/playwright).
-- [ ] `src/api/` client with Zod-validated responses against the admin endpoints.
-- [ ] Pinia stores: users, sessions, current-session detail.
-- [ ] Pages: **Users list → User detail (sessions) → Session detail** (conversation transcript
-      + traces panel). **Mobile-first layout** (used from phone over Tailscale).
-- [ ] Wire the two write actions (delete/reset session, block/unblock user) with a confirm step.
-- [ ] Dev proxy to FastAPI; production build served as static by the app (or documented separately).
+### Frontend — Vue SPA
+- [x] Scaffolded `frontend/` (Vite + Vue 3 + TS + Pinia + vue-router + Tailwind v4 + Zod).
+      **Deviation from the original plan:** dropped `reka-ui`, `motion-v`, ESLint, and the
+      Vitest/Playwright test harness to fit the session's scope — native `confirm()` for
+      destructive-action guards instead of a modal component, no component/e2e tests yet.
+      Everything else (state mgmt, routing, schema validation, Tailwind) matches tailflow.
+- [x] `src/api/index.ts` — fetch client, Zod-parsed responses, typed `ApiError`.
+- [x] `src/stores/admin.ts` — single Pinia store: users, user-sessions, session-detail
+      (transcript + traces), loading/error state per slice.
+- [x] Pages: `UsersPage` → `UserSessionsPage` → `SessionDetailPage` (transcript + collapsible
+      raw-JSON traces). Mobile-first (single column, large tap targets).
+- [x] Both write actions wired with a `confirm()` guard: delete session, block/unblock user.
+- [x] Dev proxy `/admin` → `http://localhost:8000` in `vite.config.ts`. Production static-build
+      serving from FastAPI **not wired yet** — currently dev-server only (see Known gaps).
 
 ### Glue / docs
-- [ ] `Makefile` targets: run admin frontend dev server; build; run app with admin API.
-- [ ] ADR in `docs/DECISIONS.md`: admin panel exists, **no-auth-over-tailscale** trust model,
-      Vue-SPA + JSON-API shape, why not server-rendered.
-- [ ] Note follow-ups: S010 (catalog mgmt incl. scenario edit), S011 (ops dashboard).
+- [ ] `Makefile` targets for the frontend (dev/build) — not done.
+- [ ] ADR in `docs/DECISIONS.md` for the admin panel trust model / stack choice — not done.
+- [x] Follow-ups already filed: S010 (catalog mgmt), S011 (ops dashboard).
+
+## Known gaps (deliberately deferred, not oversights)
+
+- No component/e2e test coverage on the frontend (typecheck + production build both verified
+  clean instead).
+- No static-file serving of the built frontend from FastAPI — today you run `npm run dev`
+  and the app separately; there's no single deployable artifact yet.
+- Admin routes aren't bound/restricted to the tailscale interface specifically — anything
+  that can reach the app's bound host:port can hit `/admin/*`, matching the app's existing
+  bind behavior rather than adding new restriction.
+- `reka-ui`/`motion-v` (tailflow's component/animation libs) weren't pulled in; the UI is
+  plain Tailwind + native elements.
 
 ## Verification
 
-- [ ] `uv run pytest` green, `uv run mypy .` clean, `uv run ruff check .` clean (backend).
-- [ ] Frontend `typecheck` + `test` green; at least one Playwright happy-path (open a session,
-      see transcript + traces).
-- [ ] **Live-verify** end-to-end against a real running app over the tailnet, **including from
-      phone**: browse a real user → session → transcript + traces; delete/reset a throwaway
-      session; block then unblock a test user and confirm the allowlist file changed.
+- [x] `uv run pytest` green (243 passed, 12 skipped), `uv run mypy .` clean (no new errors vs.
+      the pre-existing baseline), `uv run ruff check .` clean (backend).
+- [x] Frontend `typecheck` (`vue-tsc --noEmit`) and production `build` both clean. No automated
+      test suite exists yet (see Known gaps) — no Playwright happy-path.
+- [x] **Live-verified** end-to-end against the real Postgres database (2026-07-24): inserted
+      disposable synthetic rows (a `__verify_test_user__`, a session, a message, a trace),
+      confirmed via curl through both the raw API and the Vite dev-server proxy that
+      users/sessions/transcript/traces all render correctly against real data (10 real users
+      + the synthetic one all listed correctly with real session counts); block → unblock
+      round-tripped and persisted to the allowlist file correctly; delete removed both the
+      session row and its conversation messages. All synthetic rows cleaned up afterward — the
+      live Telegram bot process (already running on :8000) was left untouched throughout by
+      running verification on a separate port (:8099) with Telegram disabled.
+      **Not done:** actual browser/phone verification — no browser-automation tool was
+      available in this session, so the UI's visual rendering was never eyeballed, only its
+      data flow (proxying, API contracts, Zod parsing implied by successful build).

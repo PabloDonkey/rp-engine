@@ -3,7 +3,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
+from rp_engine.adapters.api import create_admin_router
 from rp_engine.adapters.api import create_router as create_api_router
 from rp_engine.adapters.telegram.adapter import (
     TelegramAdapter,
@@ -14,6 +16,7 @@ from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.adapters.telegram.narrator_store import TelegramNarratorStore
 from rp_engine.app.lifespan import create_lifespan
 from rp_engine.app.runtime_state import RuntimeState
+from rp_engine.application.services.admin_service import AdminService
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.group_identity_resolver import GroupIdentityResolver
 from rp_engine.application.services.identity_resolver import IdentityResolver
@@ -78,6 +81,8 @@ class AppContainer:
     identity_resolver: IdentityResolver
     group_identity_resolver: GroupIdentityResolver
     playthrough_service: PlaythroughService
+    admin_service: AdminService
+    telegram_authorization: TelegramAuthorization
     telegram_runtime: TelegramRuntime | None
     runtime_state: RuntimeState
     db_health_probe: PostgresHealthProbe | None
@@ -136,6 +141,17 @@ def build_container(settings: Settings) -> AppContainer:
         max_tokens=settings.lmstudio_max_tokens,
         top_p=settings.lmstudio_top_p_sampling,
     )
+    admin_service = AdminService(
+        user_identity_store=user_identity_store,
+        scenario_session_store=scenario_session_store,
+        conversation_store=conversation_store,
+        generation_trace_store=generation_trace_store,
+    )
+    telegram_authorization = TelegramAuthorization.from_directory(
+        settings.telegram_authorization_dir,
+        admin_user_id=settings.telegram_admin_user_id,
+    )
+
     logger.info("LM Studio provider initialized", extra={"api_host": settings.lmstudio_api_host})
     orchestrator = RPOrchestrator(llm_provider=llm_provider)
     chat_service = ChatService(
@@ -166,10 +182,7 @@ def build_container(settings: Settings) -> AppContainer:
             identity_resolver=identity_resolver,
             group_identity_resolver=group_identity_resolver,
             playthrough_service=playthrough_service,
-            authorization=TelegramAuthorization.from_directory(
-                settings.telegram_authorization_dir,
-                admin_user_id=settings.telegram_admin_user_id,
-            ),
+            authorization=telegram_authorization,
             admin_telegram_user_id=settings.telegram_admin_user_id,
             unauthorized_message=settings.telegram_unauthorized_message,
             message_max_length=settings.telegram_message_max_length,
@@ -201,6 +214,8 @@ def build_container(settings: Settings) -> AppContainer:
         identity_resolver=identity_resolver,
         group_identity_resolver=group_identity_resolver,
         playthrough_service=playthrough_service,
+        admin_service=admin_service,
+        telegram_authorization=telegram_authorization,
         telegram_runtime=telegram_runtime,
         runtime_state=RuntimeState(),
         db_health_probe=db_health_probe,
@@ -216,7 +231,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title=resolved_settings.app_name, lifespan=create_lifespan(container))
     app.state.container = container
+    # Admin panel has no auth (trust the Tailscale network, see docs/DECISIONS.md); allow the
+    # Vue dev server / any tailnet origin to call it rather than fighting CORS in that model.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.include_router(create_api_router(container.chat_service))
+    app.include_router(
+        create_admin_router(container.admin_service, container.telegram_authorization)
+    )
 
     @app.get("/health")
     async def health() -> dict[str, object]:

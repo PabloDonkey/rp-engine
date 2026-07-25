@@ -35,3 +35,6 @@ async def assert_user_identity_store_contract(store: UserIdentityStore) -> None:
     assert other.id != user.id
 
     assert await store.get_by_id(other.id) is not None
+
+    all_users = await store.list_users()
+    assert {listed.id for listed in all_users} == {user.id, other.id}

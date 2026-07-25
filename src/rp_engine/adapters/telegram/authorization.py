@@ -56,6 +56,16 @@ class TelegramAuthorization:
         self._allowed_user_ids.add(normalized_user_id)
         return True
 
+    def remove_private_user(self, user_id: str) -> bool:
+        normalized_user_id = str(user_id)
+        if normalized_user_id not in self._allowed_user_ids:
+            return False
+        self._allowed_user_ids.discard(normalized_user_id)
+        return True
+
+    def allowed_user_ids(self) -> frozenset[str]:
+        return frozenset(self._allowed_user_ids)
+
     def persist(self) -> None:
         if self._directory is None:
             return

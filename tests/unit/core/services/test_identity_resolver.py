@@ -20,6 +20,9 @@ class FakeIdentityStore:
         del user_id
         return self._existing
 
+    async def list_users(self) -> list[User]:
+        return [self._existing] if self._existing is not None else []
+
     async def create_user_with_identity(
         self,
         *,
