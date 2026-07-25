@@ -2,6 +2,8 @@
 
 ## 🔵 Backlog
 
+### **S012** · Admin panel — thinking trace + per-message debug menu — capture model "thinking"/reasoning content (currently discarded by the LM Studio provider), stamp turn number onto each stored message, and replace the transcript's single global "Show generation traces" toggle with a per-message filter row (Thinking / Raw trace / System prompt / Turn metadata checkboxes, independent per message). Follows S009. → [epic](epics/S012-transcript-thinking-and-per-message-debug-menu.md)
+
 ### **S010** · Admin panel — scenario catalog management — list/view/create/edit `ScenarioDefinition`s from the panel instead of hand-editing JSON. Open Q: edit JSON files vs. DB-backed store. Follows S009. → [epic](epics/S010-admin-scenario-catalog-mgmt.md)
 
 ### **S011** · Admin panel — ops dashboard — landing overview: active sessions, DB health (reuses S007 `/health`), recent LLM latency/errors. Read-only. Follows S009. → [epic](epics/S011-admin-ops-dashboard.md)
