@@ -4,10 +4,23 @@ from pathlib import Path
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 
 
-def test_authorization_allows_everyone_when_whitelist_is_empty() -> None:
+def test_authorization_denies_everyone_when_whitelist_is_empty() -> None:
     auth = TelegramAuthorization(allowed_user_ids=set())
 
-    assert auth.is_private_chat_authorized("123") is True
+    assert auth.is_private_chat_authorized("123") is False
+
+
+def test_authorization_always_allows_admin_even_when_whitelist_is_empty() -> None:
+    auth = TelegramAuthorization(allowed_user_ids=set(), admin_user_id="124105002")
+
+    assert auth.is_private_chat_authorized("124105002") is True
+    assert auth.is_private_chat_authorized("999") is False
+
+
+def test_authorization_always_allows_admin_even_when_not_in_whitelist() -> None:
+    auth = TelegramAuthorization(allowed_user_ids={"123"}, admin_user_id="124105002")
+
+    assert auth.is_private_chat_authorized("124105002") is True
 
 
 def test_authorization_denies_users_not_in_whitelist() -> None:
@@ -38,13 +51,23 @@ def test_authorization_loads_users_from_json_directory(tmp_path: Path) -> None:
     assert auth.is_private_chat_authorized("999") is False
 
 
-def test_authorization_defaults_to_allow_all_when_users_file_missing(tmp_path: Path) -> None:
+def test_authorization_denies_all_when_users_file_missing(tmp_path: Path) -> None:
     auth_dir = tmp_path / "authorization"
     auth_dir.mkdir()
 
     auth = TelegramAuthorization.from_directory(auth_dir)
 
-    assert auth.is_private_chat_authorized("any-user") is True
+    assert auth.is_private_chat_authorized("any-user") is False
+
+
+def test_authorization_from_directory_still_allows_admin_when_file_missing(tmp_path: Path) -> None:
+    auth_dir = tmp_path / "authorization"
+    auth_dir.mkdir()
+
+    auth = TelegramAuthorization.from_directory(auth_dir, admin_user_id="124105002")
+
+    assert auth.is_private_chat_authorized("124105002") is True
+    assert auth.is_private_chat_authorized("any-user") is False
 
 
 def test_group_authorization_uses_group_whitelist() -> None:

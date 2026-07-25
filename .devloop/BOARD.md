@@ -2,12 +2,16 @@
 
 ## 🔵 Backlog
 
+### **S010** · Admin panel — scenario catalog management — list/view/create/edit `ScenarioDefinition`s from the panel instead of hand-editing JSON. Open Q: edit JSON files vs. DB-backed store. Follows S009. → [epic](epics/S010-admin-scenario-catalog-mgmt.md)
+
+### **S011** · Admin panel — ops dashboard — landing overview: active sessions, DB health (reuses S007 `/health`), recent LLM latency/errors. Read-only. Follows S009. → [epic](epics/S011-admin-ops-dashboard.md)
+
 ### Activate StoryGraph / scenario branching — `StoryGraph`+`StoryBeat` exist as inert data; nothing drives beats yet. _(bare card — gets an S### when promoted to an epic)_ → see `../docs/DOMAIN_MODEL.md`
 
 
 ## 🟡 Up Next
 
-_(nothing queued — see Backlog)_
+### **S009** · Admin panel — session/conversation debugging (MVP) — Vue SPA (tailflow stack) + JSON admin API on FastAPI. Browse users → sessions → transcript + generation traces ("why did the bot say that"). Write actions: delete/reset session, block/unblock user. **No auth — trusted over Tailscale, incl. phone.** → [epic](epics/S009-admin-panel-session-debugging.md)
 
 ## 🟢 In Progress
 

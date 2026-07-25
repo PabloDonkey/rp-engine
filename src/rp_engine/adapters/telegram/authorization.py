@@ -8,22 +8,35 @@ class TelegramAuthorization:
         allowed_user_ids: set[str],
         allowed_group_ids: set[str] | None = None,
         directory: Path | None = None,
+        admin_user_id: str = "",
     ) -> None:
         self._allowed_user_ids = allowed_user_ids
         self._allowed_group_ids = allowed_group_ids or set()
         self._directory = directory
+        self._admin_user_id = str(admin_user_id) if admin_user_id else ""
 
     @classmethod
-    def from_directory(cls, directory: str | Path) -> "TelegramAuthorization":
+    def from_directory(
+        cls, directory: str | Path, admin_user_id: str = ""
+    ) -> "TelegramAuthorization":
         directory_path = Path(directory)
         users = cls._load_ids(directory_path / "users.json", "allowed_user_ids")
         groups = cls._load_ids(directory_path / "groups.json", "allowed_group_ids")
-        return cls(allowed_user_ids=users, allowed_group_ids=groups, directory=directory_path)
+        return cls(
+            allowed_user_ids=users,
+            allowed_group_ids=groups,
+            directory=directory_path,
+            admin_user_id=admin_user_id,
+        )
 
     def is_authorized(self, user_id: str) -> bool:
-        if not self._allowed_user_ids:
+        # Fail closed: an empty allowlist denies everyone. The configured admin is always
+        # allowed so a missing/emptied users.json can never lock the operator out.
+        if self._admin_user_id and str(user_id) == self._admin_user_id:
             return True
-        return user_id in self._allowed_user_ids
+        if not self._allowed_user_ids:
+            return False
+        return str(user_id) in self._allowed_user_ids
 
     def is_private_chat_authorized(self, user_id: str) -> bool:
         return self.is_authorized(user_id)

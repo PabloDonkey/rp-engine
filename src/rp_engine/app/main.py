@@ -167,7 +167,8 @@ def build_container(settings: Settings) -> AppContainer:
             group_identity_resolver=group_identity_resolver,
             playthrough_service=playthrough_service,
             authorization=TelegramAuthorization.from_directory(
-                settings.telegram_authorization_dir
+                settings.telegram_authorization_dir,
+                admin_user_id=settings.telegram_admin_user_id,
             ),
             admin_telegram_user_id=settings.telegram_admin_user_id,
             unauthorized_message=settings.telegram_unauthorized_message,

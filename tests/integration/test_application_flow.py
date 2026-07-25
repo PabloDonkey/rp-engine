@@ -328,7 +328,7 @@ async def test_application_smoke_flow_without_external_services() -> None:
         identity_resolver=FakeIdentityResolver(),
         group_identity_resolver=FakeGroupIdentityResolver(),
         playthrough_service=FakePlaythroughService(),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"7"}),
         unauthorized_message="not authorized",
         message_max_length=3800,
     )
@@ -367,7 +367,7 @@ async def test_continue_command_is_not_saved_as_literal_command() -> None:
         identity_resolver=FakeIdentityResolver(),
         group_identity_resolver=FakeGroupIdentityResolver(),
         playthrough_service=FakePlaythroughService(),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"7"}),
         unauthorized_message="not authorized",
         message_max_length=3800,
     )

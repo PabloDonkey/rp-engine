@@ -295,7 +295,7 @@ async def test_non_text_messages_are_ignored() -> None:
     adapter = _make_adapter(
         chat_service=chat_service,
         playthrough_service=FakePlaythroughService(),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = FakeUpdate(
         effective_message=FakeMessage(text=None),
@@ -346,7 +346,7 @@ async def test_start_authorized_without_active_invites_scenarios() -> None:
     adapter = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=FakePlaythroughService(active=None),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/start")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -361,7 +361,7 @@ async def test_start_authorized_with_active_resumes() -> None:
         playthrough_service=FakePlaythroughService(
             active=_session(), resume="The hall is silent."
         ),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/start")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -386,7 +386,7 @@ async def test_help_is_authorization_aware() -> None:
     adapter_auth = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=FakePlaythroughService(),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     auth = _private_update("/help")
     await adapter_auth.handle_message(cast(Update, auth), cast(Any, None))
@@ -429,7 +429,7 @@ async def test_scenarios_lists_catalog() -> None:
     adapter = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=FakePlaythroughService(scenarios=scenarios),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/scenarios")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -446,7 +446,7 @@ async def test_play_starts_scenario_and_sends_opening() -> None:
     adapter = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=playthrough,
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/play vault")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -461,7 +461,7 @@ async def test_play_unknown_scenario_reports_error() -> None:
     adapter = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=FakePlaythroughService(known={}),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/play nope")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -475,7 +475,7 @@ async def test_play_without_argument_shows_usage_and_library() -> None:
     adapter = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=FakePlaythroughService(scenarios=scenarios),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/play")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -515,7 +515,7 @@ async def test_restart_requires_active_and_restarts() -> None:
     no_active = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=FakePlaythroughService(active=None, known={"vault": scenario}),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/restart")
     await no_active.handle_message(cast(Update, update), cast(Any, None))
@@ -527,7 +527,7 @@ async def test_restart_requires_active_and_restarts() -> None:
     active = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=playthrough,
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     restart_update = _private_update("/restart")
     await active.handle_message(cast(Update, restart_update), cast(Any, None))
@@ -549,7 +549,7 @@ async def test_continue_calls_continue_story() -> None:
     adapter = _make_adapter(
         chat_service=chat_service,
         playthrough_service=FakePlaythroughService(active=_session()),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/continue")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -565,7 +565,7 @@ async def test_retry_calls_regenerate_last_response() -> None:
     adapter = _make_adapter(
         chat_service=chat_service,
         playthrough_service=FakePlaythroughService(active=_session()),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/retry")
     await adapter.handle_message(cast(Update, update), cast(Any, FakeContext(FakeBot())))
@@ -582,7 +582,7 @@ async def test_narrator_reply_is_tracked_for_retry() -> None:
     adapter = _make_adapter(
         chat_service=chat_service,
         playthrough_service=FakePlaythroughService(active=_session()),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
         narrator_store=store,
     )
     update = _private_update("I open the door", user_id=42)
@@ -603,7 +603,7 @@ async def test_retry_deletes_previous_message_and_records_new_one() -> None:
     adapter = _make_adapter(
         chat_service=chat_service,
         playthrough_service=FakePlaythroughService(active=_session()),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
         narrator_store=store,
     )
     bot = FakeBot()
@@ -625,7 +625,7 @@ async def test_commands_without_active_playthrough_prompt_to_play() -> None:
     adapter = _make_adapter(
         chat_service=chat_service,
         playthrough_service=FakePlaythroughService(active=None),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/continue")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -705,7 +705,7 @@ async def test_plain_message_in_private_calls_send_message() -> None:
     adapter = _make_adapter(
         chat_service=chat_service,
         playthrough_service=FakePlaythroughService(active=_session()),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("I push the door open")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -721,7 +721,7 @@ async def test_unsupported_command_is_reported() -> None:
     adapter = _make_adapter(
         chat_service=chat_service,
         playthrough_service=FakePlaythroughService(active=_session()),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/regenerate")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -735,7 +735,7 @@ async def test_cancel_acknowledges() -> None:
     adapter = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=FakePlaythroughService(),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("/cancel")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -750,7 +750,7 @@ async def test_long_response_is_split_into_multiple_messages() -> None:
     adapter = _make_adapter(
         chat_service=chat_service,
         playthrough_service=FakePlaythroughService(active=_session()),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("go on")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -765,7 +765,7 @@ async def test_llm_connection_error_is_reported() -> None:
     adapter = _make_adapter(
         chat_service=chat_service,
         playthrough_service=FakePlaythroughService(active=_session()),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
     )
     update = _private_update("hello")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
@@ -798,7 +798,7 @@ async def test_admin_can_list_pending_requests_in_chronological_order(tmp_path: 
     adapter = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=FakePlaythroughService(),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
         admin_telegram_user_id="1",
         beta_registry=registry,
     )
@@ -819,7 +819,7 @@ async def test_non_admin_cannot_list_pending_requests(tmp_path: Path) -> None:
     adapter = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=FakePlaythroughService(),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
         admin_telegram_user_id="1",
         beta_registry=registry,
     )
@@ -866,7 +866,7 @@ async def test_admin_can_reject_pending_request_and_archive_reason(tmp_path: Pat
     adapter = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=FakePlaythroughService(),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"42"}),
         admin_telegram_user_id="1",
         beta_registry=registry,
     )
@@ -912,7 +912,7 @@ async def test_identity_resolution_uses_display_name_priority(
         identity_resolver=identity_resolver,
         group_identity_resolver=FakeGroupIdentityResolver(),
         playthrough_service=FakePlaythroughService(active=_session()),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"77"}),
         unauthorized_message="not authorized",
         message_max_length=3800,
     )
@@ -939,7 +939,7 @@ async def test_identity_resolution_prefers_persona_display_name() -> None:
         identity_resolver=identity_resolver,
         group_identity_resolver=FakeGroupIdentityResolver(),
         playthrough_service=FakePlaythroughService(active=_session()),
-        authorization=TelegramAuthorization(set()),
+        authorization=TelegramAuthorization({"77"}),
         unauthorized_message="not authorized",
         message_max_length=3800,
     )
