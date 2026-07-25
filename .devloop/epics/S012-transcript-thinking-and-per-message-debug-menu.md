@@ -1,6 +1,8 @@
 # S012 · Admin panel — thinking trace + per-message debug menu
 
-**Status:** 🔵 Backlog
+**Status:** 🟢 In Progress — backend + frontend built and end-to-end data-flow verified
+(2026-07-24); remaining gaps are a real LM Studio thinking-model check and a browser eyeball,
+see Verification.
 **Effort:** ~1 day
 **Risk:** Low (additive metadata + frontend-only restructuring of an existing debug view)
 
@@ -92,27 +94,48 @@ frontend page rework. No new ports needed.
 ## Tasks
 
 ### Backend
-- [ ] `LLMResponse.thinking: str | None` field.
-- [ ] `LMStudioProvider._generate_sync` captures `parts[0]` as `thinking` instead of discarding it.
-- [ ] `ChatService._narrator_message` stamps `thinking` (if present) and `turn` into the
-      CHARACTER message's metadata.
-- [ ] `ChatService._append_generation_trace` includes `thinking` in the trace record.
-- [ ] Contract/unit tests: LM Studio provider reasoning-split test with `thinking` populated;
-      `ChatService` test asserting stored message metadata carries `turn` (+ `thinking` when the
-      fake provider returns one).
+- [x] `LLMResponse.thinking: str | None` field (`core/llm/response.py`).
+- [x] `LMStudioProvider._generate_sync` captures the reasoning-marker prefix as `thinking`
+      instead of discarding it (`None` when the marker isn't present).
+- [x] `ChatService._narrator_message` now takes `turn` and stamps `turn` (always) and `thinking`
+      (when present) into the CHARACTER message's metadata, alongside the existing
+      `finish_reason`. All three call sites (`send_message`, `continue_story`,
+      `regenerate_last_response`) updated to pass `turn`.
+- [x] `ChatService._append_generation_trace` includes `thinking` in the trace record.
+- [x] Tests: `test_lmstudio_provider.py` — reasoning-marker split populates `thinking`, absence
+      of the marker leaves it `None`. `test_chat_service.py` — narrator message metadata carries
+      `turn` (existing assertions updated for the new key) and `thinking` when the provider
+      returns one (new tests); generation-trace test asserts `thinking` on the record.
 
 ### Frontend
-- [ ] Remove the global "Show generation traces" section from `SessionDetailPage.vue`.
-- [ ] Add always-visible turn number display per CHARACTER transcript entry.
-- [ ] Add per-message filter row (Thinking / Raw trace / System prompt / Turn metadata
-      checkboxes) with independent local state per message and inline expand, gated so
-      "Thinking" is absent/disabled when there's nothing to show for that message.
-- [ ] Typecheck + production build clean (no test harness exists yet per S009 known gaps).
+- [x] Removed the global "Show generation traces" section from `SessionDetailPage.vue`.
+- [x] Always-visible turn number ("· Turn N") per CHARACTER transcript entry.
+- [x] Per-message filter row (Thinking / Raw trace / System prompt / Turn metadata checkboxes)
+      with independent `reactive` state keyed by transcript index, inline expand/collapse;
+      "Thinking" checkbox is disabled when the message has no captured thinking.
+- [x] Typecheck (`vue-tsc --noEmit`) and production build (`vite build`) both clean.
 
 ## Verification
 
-- [ ] `uv run pytest` green, `uv run mypy .` clean, `uv run ruff check .` clean.
-- [ ] Live-verified against a real thinking-capable model in LM Studio: confirm `thinking` is
-      captured, persisted, and only shown in the UI for messages that have it.
-- [ ] Frontend eyeballed in a browser: turn numbers correct, `...` menu opens/closes per message
-      independently, system-prompt view matches the trace's actual prompt for that turn.
+- [x] `uv run pytest` green (247 passed / 12 skipped), `uv run mypy src` clean, `uv run ruff
+      check .` clean. (Two pre-existing, unrelated mypy notes remain in
+      `test_chat_service.py`/`test_main_endpoints.py`/`test_application_flow.py` — unchanged
+      lines, confirmed via `git diff`, not introduced by this change.)
+- [x] Frontend `typecheck` + production `build` clean.
+- [x] **End-to-end data-flow verified** (scratchpad script, not committed): booted the real
+      `FastAPI` app (`create_app`) against a disposable temp-dir JSON backend, seeded a real user/
+      scenario/session through the actual JSON stores, and called the real `ChatService.
+      send_message` with only the raw LLM call stubbed (`orchestrator.generate_reply` returning
+      an `LLMResponse` with `thinking` set — no LM Studio needed). Confirmed through the real
+      `/admin/sessions/{id}/transcript` and `/admin/sessions/{id}/traces` HTTP responses that:
+      the stored CHARACTER message's `metadata` has `turn: "1"` and `thinking: "<text>"`; the
+      trace record has `turn: 1`, `thinking: "<text>"`, `prompt.assembled_system_prompt`, and
+      `finish_reason`/`latency_ms`/`usage` — exactly the shape `SessionDetailPage.vue`'s
+      `tracesForTurn`/`systemPromptFor`/`turnMetaFor` helpers consume. Confirms the full
+      contract end to end except the two points below.
+- [ ] **Not done:** no real thinking-capable model was exercised through LM Studio itself (the
+      regex-split logic is unit-tested; the *shape* of a real "thinking-enabled" LM Studio
+      response, including whether the marker text matches assumptions, was not observed live).
+- [ ] **Not done:** no browser/phone eyeball of the new per-message filter UI — no
+      browser-automation tool was available in this session (same gap noted in S009); only
+      typecheck/build + the data-contract verification above were possible.

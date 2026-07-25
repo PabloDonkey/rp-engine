@@ -456,6 +456,16 @@ async def test_play_starts_scenario_and_sends_opening() -> None:
     assert "The Vault" in text and "You face the door." in text
 
 
+def test_format_start_labels_resumed_session_as_resuming() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="You face the door.")
+    session = _session(owner_kind="user", owner_id=FIXED_USER_ID)
+    start = PlaythroughStart(
+        session=session, scenario=scenario, opening="The door creaks open.", resumed=True
+    )
+    text = TelegramAdapter._format_start(start)
+    assert text == "Resuming: The Vault\n\nThe door creaks open."
+
+
 @pytest.mark.asyncio
 async def test_play_unknown_scenario_reports_error() -> None:
     adapter = _make_adapter(

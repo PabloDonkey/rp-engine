@@ -20,6 +20,7 @@ class PlaythroughStart:
     session: ScenarioSession
     scenario: ScenarioDefinition
     opening: str
+    resumed: bool = False
 
 
 class PlaythroughService:
@@ -82,6 +83,15 @@ class PlaythroughService:
         # exist, so locking never leaks the id through a distinct error.
         if scenario is None or not scenario.is_playable_by(caller_group_chat_id):
             return None
+        existing = await self._scenario_session_store.find_by_definition(
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            scenario_definition_id=scenario.id,
+        )
+        if existing is not None:
+            return await self._resume(
+                owner_kind=owner_kind, owner_id=owner_id, session=existing, scenario=scenario
+            )
         return await self._begin(owner_kind=owner_kind, owner_id=owner_id, scenario=scenario)
 
     async def restart(
@@ -112,6 +122,29 @@ class PlaythroughService:
             if message.role == ConversationRole.CHARACTER and message.content.strip():
                 return message.content
         return None
+
+    async def _resume(
+        self,
+        *,
+        owner_kind: SessionOwnerKind,
+        owner_id: UUID,
+        session: ScenarioSession,
+        scenario: ScenarioDefinition,
+    ) -> PlaythroughStart:
+        # An owner already has a session for this scenario — reactivate it rather than
+        # starting a fresh one, which would orphan the existing conversation history.
+        await self._scenario_session_store.set_active_for_owner(
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            session_id=session.id,
+        )
+        resume = await self.resume_text(session=session)
+        return PlaythroughStart(
+            session=session,
+            scenario=scenario,
+            opening=resume or self._opening_text(scenario),
+            resumed=True,
+        )
 
     async def _begin(
         self,

@@ -9,3 +9,4 @@ class LLMResponse:
     content: str
     finish_reason: FinishReason = "stop"
     metadata: dict[str, str] = field(default_factory=dict)
+    thinking: str | None = None

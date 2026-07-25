@@ -1,20 +1,46 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, reactive, watch } from "vue";
 import { useRouter } from "vue-router";
 
+import type { AdminTrace } from "@/api";
 import { useAdminStore } from "@/stores/admin";
 
 const props = defineProps<{ sessionId: string }>();
 const store = useAdminStore();
 const router = useRouter();
-const showTraces = ref(false);
+
+interface MessageFilterState {
+  thinking: boolean;
+  trace: boolean;
+  systemPrompt: boolean;
+  turnMeta: boolean;
+}
+
+// Keyed by transcript index — each message's filter checkboxes are independent
+// and don't carry over to any other message.
+const filterState = reactive<Record<number, MessageFilterState>>({});
+
+function filtersFor(index: number): MessageFilterState {
+  let state = filterState[index];
+  if (!state) {
+    state = { thinking: false, trace: false, systemPrompt: false, turnMeta: false };
+    filterState[index] = state;
+  }
+  return state;
+}
 
 function load(): void {
   store.fetchSessionDetail(props.sessionId);
 }
 
 onMounted(load);
-watch(() => props.sessionId, load);
+watch(
+  () => props.sessionId,
+  () => {
+    for (const key of Object.keys(filterState)) delete filterState[Number(key)];
+    load();
+  },
+);
 
 const backTo = computed(() =>
   store.session ? { name: "user-sessions", params: { userId: store.session.owner_id } } : "/users",
@@ -24,6 +50,34 @@ async function onDelete(): Promise<void> {
   if (!confirm("Delete this session? This clears its conversation too.")) return;
   await store.deleteSession(props.sessionId);
   router.push(backTo.value);
+}
+
+function tracesForTurn(turn: string | undefined): AdminTrace[] {
+  if (!turn) return [];
+  return store.traces.filter((trace) => String(trace.record.turn ?? "") === turn);
+}
+
+function latestTraceForTurn(turn: string | undefined): AdminTrace | null {
+  const matches = tracesForTurn(turn);
+  return matches[matches.length - 1] ?? null;
+}
+
+function systemPromptFor(turn: string | undefined): string {
+  const prompt = latestTraceForTurn(turn)?.record.prompt;
+  if (prompt && typeof prompt === "object" && "assembled_system_prompt" in prompt) {
+    return String((prompt as Record<string, unknown>).assembled_system_prompt ?? "");
+  }
+  return "";
+}
+
+function turnMetaFor(turn: string | undefined): Record<string, unknown> {
+  const trace = latestTraceForTurn(turn);
+  if (!trace) return {};
+  return {
+    finish_reason: trace.record.finish_reason,
+    latency_ms: trace.record.latency_ms,
+    usage: trace.record.usage,
+  };
 }
 </script>
 
@@ -66,27 +120,78 @@ async function onDelete(): Promise<void> {
               : 'bg-white dark:bg-neutral-900'
           "
         >
-          <div class="mb-1 text-xs font-semibold uppercase text-neutral-500">
-            {{ message.role }}
+          <div
+            class="mb-1 flex items-center gap-2 text-xs font-semibold uppercase text-neutral-500"
+          >
+            <span>{{ message.role }}</span>
+            <span v-if="message.metadata.turn">&middot; Turn {{ message.metadata.turn }}</span>
           </div>
           <div class="whitespace-pre-wrap">{{ message.content }}</div>
-        </li>
-      </ol>
 
-      <button
-        type="button"
-        class="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500"
-        @click="showTraces = !showTraces"
-      >
-        {{ showTraces ? "Hide" : "Show" }} generation traces ({{ store.traces.length }})
-      </button>
-      <ol v-if="showTraces" class="flex flex-col gap-2">
-        <li
-          v-for="(trace, index) in store.traces"
-          :key="index"
-          class="overflow-x-auto rounded-lg border border-black/10 bg-white p-3 text-xs dark:border-white/10 dark:bg-neutral-900"
-        >
-          <pre>{{ JSON.stringify(trace.record, null, 2) }}</pre>
+          <template v-if="message.role === 'character'">
+            <div
+              class="mt-2 flex flex-wrap gap-3 border-t border-black/5 pt-2 text-xs text-neutral-600 dark:border-white/5 dark:text-neutral-400"
+            >
+              <label
+                class="flex items-center gap-1"
+                :class="{ 'opacity-40': !message.metadata.thinking }"
+              >
+                <input
+                  v-model="filtersFor(index).thinking"
+                  type="checkbox"
+                  :disabled="!message.metadata.thinking"
+                />
+                Thinking
+              </label>
+              <label class="flex items-center gap-1">
+                <input v-model="filtersFor(index).trace" type="checkbox" />
+                Raw trace
+              </label>
+              <label class="flex items-center gap-1">
+                <input v-model="filtersFor(index).systemPrompt" type="checkbox" />
+                System prompt
+              </label>
+              <label class="flex items-center gap-1">
+                <input v-model="filtersFor(index).turnMeta" type="checkbox" />
+                Turn metadata
+              </label>
+            </div>
+
+            <div
+              v-if="filtersFor(index).thinking"
+              class="mt-2 overflow-x-auto whitespace-pre-wrap rounded-md bg-amber-50 p-2 text-xs dark:bg-amber-950/40"
+            >
+              {{ message.metadata.thinking }}
+            </div>
+
+            <div
+              v-if="filtersFor(index).systemPrompt"
+              class="mt-2 overflow-x-auto whitespace-pre-wrap rounded-md bg-neutral-50 p-2 text-xs dark:bg-neutral-800"
+            >
+              {{ systemPromptFor(message.metadata.turn) || "No system prompt recorded for this turn." }}
+            </div>
+
+            <div
+              v-if="filtersFor(index).turnMeta"
+              class="mt-2 overflow-x-auto rounded-md bg-neutral-50 p-2 text-xs dark:bg-neutral-800"
+            >
+              <pre>{{ JSON.stringify(turnMetaFor(message.metadata.turn), null, 2) }}</pre>
+            </div>
+
+            <div
+              v-if="filtersFor(index).trace"
+              class="mt-2 overflow-x-auto rounded-md bg-neutral-50 p-2 text-xs dark:bg-neutral-800"
+            >
+              <template v-if="tracesForTurn(message.metadata.turn).length > 0">
+                <pre
+                  v-for="(trace, traceIndex) in tracesForTurn(message.metadata.turn)"
+                  :key="traceIndex"
+                  >{{ JSON.stringify(trace.record, null, 2) }}</pre
+                >
+              </template>
+              <span v-else class="text-neutral-500">No trace recorded for this turn.</span>
+            </div>
+          </template>
         </li>
       </ol>
     </template>

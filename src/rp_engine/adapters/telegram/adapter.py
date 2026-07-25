@@ -832,7 +832,12 @@ class TelegramAdapter:
 
     @staticmethod
     def _format_start(start: PlaythroughStart, *, restarted: bool = False) -> str:
-        verb = "Restarted" if restarted else "Starting"
+        if restarted:
+            verb = "Restarted"
+        elif start.resumed:
+            verb = "Resuming"
+        else:
+            verb = "Starting"
         return f"{verb}: {start.scenario.name}\n\n{start.opening}"
 
 

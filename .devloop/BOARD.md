@@ -2,8 +2,6 @@
 
 ## 🔵 Backlog
 
-### **S012** · Admin panel — thinking trace + per-message debug menu — capture model "thinking"/reasoning content (currently discarded by the LM Studio provider), stamp turn number onto each stored message, and replace the transcript's single global "Show generation traces" toggle with a per-message filter row (Thinking / Raw trace / System prompt / Turn metadata checkboxes, independent per message). Follows S009. → [epic](epics/S012-transcript-thinking-and-per-message-debug-menu.md)
-
 ### **S010** · Admin panel — scenario catalog management — list/view/create/edit `ScenarioDefinition`s from the panel instead of hand-editing JSON. Open Q: edit JSON files vs. DB-backed store. Follows S009. → [epic](epics/S010-admin-scenario-catalog-mgmt.md)
 
 ### **S011** · Admin panel — ops dashboard — landing overview: active sessions, DB health (reuses S007 `/health`), recent LLM latency/errors. Read-only. Follows S009. → [epic](epics/S011-admin-ops-dashboard.md)
@@ -16,6 +14,8 @@
 _(nothing queued — see Backlog)_
 
 ## 🟢 In Progress
+
+### **S012** · Admin panel — thinking trace + per-message debug menu — captures model "thinking"/reasoning content (was discarded by the LM Studio provider), stamps turn number onto each stored message, and replaces the transcript's global "Show generation traces" toggle with a per-message filter row (Thinking / Raw trace / System prompt / Turn metadata checkboxes, independent per message). Backend + frontend built, pytest/mypy/ruff/typecheck/build all clean, end-to-end data flow verified against a real (temp-dir) JSON backend with only the raw LLM call stubbed (2026-07-24). Remaining: exercise a real thinking-capable LM Studio model, browser eyeball. Follows S009. → [epic](epics/S012-transcript-thinking-and-per-message-debug-menu.md)
 
 ### **S009** · Admin panel — session/conversation debugging (MVP) — Vue SPA + JSON admin API on FastAPI, backend + core flow built and live-verified against real Postgres data (2026-07-24). Users → sessions → transcript + generation traces; delete session; block/unblock user. No auth (Tailscale trust). Remaining: browser/phone eyeball check, static-serve wiring, tests, ADR — see epic. → [epic](epics/S009-admin-panel-session-debugging.md)
 

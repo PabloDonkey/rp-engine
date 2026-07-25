@@ -153,6 +153,37 @@ async def test_start_creates_active_session_and_seeds_opening() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_same_scenario_twice_resumes_existing_session() -> None:
+    scenario = _scenario("vault", name="Vault", opening="You face the door.")
+    service, session_store, conversation_store = _service(scenarios=[scenario])
+
+    first = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+    assert first is not None
+    assert first.resumed is False
+    await conversation_store.save_message(
+        _memory_key(first.session.id),
+        ConversationMessage(role=ConversationRole.USER, content="I open it."),
+    )
+    await conversation_store.save_message(
+        _memory_key(first.session.id),
+        ConversationMessage(role=ConversationRole.CHARACTER, content="The door creaks open."),
+    )
+
+    second = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+
+    assert second is not None
+    assert second.session.id == first.session.id
+    assert second.resumed is True
+    assert second.opening == "The door creaks open."
+    # History was preserved, not wiped, by resuming instead of restarting.
+    history = conversation_store.messages[_memory_key(first.session.id).value]
+    assert len(history) == 3
+
+    active = await session_store.get_active_for_owner(owner_kind="user", owner_id=USER_ID)
+    assert active is not None and active.id == first.session.id
+
+
+@pytest.mark.asyncio
 async def test_start_unknown_scenario_returns_none() -> None:
     service, _, _ = _service(scenarios=[])
     assert await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="nope") is None

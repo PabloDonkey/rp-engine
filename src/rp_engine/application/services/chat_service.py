@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 FINISH_REASON_METADATA_KEY = "finish_reason"
 # finish_reason value that means the model hit its token limit mid-reply.
 FINISH_REASON_LENGTH = "length"
+# Conversation-message metadata key recording the character-reply turn number.
+TURN_METADATA_KEY = "turn"
+# Conversation-message metadata key recording the model's captured thinking/reasoning text.
+THINKING_METADATA_KEY = "thinking"
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,7 +168,7 @@ class ChatService:
         )
         await self._conversation_store.save_message(
             memory_key,
-            self._narrator_message(llm_response),
+            self._narrator_message(llm_response, turn),
         )
         return character_response
 
@@ -235,7 +239,7 @@ class ChatService:
             character_response = llm_response.content
         await self._conversation_store.save_message(
             memory_key,
-            self._narrator_message(llm_response),
+            self._narrator_message(llm_response, turn),
         )
         return character_response
 
@@ -336,7 +340,7 @@ class ChatService:
             await self._conversation_store.save_message(memory_key, message)
         await self._conversation_store.save_message(
             memory_key,
-            self._narrator_message(llm_response),
+            self._narrator_message(llm_response, turn),
         )
         return character_response
 
@@ -436,15 +440,19 @@ class ChatService:
         )
 
     @staticmethod
-    def _narrator_message(llm_response: LLMResponse) -> ConversationMessage:
+    def _narrator_message(llm_response: LLMResponse, turn: int) -> ConversationMessage:
         """Build the stored narrator turn, recording why generation stopped.
 
         The finish reason lets `/continue` tell a truncated reply (``length``) from a
-        naturally-ended one, so it can resume the cut-off text instead of advancing.
+        naturally-ended one, so it can resume the cut-off text instead of advancing. The
+        turn number and any captured thinking ride along so the admin transcript can
+        render them per-message without cross-referencing the generation trace.
         """
-        metadata: dict[str, str] = {}
+        metadata: dict[str, str] = {TURN_METADATA_KEY: str(turn)}
         if llm_response.finish_reason:
             metadata[FINISH_REASON_METADATA_KEY] = llm_response.finish_reason
+        if llm_response.thinking:
+            metadata[THINKING_METADATA_KEY] = llm_response.thinking
         return ConversationMessage(
             role=ConversationRole.CHARACTER,
             content=llm_response.content,
@@ -487,6 +495,7 @@ class ChatService:
         usage: dict[str, int] = {}
         finish_reason = "error" if error is not None else "unknown"
         response_content = ""
+        thinking: str | None = None
 
         if response is not None:
             provider = response.metadata.get("provider", "unknown")
@@ -494,6 +503,7 @@ class ChatService:
             finish_reason = response.finish_reason
             response_content = response.content
             usage = self._extract_usage(response.metadata)
+            thinking = response.thinking
 
         prompt_payload = self._serialize_prompt(
             conversation=conversation,
@@ -521,6 +531,7 @@ class ChatService:
                 "stop_sequences": list(generation_settings.stop_sequences),
             },
             "response": response_content,
+            "thinking": thinking,
             "usage": usage,
             "finish_reason": finish_reason,
             "latency_ms": latency_ms,

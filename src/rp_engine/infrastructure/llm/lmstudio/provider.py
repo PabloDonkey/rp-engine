@@ -85,11 +85,13 @@ class LMStudioProvider(LLMProvider):
         content = self._extract_content(result)
         logger.info(f"LLM response content: {content}")
 
-        # Clean the LM Studio internal reasoning string out of the final text
+        # Split the LM Studio internal reasoning string out of the final text; the
+        # portion(s) before the marker are the model's thinking, kept for debugging.
         parts = re.split(
             r"__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[a-f0-9]+__", content
         )
         clean_text = parts[-1].strip()
+        thinking = "\n".join(part.strip() for part in parts[:-1] if part.strip()) or None
 
         stats = getattr(result, "stats", None)
         metadata = {
@@ -104,6 +106,7 @@ class LMStudioProvider(LLMProvider):
             content=clean_text,
             finish_reason=self._extract_finish_reason(result),
             metadata=metadata,
+            thinking=thinking,
         )
 
     def _get_config(self, settings: GenerationSettings) -> lms.LlmPredictionConfig:

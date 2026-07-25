@@ -252,6 +252,79 @@ async def test_lmstudio_provider_maps_length_finish_reason(
 
 
 @pytest.mark.asyncio
+async def test_lmstudio_provider_captures_thinking_when_reasoning_marker_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_configure_default_client(_: str) -> None:
+        return None
+
+    reasoning_text = (
+        "The user seems to want a dramatic reveal.__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_"
+        "REASONING_END_deadbeef__Final reply text."
+    )
+
+    def fake_llm(_: str) -> FakeModel:
+        return FakeModel(lambda _chat: FakeResult(reasoning_text))
+
+    monkeypatch.setattr(
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.configure_default_client",
+        fake_configure_default_client,
+    )
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.llm", fake_llm)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.Chat", FakeChat)
+    monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
+
+    provider = LMStudioProvider(
+        model_name="model-a",
+        api_host="127.0.0.1:1234",
+        max_tokens=600,
+        temperature=0.7,
+    )
+
+    result = await provider.generate(
+        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="hi")]),
+        GenerationSettings(max_tokens=128, temperature=0.3),
+    )
+
+    assert result.content == "Final reply text."
+    assert result.thinking == "The user seems to want a dramatic reveal."
+
+
+@pytest.mark.asyncio
+async def test_lmstudio_provider_thinking_is_none_without_reasoning_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_configure_default_client(_: str) -> None:
+        return None
+
+    def fake_llm(_: str) -> FakeModel:
+        return FakeModel(lambda _chat: FakeResult("plain reply, no reasoning marker"))
+
+    monkeypatch.setattr(
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.configure_default_client",
+        fake_configure_default_client,
+    )
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.llm", fake_llm)
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.Chat", FakeChat)
+    monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
+
+    provider = LMStudioProvider(
+        model_name="model-a",
+        api_host="127.0.0.1:1234",
+        max_tokens=600,
+        temperature=0.7,
+    )
+
+    result = await provider.generate(
+        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="hi")]),
+        GenerationSettings(max_tokens=128, temperature=0.3),
+    )
+
+    assert result.content == "plain reply, no reasoning marker"
+    assert result.thinking is None
+
+
+@pytest.mark.asyncio
 async def test_lmstudio_provider_maps_connectivity_errors_to_connection_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

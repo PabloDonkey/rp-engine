@@ -160,10 +160,56 @@ async def test_chat_service_builds_conversation_and_calls_orchestrator(
                 ConversationMessage(
                     role=ConversationRole.CHARACTER,
                     content="scene response",
-                    metadata={"finish_reason": "stop"},
+                    metadata={"finish_reason": "stop", "turn": "1"},
                 ),
             ),
         ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_service_persists_thinking_metadata(
+    scenario_context: ScenarioContext,
+) -> None:
+    service, orchestrator, conversation_store = _build_service(scenario_context=scenario_context)
+    orchestrator.generate_reply = AsyncMock(
+        return_value=LLMResponse(content="scene response", thinking="pondering the scene")
+    )
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello there",
+    )
+
+    conversation_store.save_message.assert_awaited_with(
+        MemoryKey(f"session_{SESSION_ID}"),
+        ConversationMessage(
+            role=ConversationRole.CHARACTER,
+            content="scene response",
+            metadata={"finish_reason": "stop", "turn": "1", "thinking": "pondering the scene"},
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_chat_service_omits_thinking_metadata_when_absent(
+    scenario_context: ScenarioContext,
+) -> None:
+    service, orchestrator, conversation_store = _build_service(scenario_context=scenario_context)
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="scene response"))
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello there",
+    )
+
+    conversation_store.save_message.assert_awaited_with(
+        MemoryKey(f"session_{SESSION_ID}"),
+        ConversationMessage(
+            role=ConversationRole.CHARACTER,
+            content="scene response",
+            metadata={"finish_reason": "stop", "turn": "1"},
+        ),
     )
 
 
@@ -214,7 +260,7 @@ async def test_chat_service_continue_saves_character_message(
         ConversationMessage(
             role=ConversationRole.CHARACTER,
             content="continued scene",
-            metadata={"finish_reason": "stop"},
+            metadata={"finish_reason": "stop", "turn": "1"},
         ),
     )
 
@@ -277,7 +323,7 @@ async def test_continue_resumes_when_last_reply_was_truncated(
         ConversationMessage(
             role=ConversationRole.CHARACTER,
             content=" stands a figure.",
-            metadata={"finish_reason": "stop"},
+            metadata={"finish_reason": "stop", "turn": "2"},
         ),
     )
 
@@ -315,7 +361,7 @@ async def test_chat_service_regenerate_replaces_last_character_message(
                 ConversationMessage(
                     role=ConversationRole.CHARACTER,
                     content="new reply",
-                    metadata={"finish_reason": "stop"},
+                    metadata={"finish_reason": "stop", "turn": "1"},
                 ),
             ),
         ]
@@ -361,7 +407,7 @@ async def test_chat_service_regenerate_after_continue_uses_assistant_context(
                 ConversationMessage(
                     role=ConversationRole.CHARACTER,
                     content="new continuation",
-                    metadata={"finish_reason": "stop"},
+                    metadata={"finish_reason": "stop", "turn": "2"},
                 ),
             ),
         ]
@@ -602,6 +648,7 @@ async def test_chat_service_writes_generation_trace_in_all_mode(
                 "usage_prompt_tokens": "12",
                 "usage_completion_tokens": "6",
             },
+            thinking="weighing the options",
         )
     )
     conversation_store = AsyncMock()
@@ -633,6 +680,7 @@ async def test_chat_service_writes_generation_trace_in_all_mode(
     assert trace_payload["provider"] == "lmstudio"
     assert trace_payload["model"] == "model-a"
     assert trace_payload["finish_reason"] == "stop"
+    assert trace_payload["thinking"] == "weighing the options"
     assert trace_payload["usage"] == {"prompt_tokens": 12, "completion_tokens": 6}
     prompt_stats = trace_payload["prompt_stats"]
     assert isinstance(prompt_stats, dict)
