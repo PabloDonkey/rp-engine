@@ -16,6 +16,15 @@ class ScenarioDefinitionStore(ABC):
         """Find all scenario definitions owned by a user."""
 
     @abstractmethod
+    async def list_all(self) -> list[ScenarioDefinition]:
+        """All scenario definitions, regardless of owner.
+
+        Scenarios are a single shared library (curated + hand-authored), not
+        per-user-scoped content — listing/`/play` visibility is controlled by
+        `ScenarioVisibility`, not by ownership. See ADR-024.
+        """
+
+    @abstractmethod
     async def save(self, scenario: ScenarioDefinition) -> None:
         """Save or update a scenario definition."""
 

@@ -25,6 +25,9 @@ class FakeScenarioDefinitionStore:
     async def find_by_owner(self, owner_id: UUID) -> list[ScenarioDefinition]:
         return [s for s in self.items.values() if s.owner_id == owner_id]
 
+    async def list_all(self) -> list[ScenarioDefinition]:
+        return list(self.items.values())
+
     async def save(self, scenario: ScenarioDefinition) -> None:
         self.items[scenario.id] = scenario
 

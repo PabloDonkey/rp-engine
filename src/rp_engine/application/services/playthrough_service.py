@@ -10,7 +10,6 @@ from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionSto
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession, SessionOwnerKind
-from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +51,7 @@ class PlaythroughService:
         direct chats). UNLISTED scenarios are always excluded; RESTRICTED ones appear
         only for the groups they are locked to.
         """
-        scenarios = await self._scenario_definition_store.find_by_owner(SYSTEM_OWNER_ID)
+        scenarios = await self._scenario_definition_store.list_all()
         return sorted(
             (s for s in scenarios if s.is_listed_for(caller_group_chat_id)),
             key=lambda scenario: scenario.name.lower(),

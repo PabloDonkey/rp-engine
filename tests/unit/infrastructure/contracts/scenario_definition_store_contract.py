@@ -70,6 +70,16 @@ async def assert_scenario_definition_store_contract(store: ScenarioDefinitionSto
     assert [item.id for item in owned] == [scenario.id]
     assert await store.find_by_owner(OTHER_OWNER_ID) == []
 
+    # list_all() is owner-agnostic — scenarios are one shared library, not per-owner-scoped
+    # (visibility, not ownership, controls listing/`/play` access; see ADR-024).
+    other_owner_scenario = ScenarioDefinition(
+        id="scenario-other-owner", owner_id=OTHER_OWNER_ID, name="Someone Else's", description=""
+    )
+    await store.save(other_owner_scenario)
+    all_ids = {item.id for item in await store.list_all()}
+    assert {scenario.id, other_owner_scenario.id} <= all_ids
+    await store.delete(other_owner_scenario.id)
+
     updated = replace(scenario, name="The Sealed Vault (Redux)")
     await store.save(updated)
     reloaded = await store.get_by_id(scenario.id)

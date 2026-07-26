@@ -38,6 +38,14 @@ class PostgresScenarioDefinitionStore(ScenarioDefinitionStore):
             scenario for record in records if (scenario := self._to_domain(record)) is not None
         ]
 
+    async def list_all(self) -> list[ScenarioDefinition]:
+        statement = select(ScenarioDefinitionRecord)
+        async with self._session_factory() as db_session:
+            records = (await db_session.scalars(statement)).all()
+        return [
+            scenario for record in records if (scenario := self._to_domain(record)) is not None
+        ]
+
     async def save(self, scenario: ScenarioDefinition) -> None:
         values = {
             "id": scenario.id,

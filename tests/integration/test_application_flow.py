@@ -232,6 +232,9 @@ class FakeScenarioDefinitionStore:
         del owner_id
         return []
 
+    async def list_all(self) -> list[ScenarioDefinition]:
+        return [_default_definition()]
+
     async def save(self, scenario: ScenarioDefinition) -> None:
         del scenario
 

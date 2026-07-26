@@ -11,7 +11,6 @@ from rp_engine.core.ports.user_identity_store import UserIdentityStore
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.user import User
-from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +71,7 @@ class AdminService:
         await self._scenario_session_store.delete(session_id)
 
     async def list_scenarios(self) -> list[ScenarioDefinition]:
-        scenarios = await self._scenario_definition_store.find_by_owner(SYSTEM_OWNER_ID)
+        scenarios = await self._scenario_definition_store.list_all()
         return sorted(scenarios, key=lambda scenario: scenario.name.lower())
 
     async def get_scenario(self, scenario_id: str) -> ScenarioDefinition | None:
