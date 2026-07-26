@@ -2,6 +2,10 @@
 
 ## 🔵 Backlog
 
+### **S014** · Session directives — Director Mode, Scenario Rules, Language preference — three related session-metadata + prompt-layout features: `/director <instruction>` (one-turn, auto-cleared), `/rule add|remove <instruction>`/`/rules` (persistent scenario rules), `/language <code>` (persistent). New prompt sections in `ConversationBuilder`: Language → Scenario Rules → Director Instructions, before Memory/Current Scene/Recent Conversation. → [epic](epics/S014-session-directives.md)
+
+### **S015** · User persona capture on new session start — `/play`/`/restart` on a new **user** session (groups skipped, for now) prompts "provide a name + description/likes/dislikes for your character, or /skip" before showing the story intro; first line = name, rest = description; immutable once set; `{{user}}` resolves to the persona name (falls back to Telegram username on `/skip`). Needs a new pending-reply mechanism in the Telegram adapter (none exists today) + an immutable persisted field + migration. Related to S014 (shares prompt layout / `{{user}}` resolution). Design decisions locked, ready to implement. → [epic](epics/S015-user-persona-capture.md)
+
 ### **S011** · Admin panel — ops dashboard — landing overview: active sessions, DB health (reuses S007 `/health`), recent LLM latency/errors. Read-only. Follows S009. → [epic](epics/S011-admin-ops-dashboard.md)
 
 ### Activate StoryGraph / scenario branching — `StoryGraph`+`StoryBeat` exist as inert data; nothing drives beats yet. _(bare card — gets an S### when promoted to an epic)_ → see `../docs/DOMAIN_MODEL.md`
