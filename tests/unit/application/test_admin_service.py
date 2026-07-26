@@ -6,9 +6,11 @@ from rp_engine.application.services.admin_service import AdminService
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
+from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.identity import UserIdentity
 from rp_engine.core.user.user import User
+from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 OTHER_USER_ID = UUID("00000000-0000-0000-0000-000000000043")
@@ -96,6 +98,23 @@ class FakeGenerationTraceStore:
         return list(self._records.get(session_id, []))
 
 
+class FakeScenarioDefinitionStore:
+    def __init__(self, scenarios: list[ScenarioDefinition] | None = None) -> None:
+        self.items = {scenario.id: scenario for scenario in scenarios or []}
+
+    async def get_by_id(self, scenario_id: str) -> ScenarioDefinition | None:
+        return self.items.get(scenario_id)
+
+    async def find_by_owner(self, owner_id: UUID) -> list[ScenarioDefinition]:
+        return [s for s in self.items.values() if s.owner_id == owner_id]
+
+    async def save(self, scenario: ScenarioDefinition) -> None:
+        self.items[scenario.id] = scenario
+
+    async def delete(self, scenario_id: str) -> None:
+        self.items.pop(scenario_id, None)
+
+
 def _session(*, owner_id: UUID = USER_ID) -> ScenarioSession:
     return ScenarioSession(
         id=SESSION_ID,
@@ -111,6 +130,7 @@ def _service(
     sessions: list[ScenarioSession] | None = None,
     conversation_store: FakeConversationStore | None = None,
     trace_store: FakeGenerationTraceStore | None = None,
+    scenarios: list[ScenarioDefinition] | None = None,
 ) -> tuple[AdminService, FakeScenarioSessionStore, FakeConversationStore, FakeGenerationTraceStore]:
     session_store = FakeScenarioSessionStore(sessions or [])
     convo_store = conversation_store or FakeConversationStore()
@@ -120,6 +140,7 @@ def _service(
         scenario_session_store=session_store,
         conversation_store=convo_store,
         generation_trace_store=traces,
+        scenario_definition_store=FakeScenarioDefinitionStore(scenarios),
     )
     return service, session_store, convo_store, traces
 
@@ -181,3 +202,27 @@ async def test_delete_session_clears_session_and_conversation() -> None:
     assert session_store.deleted == [SESSION_ID]
     assert await service.get_session(SESSION_ID) is None
     assert await convo_store.load_messages(memory_key) == []
+
+
+def _scenario(scenario_id: str, *, name: str) -> ScenarioDefinition:
+    return ScenarioDefinition(
+        id=scenario_id, owner_id=SYSTEM_OWNER_ID, name=name, description=""
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_scenarios_sorted_by_name() -> None:
+    service, _, _, _ = _service(
+        scenarios=[_scenario("b", name="Zephyr"), _scenario("a", name="Aurora")]
+    )
+
+    scenarios = await service.list_scenarios()
+
+    assert [s.name for s in scenarios] == ["Aurora", "Zephyr"]
+
+
+@pytest.mark.asyncio
+async def test_get_scenario_returns_none_when_missing() -> None:
+    service, _, _, _ = _service(scenarios=[])
+
+    assert await service.get_scenario("nope") is None

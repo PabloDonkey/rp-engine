@@ -1,31 +1,39 @@
 # Scenario Authoring Guide
 
 RP Engine is scenario-driven: players pick an adventure from a **curated library** and
-play it. Scenarios are authored by the developer as JSON files — no code change or deploy
-is required to add or edit one.
+play it. **Postgres (`ScenarioDefinitionStore`) is the live source scenarios are played
+from** — the admin panel is where scenarios are authored/edited (see ADR-024 in
+`docs/DECISIONS.md`). JSON is a transfer format: a starting/bulk-seed and backup/portability
+mechanism, not something the running engine reads directly on every `/play`.
 
-This document describes the catalog, the JSON format, and how a scenario becomes a
-playthrough at runtime.
+This document describes the JSON format (for import/export and hand-authoring a starting
+set) and how a scenario becomes a playthrough at runtime.
 
 ---
 
-## The catalog
+## Getting scenarios into Postgres
 
-Curated scenarios live as `*.json` files in one or more catalog directories:
+Curated scenarios ship as `*.json` files in one or more directories:
 
 * Default: `data/catalog/`
 * Configurable: `RP_ENGINE_SCENARIO_CATALOG_DIRS` — a comma-delimited list of directories,
-  e.g. `data/catalog,data/catalog-local` to layer a local/private catalog on top of the
-  curated one.
+  e.g. `data/catalog,data/catalog-local` to layer a local/private set on top of the curated
+  one.
 
-At startup the engine loads every `*.json` file in each configured directory (in order)
-into a read-only `ScenarioCatalog`. Files that are missing required fields or are not
-valid JSON are skipped (with a warning) — one bad file never breaks the rest of the
-library. If the same scenario `id` appears in more than one directory, the copy from the
-**later** directory wins.
+**On every boot**, the engine imports every `*.json` file in each configured directory (in
+order) into `ScenarioDefinitionStore` (`ScenarioTransferService.import_directory`, wired
+into `app/lifespan.py`). This is an **upsert** by `id` — safe to re-run, and if the same
+`id` appears in more than one directory, the copy from the **later** directory wins. Files
+that are missing required fields or are not valid JSON are skipped (with a warning) — one
+bad file never breaks the rest of the import.
 
-`/scenarios` lists the catalog (sorted by name). `/play <id>` looks a scenario up by its
-`id` and starts a playthrough.
+Once a scenario is in Postgres, further edits happen through the **admin panel**, not by
+re-editing the JSON file (though re-importing an edited file will overwrite the panel's
+version, since import always wins on id match — treat the catalog JSON as a seed, not a
+synced source).
+
+`/scenarios` lists what's in the store (sorted by name, filtered by visibility). `/play <id>`
+looks a scenario up by its `id` and starts a playthrough.
 
 ---
 
@@ -177,10 +185,9 @@ Text fields may use these placeholders, resolved at prompt-build time:
 
 When a player runs `/play sealed-vault`:
 
-1. The catalog is looked up by `id`.
-2. The scenario definition is persisted (so the chat engine can load it at reply time).
-3. A per-player `ScenarioSession` is created and set active for that owner (user or group).
-4. The `initial_context` (or, if empty, a character greeting) is seeded as the opening
+1. `ScenarioDefinitionStore` is looked up by `id`.
+2. A per-player `ScenarioSession` is created and set active for that owner (user or group).
+3. The `initial_context` (or, if empty, a character greeting) is seeded as the opening
    narrator turn and sent to the player.
 
 From then on, the player advances the story with plain messages (or `/chat` in groups),
@@ -198,5 +205,7 @@ definition is a shared blueprint, but every playthrough has its own session and 
 * Prefer short, directive `rules` — they are injected verbatim into the system prompt.
 * Use `initial_context` to set the scene in the second person; it is the first thing the
   player sees.
-* Editing a catalog file and restarting the engine updates the blueprint; existing
-  playthroughs pick up the new definition on their next reply.
+* Prefer the admin panel for edits to a scenario that's already live; re-importing a JSON
+  file with the same `id` overwrites whatever is currently in Postgres.
+* Existing playthroughs pick up an updated definition on their next reply — sessions only
+  store the `scenario_definition_id`, not a copy of the definition.

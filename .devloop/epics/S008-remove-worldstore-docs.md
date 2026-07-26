@@ -40,8 +40,13 @@ and removed `sessions`/`characters` tables.
 - [ ] **Rewrite `docs/DATABASE_MODEL.md`** for the scenario-centric final state: live tables only
       (`scenario_definitions`, `scenario_sessions`, `active_scenario_sessions`, `conversation_messages`,
       + S004's identity/trace tables), backend selection, and the shared-serializer parity model.
-- [ ] **Review/retire `scripts/migrate_telegram_history.py`** — confirm it targets the scenario model
-      and selected backend, or retire it if legacy.
+      (S013 already patched the specific persistence_backend/dual-backend claims to reflect
+      ADR-024, but the doc still has other character-centric residue — SessionStore/
+      CharacterStore repository mapping, "Migration Strategy" framing — this task is still open.)
+- [x] **Review/retire `scripts/migrate_telegram_history.py`** — retired as part of S013
+      (2026-07-26): the JSON persistence backend it migrated *out of* was itself removed
+      (ADR-024), so the script's imports no longer resolve and its job (targeting a
+      pre-scenario-pivot artifact its own docstring already called unread) was done.
 
 ## Verification
 

@@ -6,18 +6,32 @@ from fastapi.testclient import TestClient
 
 from rp_engine.app.main import create_app
 from rp_engine.infrastructure.config.settings import Settings
+from rp_engine.infrastructure.postgres import PostgresConfig
 
 # Nothing listens on port 1 (a reserved/privileged port), so connecting here fails fast
 # with "connection refused" instead of hanging or requiring a real Postgres in unit tests.
 _UNREACHABLE_POSTGRES_SETTINGS = {
-    "persistence_backend": "postgres",
     "postgres_host": "127.0.0.1",
     "postgres_port": 1,
 }
 
+# Same, but with fail-fast disabled — for tests below that don't care about DB status at
+# all, so they stay fast, pure unit tests rather than needing the testcontainers fixture.
+_UNREACHABLE_POSTGRES_NO_FAIL_FAST_SETTINGS = {
+    **_UNREACHABLE_POSTGRES_SETTINGS,
+    "postgres_startup_check_fail_fast": False,
+}
 
-def test_health_endpoint_reports_service_statuses() -> None:
-    settings = Settings(telegram_enabled=False, persistence_backend="json")
+
+def test_health_endpoint_reports_service_statuses(postgres_config: PostgresConfig) -> None:
+    settings = Settings(
+        telegram_enabled=False,
+        postgres_host=postgres_config.host,
+        postgres_port=postgres_config.port,
+        postgres_database=postgres_config.database,
+        postgres_user=postgres_config.user,
+        postgres_password=postgres_config.password,
+    )
     app = create_app(settings)
 
     with TestClient(app) as client:
@@ -30,7 +44,7 @@ def test_health_endpoint_reports_service_statuses() -> None:
         "services": {
             "llm": "available",
             "telegram": "disabled",
-            "db": "n/a",
+            "db": "available",
         },
     }
 
@@ -44,11 +58,7 @@ def test_postgres_backend_fails_fast_at_startup_when_db_unreachable() -> None:
 
 
 def test_postgres_backend_health_reports_unavailable_when_fail_fast_disabled() -> None:
-    settings = Settings(
-        telegram_enabled=False,
-        postgres_startup_check_fail_fast=False,
-        **_UNREACHABLE_POSTGRES_SETTINGS,
-    )
+    settings = Settings(telegram_enabled=False, **_UNREACHABLE_POSTGRES_NO_FAIL_FAST_SETTINGS)
     app = create_app(settings)
 
     with TestClient(app) as client:
@@ -60,7 +70,7 @@ def test_postgres_backend_health_reports_unavailable_when_fail_fast_disabled() -
 
 
 def test_debug_status_endpoint_disabled_by_default() -> None:
-    settings = Settings(debug_status_enabled=False)
+    settings = Settings(debug_status_enabled=False, **_UNREACHABLE_POSTGRES_NO_FAIL_FAST_SETTINGS)
     app = create_app(settings)
 
     with TestClient(app) as client:
@@ -70,7 +80,11 @@ def test_debug_status_endpoint_disabled_by_default() -> None:
 
 
 def test_debug_status_endpoint_returns_runtime_state_when_enabled() -> None:
-    settings = Settings(debug_status_enabled=True, telegram_enabled=False)
+    settings = Settings(
+        debug_status_enabled=True,
+        telegram_enabled=False,
+        **_UNREACHABLE_POSTGRES_NO_FAIL_FAST_SETTINGS,
+    )
     app = create_app(settings)
 
     with TestClient(app) as client:
@@ -84,7 +98,7 @@ def test_debug_status_endpoint_returns_runtime_state_when_enabled() -> None:
 
 
 def test_chat_endpoint_calls_send_message_use_case() -> None:
-    settings = Settings(telegram_enabled=False)
+    settings = Settings(telegram_enabled=False, **_UNREACHABLE_POSTGRES_NO_FAIL_FAST_SETTINGS)
     app = create_app(settings)
     app.state.container.chat_service.send_message = AsyncMock(return_value="hello")
 
@@ -104,7 +118,7 @@ def test_chat_endpoint_calls_send_message_use_case() -> None:
 
 
 def test_continue_endpoint_calls_continue_story_use_case() -> None:
-    settings = Settings(telegram_enabled=False)
+    settings = Settings(telegram_enabled=False, **_UNREACHABLE_POSTGRES_NO_FAIL_FAST_SETTINGS)
     app = create_app(settings)
     app.state.container.chat_service.continue_story = AsyncMock(return_value="next")
 
@@ -123,7 +137,7 @@ def test_continue_endpoint_calls_continue_story_use_case() -> None:
 
 
 def test_memory_clear_endpoint_calls_clear_conversation_use_case() -> None:
-    settings = Settings(telegram_enabled=False)
+    settings = Settings(telegram_enabled=False, **_UNREACHABLE_POSTGRES_NO_FAIL_FAST_SETTINGS)
     app = create_app(settings)
     app.state.container.chat_service.clear_conversation = AsyncMock()
 

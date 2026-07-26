@@ -88,7 +88,7 @@ class IdentityResolverPort(Protocol):
 
 
 class PlaythroughServicePort(Protocol):
-    def list_scenarios(
+    async def list_scenarios(
         self, *, caller_group_chat_id: str | None = None
     ) -> list[ScenarioDefinition]: ...
 
@@ -256,13 +256,12 @@ class TelegramAdapter:
 
         # /scenarios — browse the curated library.
         if parsed_message.command == TelegramCommand.SCENARIOS:
+            scenarios = await self._playthrough_service.list_scenarios(
+                caller_group_chat_id=caller_group_chat_id
+            )
             await self._reply_with_split(
                 message=message,
-                text=self._format_scenarios(
-                    self._playthrough_service.list_scenarios(
-                        caller_group_chat_id=caller_group_chat_id
-                    )
-                ),
+                text=self._format_scenarios(scenarios),
             )
             return
 
@@ -273,14 +272,12 @@ class TelegramAdapter:
                 return
             scenario_id = (parsed_message.argument or "").strip()
             if not scenario_id:
+                scenarios = await self._playthrough_service.list_scenarios(
+                    caller_group_chat_id=caller_group_chat_id
+                )
                 await self._reply_with_split(
                     message=message,
-                    text="Usage: /play <id>\n\n"
-                    + self._format_scenarios(
-                        self._playthrough_service.list_scenarios(
-                            caller_group_chat_id=caller_group_chat_id
-                        )
-                    ),
+                    text="Usage: /play <id>\n\n" + self._format_scenarios(scenarios),
                 )
                 return
             started = await self._playthrough_service.start(

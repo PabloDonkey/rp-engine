@@ -2,10 +2,6 @@
 
 ## 🔵 Backlog
 
-### **S013** · Retire JSON persistence backend — Postgres becomes the sole runtime backend (ADR-024): delete all 6 JSON stores, rewire `PlaythroughService` off the JSON `ScenarioCatalog` onto `ScenarioDefinitionStore`, recycle the catalog loader into an admin-panel import/export utility (scenarios + sessions), add an auto-managed Postgres test fixture. Blocks S010. → [epic](epics/S013-retire-json-persistence.md)
-
-### **S010** · Admin panel — scenario catalog management — list/view/create/edit `ScenarioDefinition`s from the panel instead of hand-editing JSON. Resolved (2026-07-24, ADR-024): Postgres is source of truth, JSON is import/export only. Blocked on S013. Follows S009. → [epic](epics/S010-admin-scenario-catalog-mgmt.md)
-
 ### **S011** · Admin panel — ops dashboard — landing overview: active sessions, DB health (reuses S007 `/health`), recent LLM latency/errors. Read-only. Follows S009. → [epic](epics/S011-admin-ops-dashboard.md)
 
 ### Activate StoryGraph / scenario branching — `StoryGraph`+`StoryBeat` exist as inert data; nothing drives beats yet. _(bare card — gets an S### when promoted to an epic)_ → see `../docs/DOMAIN_MODEL.md`
@@ -22,6 +18,10 @@ _(nothing queued — see Backlog)_
 ### **S009** · Admin panel — session/conversation debugging (MVP) — Vue SPA + JSON admin API on FastAPI, backend + core flow built and live-verified against real Postgres data (2026-07-24). Users → sessions → transcript + generation traces; delete session; block/unblock user. No auth (Tailscale trust). Remaining: browser/phone eyeball check, static-serve wiring, tests, ADR — see epic. → [epic](epics/S009-admin-panel-session-debugging.md)
 
 ## ✅ Done (recent)
+
+### **S013 · 2026-07-26 · Retire JSON persistence backend** — Postgres is now the sole runtime backend (ADR-024): all 6 JSON stores deleted, `PlaythroughService` reads scenarios from `ScenarioDefinitionStore` directly, the JSON catalog loader recycled into `ScenarioTransferService` (import/export), tests get a testcontainers-backed Postgres fixture (`uv run pytest` needs zero manual setup). 254 passed, mypy + ruff clean. Live-verified against a real dev Postgres. → [archive](archive/S013-2026-07-26-retire-json-persistence.md)
+
+### **S010 · 2026-07-26 · Admin panel — scenario catalog management** — landed together with S013 (which it depended on). Scenario CRUD (`GET/POST/PUT /admin/scenarios`, `POST /admin/scenarios/import`) + session export/import, all sharing one validation path via `ScenarioTransferService`. Frontend: scenario list/detail/edit pages (raw-JSON-textarea editor, the epic's own MVP bar) + a session-export button on S009's session detail page. Live-verified: panel-created/edited scenarios are immediately playable through `PlaythroughService`. → [archive](archive/S010-2026-07-26-admin-scenario-catalog-mgmt.md)
 
 ### **S007 · 2026-07-23 · DB startup health probe + `/health`** — `PostgresHealthProbe` (`ping` + schema-version drift warning) wired into lifespan via a protocol (no SQLAlchemy leak); fails fast by default on unreachable DB (`RP_ENGINE_POSTGRES_STARTUP_CHECK_FAIL_FAST`); `/health` gained `db`. Live-verified: real boot shows `available`; a forced one-step downgrade fired the drift warning without blocking startup. 221 passed / 12 skipped, mypy + ruff clean. → [archive](archive/S007-2026-07-23-db-startup-health-probe.md)
 

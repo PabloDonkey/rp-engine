@@ -25,7 +25,6 @@ class Settings(BaseSettings):
     app_port: int = Field(default=8000, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
-    persistence_backend: Literal["json", "postgres"] = "json"
     postgres_host: str = "localhost"
     postgres_port: int = Field(default=5432, ge=1, le=65535)
     postgres_database: str = "rp_engine"
@@ -34,9 +33,9 @@ class Settings(BaseSettings):
     postgres_ssl_mode: Literal["disable", "require"] = "disable"
     postgres_pool_size: int = Field(default=10, ge=1)
     postgres_max_overflow: int = Field(default=10, ge=0)
-    # Whether an unreachable Postgres at startup (persistence_backend="postgres") aborts
-    # boot. When False, startup logs the failure and continues; /health then reports
-    # db: unavailable rather than crashing the process.
+    # Whether an unreachable Postgres at startup aborts boot. When False, startup logs
+    # the failure and continues; /health then reports db: unavailable rather than
+    # crashing the process.
     postgres_startup_check_fail_fast: bool = True
 
     telegram_enabled: bool = False
@@ -60,8 +59,9 @@ class Settings(BaseSettings):
     debug_status_enabled: bool = False
     debug_generation_trace: Literal["off", "errors", "all"] = "off"
     default_world_id: str = "default"
-    # Comma-delimited list of catalog directories, merged in order (later dirs win on
-    # scenario id collisions). See ScenarioCatalog.from_directories.
+    # Comma-delimited list of directories with curated scenario JSON files, imported into
+    # Postgres on every boot (later dirs win on id collisions). See
+    # infrastructure/scenario_transfer.py.
     # NoDecode: pydantic-settings otherwise tries to JSON-parse a list-typed env var
     # before our field_validator runs, which rejects a plain comma-delimited string.
     scenario_catalog_dirs: Annotated[list[str], NoDecode] = Field(
@@ -122,11 +122,6 @@ class Settings(BaseSettings):
         if not cleaned:
             raise ValueError("RP_ENGINE_DEFAULT_WORLD_ID must not be empty.")
         return cleaned
-
-    @field_validator("persistence_backend")
-    @classmethod
-    def validate_persistence_backend(cls, value: str) -> str:
-        return value.strip().lower()
 
     @field_validator("postgres_host")
     @classmethod

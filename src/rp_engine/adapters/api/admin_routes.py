@@ -1,3 +1,4 @@
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
@@ -7,10 +8,13 @@ from rp_engine.adapters.api.admin_models import (
     AdminSessionResponse,
     AdminTraceResponse,
     AdminUserResponse,
+    ScenarioSummaryResponse,
 )
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.application.services.admin_service import AdminService
+from rp_engine.application.services.scenario_transfer_service import ScenarioTransferService
 from rp_engine.core.user.user import User
+from rp_engine.infrastructure.scenario_serialization import scenario_definition_to_payload
 
 
 def _telegram_id(user: User) -> str | None:
@@ -23,6 +27,7 @@ def _telegram_id(user: User) -> str | None:
 def create_admin_router(
     admin_service: AdminService,
     telegram_authorization: TelegramAuthorization | None,
+    scenario_transfer_service: ScenarioTransferService,
 ) -> APIRouter:
     router = APIRouter(prefix="/admin")
 
@@ -122,5 +127,63 @@ def create_admin_router(
             session_count=len(sessions),
             is_blocked=False,
         )
+
+    @router.get("/scenarios")
+    async def list_scenarios() -> list[ScenarioSummaryResponse]:
+        scenarios = await admin_service.list_scenarios()
+        return [ScenarioSummaryResponse.from_definition(scenario) for scenario in scenarios]
+
+    @router.get("/scenarios/{scenario_id}")
+    async def get_scenario(scenario_id: str) -> dict[str, Any]:
+        scenario = await admin_service.get_scenario(scenario_id)
+        if scenario is None:
+            raise HTTPException(status_code=404, detail="Scenario not found")
+        return scenario_definition_to_payload(scenario)
+
+    @router.post("/scenarios", status_code=201)
+    async def create_scenario(payload: dict[str, Any]) -> dict[str, Any]:
+        scenario_id = payload.get("id")
+        if not scenario_id:
+            raise HTTPException(status_code=422, detail="Scenario payload must include an id")
+        if await admin_service.get_scenario(scenario_id) is not None:
+            raise HTTPException(status_code=409, detail=f"Scenario '{scenario_id}' already exists")
+        scenario = await scenario_transfer_service.import_scenario_payload(payload)
+        if scenario is None:
+            raise HTTPException(status_code=422, detail="Scenario payload failed validation")
+        return scenario_definition_to_payload(scenario)
+
+    @router.put("/scenarios/{scenario_id}")
+    async def update_scenario(scenario_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if await admin_service.get_scenario(scenario_id) is None:
+            raise HTTPException(status_code=404, detail="Scenario not found")
+        if payload.get("id") != scenario_id:
+            raise HTTPException(
+                status_code=400, detail="Scenario id in body must match the URL id"
+            )
+        scenario = await scenario_transfer_service.import_scenario_payload(payload)
+        if scenario is None:
+            raise HTTPException(status_code=422, detail="Scenario payload failed validation")
+        return scenario_definition_to_payload(scenario)
+
+    @router.post("/scenarios/import")
+    async def import_scenario(payload: dict[str, Any]) -> dict[str, Any]:
+        scenario = await scenario_transfer_service.import_scenario_payload(payload)
+        if scenario is None:
+            raise HTTPException(status_code=422, detail="Scenario payload failed validation")
+        return scenario_definition_to_payload(scenario)
+
+    @router.get("/sessions/{session_id}/export")
+    async def export_session(session_id: UUID) -> dict[str, Any]:
+        exported = await scenario_transfer_service.export_session(session_id)
+        if exported is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return exported
+
+    @router.post("/sessions/import")
+    async def import_session(payload: dict[str, Any]) -> AdminSessionResponse:
+        session = await scenario_transfer_service.import_session(payload)
+        if session is None:
+            raise HTTPException(status_code=422, detail="Session payload failed validation")
+        return AdminSessionResponse.from_session(session)
 
     return router

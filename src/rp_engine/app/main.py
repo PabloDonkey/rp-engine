@@ -21,6 +21,7 @@ from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.group_identity_resolver import GroupIdentityResolver
 from rp_engine.application.services.identity_resolver import IdentityResolver
 from rp_engine.application.services.playthrough_service import PlaythroughService
+from rp_engine.application.services.scenario_transfer_service import ScenarioTransferService
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
@@ -33,7 +34,6 @@ from rp_engine.core.ports import (
     ScenarioSessionStore,
     UserIdentityStore,
 )
-from rp_engine.infrastructure.catalog import ScenarioCatalog
 from rp_engine.infrastructure.config.settings import Settings, get_settings
 from rp_engine.infrastructure.llm.lmstudio import LMStudioProvider
 from rp_engine.infrastructure.postgres import (
@@ -49,14 +49,6 @@ from rp_engine.infrastructure.postgres.repositories import (
     PostgresScenarioDefinitionStore,
     PostgresScenarioSessionStore,
     PostgresUserIdentityStore,
-)
-from rp_engine.infrastructure.storage import (
-    JsonConversationStore,
-    JsonGenerationTraceStore,
-    JsonGroupIdentityStore,
-    JsonScenarioDefinitionStore,
-    JsonScenarioSessionStore,
-    JsonUserIdentityStore,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,11 +73,13 @@ class AppContainer:
     identity_resolver: IdentityResolver
     group_identity_resolver: GroupIdentityResolver
     playthrough_service: PlaythroughService
+    scenario_transfer_service: ScenarioTransferService
+    scenario_catalog_dirs: list[str]
     admin_service: AdminService
     telegram_authorization: TelegramAuthorization
     telegram_runtime: TelegramRuntime | None
     runtime_state: RuntimeState
-    db_health_probe: PostgresHealthProbe | None
+    db_health_probe: PostgresHealthProbe
     db_startup_check_fail_fast: bool
 
 
@@ -98,39 +92,33 @@ def build_container(settings: Settings) -> AppContainer:
         max_tokens=settings.lmstudio_max_tokens,
         temperature=settings.lmstudio_temperature,
     )
-    conversation_store: ConversationStore
-    scenario_definition_store: ScenarioDefinitionStore
-    scenario_session_store: ScenarioSessionStore
-    generation_trace_store: GenerationTraceStore
-    user_identity_store: UserIdentityStore
-    group_identity_store: GroupIdentityStore
-    db_health_probe: PostgresHealthProbe | None = None
-    if settings.persistence_backend == "postgres":
-        postgres_config = PostgresConfig.from_settings(settings)
-        postgres_engine = create_engine(postgres_config)
-        postgres_session_factory = create_session_factory(postgres_engine)
-        conversation_store = PostgresConversationStore(postgres_session_factory)
-        scenario_definition_store = PostgresScenarioDefinitionStore(postgres_session_factory)
-        scenario_session_store = PostgresScenarioSessionStore(postgres_session_factory)
-        generation_trace_store = PostgresGenerationTraceStore(postgres_session_factory)
-        user_identity_store = PostgresUserIdentityStore(postgres_session_factory)
-        group_identity_store = PostgresGroupIdentityStore(postgres_session_factory)
-        db_health_probe = PostgresHealthProbe(
-            postgres_engine, alembic_ini_path=Path.cwd() / "alembic.ini"
-        )
-    else:
-        conversation_store = JsonConversationStore()
-        scenario_definition_store = JsonScenarioDefinitionStore()
-        scenario_session_store = JsonScenarioSessionStore()
-        generation_trace_store = JsonGenerationTraceStore()
-        user_identity_store = JsonUserIdentityStore()
-        group_identity_store = JsonGroupIdentityStore()
+    postgres_config = PostgresConfig.from_settings(settings)
+    postgres_engine = create_engine(postgres_config)
+    postgres_session_factory = create_session_factory(postgres_engine)
+    conversation_store: ConversationStore = PostgresConversationStore(postgres_session_factory)
+    scenario_definition_store: ScenarioDefinitionStore = PostgresScenarioDefinitionStore(
+        postgres_session_factory
+    )
+    scenario_session_store: ScenarioSessionStore = PostgresScenarioSessionStore(
+        postgres_session_factory
+    )
+    generation_trace_store: GenerationTraceStore = PostgresGenerationTraceStore(
+        postgres_session_factory
+    )
+    user_identity_store: UserIdentityStore = PostgresUserIdentityStore(postgres_session_factory)
+    group_identity_store: GroupIdentityStore = PostgresGroupIdentityStore(postgres_session_factory)
+    db_health_probe = PostgresHealthProbe(
+        postgres_engine, alembic_ini_path=Path.cwd() / "alembic.ini"
+    )
 
     identity_resolver = IdentityResolver(store=user_identity_store)
     group_identity_resolver = GroupIdentityResolver(store=group_identity_store)
-    scenario_catalog = ScenarioCatalog.from_directories(settings.scenario_catalog_dirs)
+    scenario_transfer_service = ScenarioTransferService(
+        scenario_definition_store=scenario_definition_store,
+        scenario_session_store=scenario_session_store,
+        conversation_store=conversation_store,
+    )
     playthrough_service = PlaythroughService(
-        catalog=scenario_catalog,
         scenario_definition_store=scenario_definition_store,
         scenario_session_store=scenario_session_store,
         conversation_store=conversation_store,
@@ -146,6 +134,7 @@ def build_container(settings: Settings) -> AppContainer:
         scenario_session_store=scenario_session_store,
         conversation_store=conversation_store,
         generation_trace_store=generation_trace_store,
+        scenario_definition_store=scenario_definition_store,
     )
     telegram_authorization = TelegramAuthorization.from_directory(
         settings.telegram_authorization_dir,
@@ -202,7 +191,6 @@ def build_container(settings: Settings) -> AppContainer:
         extra={
             "telegram_enabled": settings.telegram_enabled,
             "lmstudio_model": settings.lmstudio_model,
-            "persistence_backend": settings.persistence_backend,
         },
     )
 
@@ -214,6 +202,8 @@ def build_container(settings: Settings) -> AppContainer:
         identity_resolver=identity_resolver,
         group_identity_resolver=group_identity_resolver,
         playthrough_service=playthrough_service,
+        scenario_transfer_service=scenario_transfer_service,
+        scenario_catalog_dirs=settings.scenario_catalog_dirs,
         admin_service=admin_service,
         telegram_authorization=telegram_authorization,
         telegram_runtime=telegram_runtime,
@@ -241,17 +231,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(create_api_router(container.chat_service))
     app.include_router(
-        create_admin_router(container.admin_service, container.telegram_authorization)
+        create_admin_router(
+            container.admin_service,
+            container.telegram_authorization,
+            container.scenario_transfer_service,
+        )
     )
 
     @app.get("/health")
     async def health() -> dict[str, object]:
         llm_status = "available" if container.settings.lmstudio_model else "unavailable"
         telegram_status = "running" if container.telegram_runtime is not None else "disabled"
-        if container.db_health_probe is None:
-            db_status = "n/a"
-        else:
-            db_status = "available" if await container.db_health_probe.ping() else "unavailable"
+        db_status = "available" if await container.db_health_probe.ping() else "unavailable"
         return {
             "status": "ok",
             "services": {

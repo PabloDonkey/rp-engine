@@ -5,6 +5,8 @@ from typing import Protocol
 
 from fastapi import FastAPI
 
+from rp_engine.application.services.scenario_transfer_service import ImportReport
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +22,10 @@ class DbHealthProbeProtocol(Protocol):
     async def check_schema_version(self) -> None: ...
 
 
+class ScenarioTransferServiceProtocol(Protocol):
+    async def import_directory(self, path: str) -> ImportReport: ...
+
+
 class ContainerProtocol(Protocol):
     @property
     def telegram_runtime(self) -> TelegramRuntimeProtocol | None: ...
@@ -28,10 +34,16 @@ class ContainerProtocol(Protocol):
     def runtime_state(self) -> "RuntimeStateProtocol": ...
 
     @property
-    def db_health_probe(self) -> DbHealthProbeProtocol | None: ...
+    def db_health_probe(self) -> DbHealthProbeProtocol: ...
 
     @property
     def db_startup_check_fail_fast(self) -> bool: ...
+
+    @property
+    def scenario_transfer_service(self) -> ScenarioTransferServiceProtocol: ...
+
+    @property
+    def scenario_catalog_dirs(self) -> "list[str]": ...
 
 
 class RuntimeStateProtocol(Protocol):
@@ -46,17 +58,32 @@ def create_lifespan(
         container.runtime_state.app_state = "starting"
         logger.info("Application runtime starting")
 
-        if container.db_health_probe is not None:
-            if await container.db_health_probe.ping():
-                logger.info("PostgreSQL connectivity check passed")
-                await container.db_health_probe.check_schema_version()
-            else:
-                logger.error("PostgreSQL is unreachable at startup")
-                if container.db_startup_check_fail_fast:
-                    raise RuntimeError(
-                        "PostgreSQL is unreachable at startup. Set "
-                        "RP_ENGINE_POSTGRES_STARTUP_CHECK_FAIL_FAST=false to boot anyway."
-                    )
+        db_reachable = await container.db_health_probe.ping()
+        if db_reachable:
+            logger.info("PostgreSQL connectivity check passed")
+            await container.db_health_probe.check_schema_version()
+        else:
+            logger.error("PostgreSQL is unreachable at startup")
+            if container.db_startup_check_fail_fast:
+                raise RuntimeError(
+                    "PostgreSQL is unreachable at startup. Set "
+                    "RP_ENGINE_POSTGRES_STARTUP_CHECK_FAIL_FAST=false to boot anyway."
+                )
+
+        # Only attempt this if the DB is actually reachable — otherwise this would raise
+        # its own (unhandled) connection error right after the check above already logged
+        # the same problem.
+        if db_reachable:
+            for directory in container.scenario_catalog_dirs:
+                report = await container.scenario_transfer_service.import_directory(directory)
+                logger.info(
+                    "Curated scenario import complete",
+                    extra={
+                        "directory": directory,
+                        "imported": report.imported,
+                        "skipped": report.skipped,
+                    },
+                )
 
         if container.telegram_runtime is not None:
             await container.telegram_runtime.start()

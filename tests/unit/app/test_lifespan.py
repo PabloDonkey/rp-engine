@@ -1,12 +1,13 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pytest
 from fastapi import FastAPI
 
 from rp_engine.app.lifespan import create_lifespan
 from rp_engine.app.runtime_state import RuntimeState
+from rp_engine.application.services.scenario_transfer_service import ImportReport
 
 
 class FakeTelegramRuntime:
@@ -21,12 +22,37 @@ class FakeTelegramRuntime:
         self.stopped = True
 
 
+class FakeDbHealthProbe:
+    def __init__(self, *, reachable: bool = True) -> None:
+        self.reachable = reachable
+        self.schema_checked = False
+
+    async def ping(self) -> bool:
+        return self.reachable
+
+    async def check_schema_version(self) -> None:
+        self.schema_checked = True
+
+
+class FakeScenarioTransferService:
+    def __init__(self) -> None:
+        self.imported_from: list[str] = []
+
+    async def import_directory(self, path: str) -> ImportReport:
+        self.imported_from.append(path)
+        return ImportReport(imported=0, skipped=0)
+
+
 @dataclass(slots=True)
 class FakeContainer:
     telegram_runtime: FakeTelegramRuntime | None
     runtime_state: RuntimeState
-    db_health_probe: "FakeDbHealthProbe | None" = None
+    db_health_probe: FakeDbHealthProbe = field(default_factory=FakeDbHealthProbe)
     db_startup_check_fail_fast: bool = True
+    scenario_transfer_service: FakeScenarioTransferService = field(
+        default_factory=FakeScenarioTransferService
+    )
+    scenario_catalog_dirs: list[str] = field(default_factory=lambda: ["data/catalog"])
 
 
 @pytest.mark.asyncio
@@ -50,18 +76,6 @@ async def test_lifespan_starts_and_stops_telegram_runtime() -> None:
     assert telegram_runtime.stopped is True
 
 
-class FakeDbHealthProbe:
-    def __init__(self, *, reachable: bool) -> None:
-        self.reachable = reachable
-        self.schema_checked = False
-
-    async def ping(self) -> bool:
-        return self.reachable
-
-    async def check_schema_version(self) -> None:
-        self.schema_checked = True
-
-
 @pytest.mark.asyncio
 async def test_lifespan_checks_schema_version_when_db_reachable() -> None:
     probe = FakeDbHealthProbe(reachable=True)
@@ -73,6 +87,23 @@ async def test_lifespan_checks_schema_version_when_db_reachable() -> None:
     async with lifespan(FastAPI()):
         assert probe.schema_checked is True
         assert container.runtime_state.app_state == "running"
+
+
+@pytest.mark.asyncio
+async def test_lifespan_imports_curated_scenarios_when_db_reachable() -> None:
+    transfer_service = FakeScenarioTransferService()
+    container = FakeContainer(
+        telegram_runtime=None,
+        runtime_state=RuntimeState(),
+        scenario_transfer_service=transfer_service,
+        scenario_catalog_dirs=["data/catalog", "data/catalog-local"],
+    )
+
+    lifespan = create_lifespan(container)
+    async with lifespan(FastAPI()):
+        pass
+
+    assert transfer_service.imported_from == ["data/catalog", "data/catalog-local"]
 
 
 @pytest.mark.asyncio
@@ -95,14 +126,20 @@ async def test_lifespan_raises_when_db_unreachable_and_fail_fast() -> None:
 async def test_lifespan_continues_when_db_unreachable_and_not_fail_fast() -> None:
     telegram_runtime = FakeTelegramRuntime()
     probe = FakeDbHealthProbe(reachable=False)
+    transfer_service = FakeScenarioTransferService()
     container = FakeContainer(
         telegram_runtime=telegram_runtime,
         runtime_state=RuntimeState(),
         db_health_probe=probe,
         db_startup_check_fail_fast=False,
+        scenario_transfer_service=transfer_service,
     )
 
     lifespan = create_lifespan(container)
     async with lifespan(FastAPI()):
         assert container.runtime_state.app_state == "running"
         assert telegram_runtime.started is True
+
+    # The import step never even tries to run when the DB is unreachable — otherwise it
+    # would raise its own connection error right after the health check already logged it.
+    assert transfer_service.imported_from == []

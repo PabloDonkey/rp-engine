@@ -132,9 +132,9 @@ Columns:
 - updated_at (timestamptz)
 
 Nested structures (world, characters, story graph) are stored as JSONB
-rather than normalized into separate tables. The same serialization is shared with the
-JSON backend via `infrastructure/scenario_serialization.py`, guaranteeing byte-for-byte
-parity between backends.
+rather than normalized into separate tables. The same serialization
+(`infrastructure/scenario_serialization.py`) is shared with `ScenarioTransferService`'s
+JSON import/export, guaranteeing byte-for-byte round-trips (see ADR-024).
 
 ### scenario_sessions
 
@@ -199,15 +199,17 @@ Columns:
   - get_active_for_owner
   - delete
 
-The same interfaces are implemented by JSON stores. The composition root decides which implementation to wire. A shared serialization module keeps the JSON and PostgreSQL representations identical, and one behavioral contract suite runs against both backends.
+PostgreSQL is the sole persistence backend (see `docs/DECISIONS.md`, ADR-024) — the composition
+root (`app/main.py::build_container`) wires these repositories unconditionally. One behavioral
+contract suite (`tests/unit/infrastructure/contracts/`) exercises each port against Postgres via
+the testcontainers fixture in `tests/conftest.py`.
 
 ## Migration Strategy
 
-- JSON remains default backend.
-- PostgreSQL is opt-in through RP_ENGINE_PERSISTENCE_BACKEND=postgres.
-- Alembic manages schema evolution.
-- Initial migration creates only session and conversation tables.
-- Future slices migrate additional repositories incrementally.
+- Alembic manages schema evolution; migrations must be reversible (`upgrade head` and
+  `downgrade` both verified against a real DB).
+- Curated scenarios are authored as JSON files and imported into Postgres on every boot
+  (`ScenarioTransferService`, see ADR-024) rather than read live from disk.
 
 ## Design Principles
 
@@ -215,4 +217,3 @@ The same interfaces are implemented by JSON stores. The composition root decides
 - No domain redesign during persistence migration.
 - No SQL concepts in domain entities or application use cases.
 - Small, cohesive repository implementations in infrastructure.
-- Backward compatibility with existing JSON data flows during migration window.

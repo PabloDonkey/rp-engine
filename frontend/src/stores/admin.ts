@@ -1,7 +1,23 @@
 import { defineStore } from "pinia";
 
 import * as api from "@/api";
-import type { AdminMessage, AdminSession, AdminTrace, AdminUser } from "@/api";
+import type {
+  AdminMessage,
+  AdminSession,
+  AdminTrace,
+  AdminUser,
+  ScenarioPayload,
+  ScenarioSummary,
+} from "@/api";
+
+function toSummary(payload: ScenarioPayload): ScenarioSummary {
+  return {
+    id: String(payload.id ?? ""),
+    name: String(payload.name ?? ""),
+    description: String(payload.description ?? ""),
+    visibility: String(payload.visibility ?? ""),
+  };
+}
 
 export const useAdminStore = defineStore("admin", {
   state: () => ({
@@ -18,6 +34,14 @@ export const useAdminStore = defineStore("admin", {
     traces: [] as AdminTrace[],
     sessionLoading: false,
     sessionError: null as string | null,
+
+    scenarios: [] as ScenarioSummary[],
+    scenariosLoading: false,
+    scenariosError: null as string | null,
+
+    scenario: null as ScenarioPayload | null,
+    scenarioLoading: false,
+    scenarioError: null as string | null,
   }),
   actions: {
     async fetchUsers(): Promise<void> {
@@ -76,6 +100,47 @@ export const useAdminStore = defineStore("admin", {
       if (index !== -1) {
         this.users[index] = updated;
       }
+    },
+
+    async fetchScenarios(): Promise<void> {
+      this.scenariosLoading = true;
+      this.scenariosError = null;
+      try {
+        this.scenarios = await api.listScenarios();
+      } catch (error) {
+        this.scenariosError = error instanceof Error ? error.message : String(error);
+      } finally {
+        this.scenariosLoading = false;
+      }
+    },
+
+    async fetchScenario(scenarioId: string): Promise<void> {
+      this.scenarioLoading = true;
+      this.scenarioError = null;
+      try {
+        this.scenario = await api.getScenario(scenarioId);
+      } catch (error) {
+        this.scenarioError = error instanceof Error ? error.message : String(error);
+      } finally {
+        this.scenarioLoading = false;
+      }
+    },
+
+    // Unlike the fetch* actions above, this does not catch — the edit page shows the
+    // validation error inline next to the JSON textarea rather than as a page-level banner.
+    async createScenario(payload: ScenarioPayload): Promise<ScenarioPayload> {
+      const created = await api.createScenario(payload);
+      this.scenarios.push(toSummary(created));
+      return created;
+    },
+
+    async updateScenario(scenarioId: string, payload: ScenarioPayload): Promise<ScenarioPayload> {
+      const updated = await api.updateScenario(scenarioId, payload);
+      const index = this.scenarios.findIndex((s) => s.id === scenarioId);
+      if (index !== -1) {
+        this.scenarios[index] = toSummary(updated);
+      }
+      return updated;
     },
   },
 });

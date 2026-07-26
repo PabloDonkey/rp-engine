@@ -8,7 +8,7 @@ from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
-from rp_engine.infrastructure.catalog.scenario_catalog import SYSTEM_OWNER_ID, ScenarioCatalog
+from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 GROUP_ID = UUID("00000000-0000-0000-0000-000000000099")
@@ -105,11 +105,12 @@ def _service(
     *,
     scenarios: list[ScenarioDefinition],
 ) -> tuple[PlaythroughService, FakeScenarioSessionStore, FakeConversationStore]:
+    definition_store = FakeScenarioDefinitionStore()
+    definition_store.items = {scenario.id: scenario for scenario in scenarios}
     session_store = FakeScenarioSessionStore()
     conversation_store = FakeConversationStore()
     service = PlaythroughService(
-        catalog=ScenarioCatalog(scenarios),
-        scenario_definition_store=FakeScenarioDefinitionStore(),
+        scenario_definition_store=definition_store,
         scenario_session_store=session_store,
         conversation_store=conversation_store,
     )
@@ -120,14 +121,15 @@ def _memory_key(session_id: UUID) -> MemoryKey:
     return ConversationIdentity.for_session(str(session_id)).to_memory_key()
 
 
-def test_list_scenarios_sorted_by_name() -> None:
+@pytest.mark.asyncio
+async def test_list_scenarios_sorted_by_name() -> None:
     service, _, _ = _service(
         scenarios=[
             _scenario("b", name="Zephyr", opening="z"),
             _scenario("a", name="Aurora", opening="a"),
         ]
     )
-    assert [s.name for s in service.list_scenarios()] == ["Aurora", "Zephyr"]
+    assert [s.name for s in await service.list_scenarios()] == ["Aurora", "Zephyr"]
 
 
 @pytest.mark.asyncio

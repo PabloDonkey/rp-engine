@@ -30,9 +30,9 @@ Players pick from a developer-curated library of scenarios (reusable blueprints 
 * FastAPI application
 * Telegram bot adapter (scenario-driven command surface)
 * LM Studio provider
-* Curated scenario library (JSON catalog) and playthrough management
+* Curated scenario library (imported from JSON, edited via the admin panel) and playthrough management
 * Conversation orchestration with truncation-aware `/continue` and in-place `/retry`
-* Dual persistence backends (JSON and PostgreSQL)
+* PostgreSQL persistence
 
 ## Planned
 
@@ -123,11 +123,11 @@ Optional application variables:
 * `RP_ENGINE_APP_PORT`
 * `RP_ENGINE_DEBUG_STATUS_ENABLED`
 * `RP_ENGINE_DEBUG_GENERATION_TRACE` (`off`, `errors`, or `all`; default `off`)
-* `RP_ENGINE_PERSISTENCE_BACKEND` (`json` or `postgres`; default `json`)
-* `RP_ENGINE_SCENARIO_CATALOG_DIRS` (comma-delimited list of scenario catalog directories,
-  merged in load order with later directories winning on id collisions; default `data/catalog`)
+* `RP_ENGINE_SCENARIO_CATALOG_DIRS` (comma-delimited list of directories with curated scenario
+  JSON files, imported into Postgres on every boot; default `data/catalog`)
 
-PostgreSQL application variables (used when `RP_ENGINE_PERSISTENCE_BACKEND=postgres`):
+Postgres is the sole persistence backend (see `docs/DECISIONS.md`, ADR-024) — these variables
+are always in effect:
 
 * `RP_ENGINE_POSTGRES_HOST`
 * `RP_ENGINE_POSTGRES_PORT`
@@ -253,9 +253,26 @@ uv run mypy .
 uv run pytest
 ```
 
-## PostgreSQL Tests
+Postgres is the sole persistence backend (see `docs/DECISIONS.md`, ADR-024), so the suite
+spins up a throwaway Postgres via [testcontainers](https://testcontainers-python.readthedocs.io/)
+automatically (`tests/conftest.py`) — no manual `docker compose up` needed, just a running
+Docker daemon.
 
-Launch local database services first:
+If you see import errors like missing `fastapi`, `telegram`, or `lmstudio`, you are likely using a system `pytest` instead of the project virtual environment. Use one of these options:
+
+```bash
+source .venv/bin/activate
+pytest
+```
+
+or
+
+```bash
+/home/pablo/projects/rp-engine/.venv/bin/python -m pytest
+```
+
+To run the app itself against a persistent local Postgres (rather than the ephemeral
+per-test-run one), start the docker-compose services first:
 
 ```bash
 scripts/db_services.sh up
@@ -265,37 +282,6 @@ Fallback when `docker compose` is unavailable:
 
 ```bash
 docker-compose up -d
-```
-
-Recommended one-shot command (starts DB services and runs tests in project environment):
-
-```bash
-scripts/test_postgres.sh
-```
-
-Run all tests with PostgreSQL integration tests enabled:
-
-```bash
-RP_ENGINE_RUN_POSTGRES_TESTS=1 /home/pablo/projects/rp-engine/.venv/bin/python -m pytest
-```
-
-Run only the PostgreSQL store contract tests (character + scenario):
-
-```bash
-RP_ENGINE_RUN_POSTGRES_TESTS=1 /home/pablo/projects/rp-engine/.venv/bin/python -m pytest tests/integration/infrastructure/
-```
-
-If you see import errors like missing `fastapi`, `telegram`, or `lmstudio`, you are likely using a system `pytest` instead of the project virtual environment. Use one of these options:
-
-```bash
-source .venv/bin/activate
-RP_ENGINE_RUN_POSTGRES_TESTS=1 pytest
-```
-
-or
-
-```bash
-RP_ENGINE_RUN_POSTGRES_TESTS=1 /home/pablo/projects/rp-engine/.venv/bin/python -m pytest
 ```
 
 ## First Run Test
@@ -338,9 +324,10 @@ Playing the story:
 * In group chats, story/session-control commands (`/play`, `/restart`, `/continue`,
   `/retry`) are restricted to chat administrators and creators.
 
-Scenarios are authored as JSON files in one or more catalog directories
-(`RP_ENGINE_SCENARIO_CATALOG_DIRS`, default `data/catalog/`). See `docs/SCENARIOS.md` for
-the authoring guide.
+Postgres (`ScenarioDefinitionStore`) is the live source scenarios are played from — the admin
+panel is where scenarios are authored/edited. The curated set still ships as JSON files under
+one or more catalog directories (`RP_ENGINE_SCENARIO_CATALOG_DIRS`, default `data/catalog/`),
+imported into Postgres on every boot as a starting point; see `docs/SCENARIOS.md`.
 
 ## Telegram Admin Commands (Hidden)
 
@@ -402,7 +389,7 @@ mapped into RP Engine's internal character domain model.
 | `VISION.md`       | Project goals and philosophy  |
 | `SPEC.md`         | Functional requirements       |
 | `SPEC_V3.md`      | Character Card v3 specification |
-| `SCENARIOS.md`    | Scenario authoring guide (JSON catalog) |
+| `SCENARIOS.md`    | Scenario authoring guide (JSON import/export + admin panel) |
 | `DOMAIN_MODEL.md` | Domain model and terminology  |
 | `DATABASE_MODEL.md` | PostgreSQL persistence mapping |
 | `ARCHITECTURE.md` | System architecture           |

@@ -95,7 +95,7 @@ class FakePlaythroughService:
     def __init__(self, *, active: ScenarioSession | None = None) -> None:
         self._active = active if active is not None else _fixed_session()
 
-    def list_scenarios(self) -> list[ScenarioDefinition]:
+    async def list_scenarios(self) -> list[ScenarioDefinition]:
         return [_default_definition()]
 
     async def get_active(self, *, owner_kind: str, owner_id: UUID) -> ScenarioSession | None:

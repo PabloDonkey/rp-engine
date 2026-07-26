@@ -10,11 +10,6 @@ from rp_engine.infrastructure.postgres.repositories import (
     PostgresScenarioDefinitionStore,
     PostgresScenarioSessionStore,
 )
-from rp_engine.infrastructure.storage import (
-    JsonConversationStore,
-    JsonScenarioDefinitionStore,
-    JsonScenarioSessionStore,
-)
 
 
 def test_missing_telegram_token_raises_clear_error() -> None:
@@ -98,33 +93,8 @@ def test_default_unauthorized_message_mentions_beta_request() -> None:
     assert "/beta" in settings.telegram_unauthorized_message
 
 
-def test_persistence_backend_defaults_to_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("RP_ENGINE_PERSISTENCE_BACKEND", raising=False)
-    # Bypasses the developer's local .env (which may pin a backend for local dev); this
-    # tests the code-level default, not the ambient environment. `_env_file` is a real
-    # pydantic-settings override that the (unused here) mypy stubs don't know about.
-    settings = Settings(_env_file=None)  # type: ignore[call-arg]
-
-    assert settings.persistence_backend == "json"
-
-
-def test_build_container_uses_json_stores_by_default() -> None:
-    settings = Settings(telegram_enabled=False, persistence_backend="json")
-
-    container = build_container(settings)
-
-    assert isinstance(container.chat_service._conversation_store, JsonConversationStore)
-    assert isinstance(container.chat_service._scenario_session_store, JsonScenarioSessionStore)
-    assert isinstance(
-        container.chat_service._scenario_definition_store, JsonScenarioDefinitionStore
-    )
-
-
-def test_build_container_uses_postgres_stores_when_enabled() -> None:
-    settings = Settings(
-        telegram_enabled=False,
-        persistence_backend="postgres",
-    )
+def test_build_container_uses_postgres_stores() -> None:
+    settings = Settings(telegram_enabled=False)
 
     container = build_container(settings)
 

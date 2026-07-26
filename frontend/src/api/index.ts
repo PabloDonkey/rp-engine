@@ -27,10 +27,31 @@ const AdminTraceSchema = z.object({
   record: z.record(z.string(), z.unknown()),
 });
 
+const ScenarioSummarySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string(),
+  visibility: z.string(),
+});
+
+// Scenarios are edited as raw JSON (see docs/SCENARIOS.md) — the full payload is a nested
+// document (world/characters/story_graph), so it's kept as a loose record rather than
+// duplicating the whole shape in TS. The backend is the single source of validation truth
+// (`scenario_definition_from_payload`).
+const ScenarioPayloadSchema = z.record(z.string(), z.unknown());
+
+const SessionExportSchema = z.object({
+  session: z.record(z.string(), z.unknown()),
+  transcript: z.array(z.record(z.string(), z.unknown())),
+});
+
 export type AdminUser = z.infer<typeof AdminUserSchema>;
 export type AdminSession = z.infer<typeof AdminSessionSchema>;
 export type AdminMessage = z.infer<typeof AdminMessageSchema>;
 export type AdminTrace = z.infer<typeof AdminTraceSchema>;
+export type ScenarioSummary = z.infer<typeof ScenarioSummarySchema>;
+export type ScenarioPayload = z.infer<typeof ScenarioPayloadSchema>;
+export type SessionExport = z.infer<typeof SessionExportSchema>;
 
 class ApiError extends Error {
   status: number;
@@ -94,6 +115,35 @@ export function blockUser(userId: string): Promise<AdminUser> {
 
 export function unblockUser(userId: string): Promise<AdminUser> {
   return request(`/users/${userId}/unblock`, AdminUserSchema, { method: "POST" });
+}
+
+export function listScenarios(): Promise<ScenarioSummary[]> {
+  return request("/scenarios", z.array(ScenarioSummarySchema));
+}
+
+export function getScenario(scenarioId: string): Promise<ScenarioPayload> {
+  return request(`/scenarios/${scenarioId}`, ScenarioPayloadSchema);
+}
+
+export function createScenario(payload: ScenarioPayload): Promise<ScenarioPayload> {
+  return request("/scenarios", ScenarioPayloadSchema, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateScenario(
+  scenarioId: string,
+  payload: ScenarioPayload,
+): Promise<ScenarioPayload> {
+  return request(`/scenarios/${scenarioId}`, ScenarioPayloadSchema, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function exportSession(sessionId: string): Promise<SessionExport> {
+  return request(`/sessions/${sessionId}/export`, SessionExportSchema);
 }
 
 export { ApiError };

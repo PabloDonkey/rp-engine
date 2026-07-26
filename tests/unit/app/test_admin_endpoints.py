@@ -10,10 +10,12 @@ from rp_engine.app.main import create_app
 from rp_engine.application.services.admin_service import AdminUserSummary
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
+from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.identity import UserIdentity
 from rp_engine.core.user.user import User
 from rp_engine.infrastructure.config.settings import Settings
+from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 SESSION_ID = UUID("00000000-0000-0000-0000-000000000999")
@@ -23,6 +25,11 @@ def _setup(tmp_path: Path) -> tuple[TestClient, Any]:
     settings = Settings(
         telegram_enabled=False,
         telegram_authorization_dir=str(tmp_path / "authorization"),
+        # Nothing listens on port 1, so this fails fast instead of needing a real DB —
+        # every test here mocks `admin_service` directly and never touches Postgres.
+        postgres_host="127.0.0.1",
+        postgres_port=1,
+        postgres_startup_check_fail_fast=False,
     )
     app = create_app(settings)
     return TestClient(app), app.state.container
@@ -39,6 +46,12 @@ def _telegram_user(*, display_name: str = "Pablo") -> User:
 def _session() -> ScenarioSession:
     return ScenarioSession(
         id=SESSION_ID, scenario_definition_id="def-1", owner_kind="user", owner_id=USER_ID
+    )
+
+
+def _scenario(scenario_id: str = "vault", *, name: str = "Vault") -> ScenarioDefinition:
+    return ScenarioDefinition(
+        id=scenario_id, owner_id=SYSTEM_OWNER_ID, name=name, description="A vault."
     )
 
 
@@ -190,3 +203,146 @@ def test_unblock_user_restores_access(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json()["is_blocked"] is False
     assert container.telegram_authorization.is_private_chat_authorized("555") is True
+
+
+def test_list_scenarios_returns_summaries(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.list_scenarios = AsyncMock(return_value=[_scenario()])
+
+    response = client.get("/admin/scenarios")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {"id": "vault", "name": "Vault", "description": "A vault.", "visibility": "PUBLIC"}
+    ]
+
+
+def test_get_scenario_404_when_missing(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_scenario = AsyncMock(return_value=None)
+
+    response = client.get("/admin/scenarios/nope")
+
+    assert response.status_code == 404
+
+
+def test_get_scenario_returns_full_payload(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_scenario = AsyncMock(return_value=_scenario())
+
+    response = client.get("/admin/scenarios/vault")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "vault"
+    assert response.json()["name"] == "Vault"
+
+
+def test_create_scenario_409_when_id_exists(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_scenario = AsyncMock(return_value=_scenario())
+
+    response = client.post("/admin/scenarios", json={"id": "vault"})
+
+    assert response.status_code == 409
+
+
+def test_create_scenario_422_on_invalid_payload(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_scenario = AsyncMock(return_value=None)
+    container.scenario_transfer_service.import_scenario_payload = AsyncMock(return_value=None)
+
+    response = client.post("/admin/scenarios", json={"id": "vault"})
+
+    assert response.status_code == 422
+
+
+def test_create_scenario_succeeds(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_scenario = AsyncMock(return_value=None)
+    container.scenario_transfer_service.import_scenario_payload = AsyncMock(
+        return_value=_scenario()
+    )
+
+    response = client.post("/admin/scenarios", json={"id": "vault"})
+
+    assert response.status_code == 201
+    assert response.json()["id"] == "vault"
+
+
+def test_update_scenario_404_when_missing(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_scenario = AsyncMock(return_value=None)
+
+    response = client.put("/admin/scenarios/vault", json={"id": "vault"})
+
+    assert response.status_code == 404
+
+
+def test_update_scenario_400_when_id_mismatch(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_scenario = AsyncMock(return_value=_scenario())
+
+    response = client.put("/admin/scenarios/vault", json={"id": "different"})
+
+    assert response.status_code == 400
+
+
+def test_update_scenario_succeeds(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_scenario = AsyncMock(return_value=_scenario())
+    container.scenario_transfer_service.import_scenario_payload = AsyncMock(
+        return_value=_scenario(name="Renamed Vault")
+    )
+
+    response = client.put("/admin/scenarios/vault", json={"id": "vault"})
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Renamed Vault"
+
+
+def test_import_scenario_422_on_invalid_payload(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.scenario_transfer_service.import_scenario_payload = AsyncMock(return_value=None)
+
+    response = client.post("/admin/scenarios/import", json={"id": "vault"})
+
+    assert response.status_code == 422
+
+
+def test_export_session_404_when_missing(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.scenario_transfer_service.export_session = AsyncMock(return_value=None)
+
+    response = client.get(f"/admin/sessions/{SESSION_ID}/export")
+
+    assert response.status_code == 404
+
+
+def test_export_session_returns_payload(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    exported = {"session": {"id": str(SESSION_ID)}, "transcript": []}
+    container.scenario_transfer_service.export_session = AsyncMock(return_value=exported)
+
+    response = client.get(f"/admin/sessions/{SESSION_ID}/export")
+
+    assert response.status_code == 200
+    assert response.json() == exported
+
+
+def test_import_session_422_on_invalid_payload(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.scenario_transfer_service.import_session = AsyncMock(return_value=None)
+
+    response = client.post("/admin/sessions/import", json={"session": {}})
+
+    assert response.status_code == 422
+
+
+def test_import_session_succeeds(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.scenario_transfer_service.import_session = AsyncMock(return_value=_session())
+
+    response = client.post("/admin/sessions/import", json={"session": {}, "transcript": []})
+
+    assert response.status_code == 200
+    assert response.json()["id"] == str(SESSION_ID)

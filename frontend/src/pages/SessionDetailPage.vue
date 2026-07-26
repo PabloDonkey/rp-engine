@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, watch } from "vue";
 import { useRouter } from "vue-router";
 
+import * as api from "@/api";
 import type { AdminTrace } from "@/api";
 import { useAdminStore } from "@/stores/admin";
 
@@ -52,6 +53,17 @@ async function onDelete(): Promise<void> {
   router.push(backTo.value);
 }
 
+async function onExport(): Promise<void> {
+  const exported = await api.exportSession(props.sessionId);
+  const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `session-${props.sessionId}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function tracesForTurn(turn: string | undefined): AdminTrace[] {
   if (!turn) return [];
   return store.traces.filter((trace) => String(trace.record.turn ?? "") === turn);
@@ -93,13 +105,22 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
     <template v-else-if="store.session">
       <div class="mt-1 flex items-start justify-between gap-3">
         <h1 class="text-xl font-semibold">{{ store.session.scenario_definition_id }}</h1>
-        <button
-          type="button"
-          class="shrink-0 rounded-md border border-red-600 px-3 py-1.5 text-sm font-medium text-red-700 dark:text-red-400"
-          @click="onDelete"
-        >
-          Delete
-        </button>
+        <div class="flex shrink-0 gap-2">
+          <button
+            type="button"
+            class="rounded-md border border-black/10 px-3 py-1.5 text-sm font-medium dark:border-white/10"
+            @click="onExport"
+          >
+            Export
+          </button>
+          <button
+            type="button"
+            class="rounded-md border border-red-600 px-3 py-1.5 text-sm font-medium text-red-700 dark:text-red-400"
+            @click="onDelete"
+          >
+            Delete
+          </button>
+        </div>
       </div>
       <div class="mb-4 text-xs text-neutral-500">
         {{ new Date(store.session.created_at).toLocaleString() }}

@@ -10,7 +10,7 @@ from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionSto
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession, SessionOwnerKind
-from rp_engine.infrastructure.catalog.scenario_catalog import ScenarioCatalog
+from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 
 logger = logging.getLogger(__name__)
 
@@ -26,25 +26,24 @@ class PlaythroughStart:
 class PlaythroughService:
     """Coordinates scenario playthroughs: listing, starting, resuming and restarting.
 
-    A playthrough is a `ScenarioSession` bound to a curated `ScenarioDefinition` from the
-    catalog. Starting one seeds the scenario's opening narration into the conversation so
-    the player immediately sees where they are.
+    A playthrough is a `ScenarioSession` bound to a curated `ScenarioDefinition` from
+    `ScenarioDefinitionStore` (Postgres is the sole source of truth, see ADR-024). Starting
+    one seeds the scenario's opening narration into the conversation so the player
+    immediately sees where they are.
     """
 
     def __init__(
         self,
         *,
-        catalog: ScenarioCatalog,
         scenario_definition_store: ScenarioDefinitionStore,
         scenario_session_store: ScenarioSessionStore,
         conversation_store: ConversationStore,
     ) -> None:
-        self._catalog = catalog
         self._scenario_definition_store = scenario_definition_store
         self._scenario_session_store = scenario_session_store
         self._conversation_store = conversation_store
 
-    def list_scenarios(
+    async def list_scenarios(
         self, *, caller_group_chat_id: str | None = None
     ) -> list[ScenarioDefinition]:
         """Scenarios the caller may browse.
@@ -53,11 +52,11 @@ class PlaythroughService:
         direct chats). UNLISTED scenarios are always excluded; RESTRICTED ones appear
         only for the groups they are locked to.
         """
-        return [
-            scenario
-            for scenario in self._catalog.list()
-            if scenario.is_listed_for(caller_group_chat_id)
-        ]
+        scenarios = await self._scenario_definition_store.find_by_owner(SYSTEM_OWNER_ID)
+        return sorted(
+            (s for s in scenarios if s.is_listed_for(caller_group_chat_id)),
+            key=lambda scenario: scenario.name.lower(),
+        )
 
     async def get_active(
         self,
@@ -78,7 +77,7 @@ class PlaythroughService:
         scenario_id: str,
         caller_group_chat_id: str | None = None,
     ) -> PlaythroughStart | None:
-        scenario = self._catalog.get(scenario_id)
+        scenario = await self._scenario_definition_store.get_by_id(scenario_id)
         # A caller who may not access a RESTRICTED scenario is treated as if it does not
         # exist, so locking never leaks the id through a distinct error.
         if scenario is None or not scenario.is_playable_by(caller_group_chat_id):
@@ -103,11 +102,7 @@ class PlaythroughService:
         active = await self.get_active(owner_kind=owner_kind, owner_id=owner_id)
         if active is None:
             return None
-        scenario = self._catalog.get(active.scenario_definition_id)
-        if scenario is None:
-            scenario = await self._scenario_definition_store.get_by_id(
-                active.scenario_definition_id
-            )
+        scenario = await self._scenario_definition_store.get_by_id(active.scenario_definition_id)
         if scenario is None:
             return None
 
@@ -153,9 +148,6 @@ class PlaythroughService:
         owner_id: UUID,
         scenario: ScenarioDefinition,
     ) -> PlaythroughStart:
-        # Persist the curated blueprint so ChatService can load it by id at reply time.
-        await self._scenario_definition_store.save(scenario)
-
         participants = {
             role: character.id for role, character in scenario.characters.items()
         }

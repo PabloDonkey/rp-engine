@@ -8,7 +8,7 @@ Package manager is **uv**. Python 3.12+.
 
 ```bash
 uv sync                              # install deps (incl. dev group)
-uv run pytest                        # run all tests (JSON backend; PG tests skip)
+uv run pytest                        # run all tests (spins up a throwaway Postgres via testcontainers)
 uv run pytest tests/unit/core/conversation/test_builder.py   # single file
 uv run pytest -k "resume"            # single test by name substring
 uv run ruff check .                  # lint
@@ -23,16 +23,18 @@ Run the app (FastAPI + Telegram):
 uv run python -m uvicorn --app-dir src rp_engine.app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### PostgreSQL-backed tests
+### Postgres-backed tests
 
-PG integration/contract tests are **gated** and skip unless the DB is up and a flag is set.
-Use the project venv's pytest, not a system one (missing `fastapi`/`telegram`/`lmstudio`
-imports = wrong interpreter):
+Postgres is the sole persistence backend (ADR-024), so `uv run pytest` needs a running Docker
+daemon — `tests/conftest.py`'s `postgres_config` fixture starts a throwaway container for the
+whole test session automatically, no `docker compose up` required. Use the project venv's
+pytest, not a system one (missing `fastapi`/`telegram`/`lmstudio` imports = wrong interpreter).
+
+To run the **app** itself against a persistent local Postgres (rather than the ephemeral
+per-test-run one):
 
 ```bash
 scripts/db_services.sh up            # start postgres + pgAdmin (docker compose)
-scripts/test_postgres.sh             # one-shot: starts DB + runs the full suite with PG on
-RP_ENGINE_RUN_POSTGRES_TESTS=1 uv run pytest tests/integration/infrastructure/   # PG store contracts only
 ```
 
 Before finishing a nontrivial change, the bar is: **`uv run pytest` green, `uv run mypy .`
@@ -56,18 +58,19 @@ adapters/  →  application/  →  core/ (engine, domain, ports)
   with factory methods). `core/engine/orchestrator.py` (`RPOrchestrator`) drives a turn;
   `core/conversation/builder.py` (`ConversationBuilder`) turns scenario context into the
   LLM prompt (templates `{{char}}`/`{{user}}`/`{{world}}`, scenario rules, initial context).
-- **`application/services/`** — use-case orchestration. `PlaythroughService` (scenario
-  catalog → start/resume/restart a playthrough) and `ChatService` (send/continue/retry a
-  turn) are the primary entry points the adapters call.
+- **`application/services/`** — use-case orchestration. `PlaythroughService` (`ScenarioDefinitionStore`
+  → start/resume/restart a playthrough), `ChatService` (send/continue/retry a turn), and
+  `ScenarioTransferService` (import/export scenarios + sessions, see below) are the primary
+  entry points the adapters call.
 - **`adapters/`** — `telegram/` and `api/`. Transport concerns live here: slash-command
   parsing, **authorization/invocation policy**, message splitting. Adapters hold no business
   logic. Telegram is the primary, fully-featured surface.
 - **`infrastructure/`** — port implementations: `llm/lmstudio/`, `postgres/` (SQLAlchemy
-  async + Alembic), `storage/` (JSON files), `catalog/` (`ScenarioCatalog` loads curated
-  scenario JSONs), `config/settings.py` (pydantic-settings, `RP_ENGINE_`-prefixed env).
+  async + Alembic, the sole persistence backend), `scenario_transfer.py` (reads curated
+  scenario JSON files for import), `config/settings.py` (pydantic-settings, `RP_ENGINE_`-prefixed
+  env).
 - **`app/main.py`** is the **composition root** — the only place that wires concrete
-  implementations to ports and picks the backend from `RP_ENGINE_PERSISTENCE_BACKEND`
-  (`json` | `postgres`).
+  Postgres implementations to ports.
 
 ### Domain model: scenario-centric
 
@@ -77,13 +80,22 @@ opening); a `ScenarioSession` is a per-owner runtime instance. `Character` is an
 embedded asset, not a root entity. There is **no v1 backward compatibility** — the old
 character-centric `Session` model was fully removed (see `docs/DECISIONS.md` ADR-023).
 
-### Dual persistence backends
+### Persistence: Postgres-only, JSON is import/export (ADR-024)
 
-JSON and PostgreSQL are kept at **parity** via a shared serializer
-(`infrastructure/scenario_serialization.py`) and **one contract-test suite run against both
-backends** (`tests/.../contracts/`). Changing storage semantics means updating the shared
-serializer and keeping both runners green. PG schema changes require an Alembic migration
-that is **reversible** (verify `upgrade head` *and* `downgrade` against a real DB).
+Postgres is the **sole runtime persistence backend** — there is no JSON store fallback.
+`infrastructure/scenario_serialization.py` (domain ⇄ payload dict, both directions) backs both
+the Postgres stores and `ScenarioTransferService`; **one contract-test suite** exercises each
+store port (`tests/.../contracts/`, run against Postgres via the testcontainers fixture).
+Changing storage semantics means updating the shared serializer and keeping the contract suite
+green. PG schema changes require an Alembic migration that is **reversible** (verify
+`upgrade head` *and* `downgrade` against a real DB).
+
+Curated scenarios still ship as JSON files (`data/catalog/` by default,
+`RP_ENGINE_SCENARIO_CATALOG_DIRS`) but are **imported into Postgres on every boot**
+(`ScenarioTransferService.import_directory`, wired into `app/lifespan.py`) rather than being
+read directly at runtime — `PlaythroughService` reads scenarios from `ScenarioDefinitionStore`
+only. The admin panel (S010) is the only place scenarios/sessions are *authored/edited*;
+JSON import/export is a transfer format, not a live source.
 
 ## Documentation map
 
@@ -94,8 +106,8 @@ Substantial design docs live in `docs/` — read the relevant one before large c
 | `docs/ARCHITECTURE.md` | layer responsibilities, dependency rules, command flows |
 | `docs/DOMAIN_MODEL.md` | domain entities and terminology |
 | `docs/DATABASE_MODEL.md` | PostgreSQL tables ↔ repository mapping |
-| `docs/DECISIONS.md` | ADRs (ADR-023 = the scenario pivot) |
-| `docs/SCENARIOS.md` | scenario catalog JSON authoring guide |
+| `docs/DECISIONS.md` | ADRs (ADR-023 = the scenario pivot, ADR-024 = Postgres-only persistence) |
+| `docs/SCENARIOS.md` | scenario authoring guide (JSON import/export + admin panel) |
 | `docs/ROADMAP.md` | milestones |
 
 ## Dev-loop tracking (`.devloop/`)

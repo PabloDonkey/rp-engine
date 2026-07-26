@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from rp_engine.application.services.admin_service import AdminUserSummary
 from rp_engine.core.conversation.message import ConversationMessage
+from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 
 
@@ -68,3 +69,19 @@ class AdminMessageResponse(BaseModel):
 
 class AdminTraceResponse(BaseModel):
     record: dict[str, object]
+
+
+class ScenarioSummaryResponse(BaseModel):
+    id: str
+    name: str
+    description: str
+    visibility: str
+
+    @classmethod
+    def from_definition(cls, scenario: ScenarioDefinition) -> "ScenarioSummaryResponse":
+        return cls(
+            id=scenario.id,
+            name=scenario.name,
+            description=scenario.description,
+            visibility=scenario.visibility.value,
+        )

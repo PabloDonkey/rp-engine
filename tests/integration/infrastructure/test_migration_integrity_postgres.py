@@ -1,6 +1,5 @@
 import asyncio
-import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
@@ -11,9 +10,9 @@ from alembic.migration import MigrationContext
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
+from testcontainers.community.postgres import PostgresContainer
 
 from alembic import command
-from rp_engine.infrastructure.config.settings import Settings
 from rp_engine.infrastructure.postgres import (
     PostgresConfig,
     PostgresConversationStore,
@@ -46,11 +45,6 @@ from tests.unit.infrastructure.contracts.user_identity_store_contract import (
     assert_user_identity_store_contract,
 )
 
-pytestmark = pytest.mark.skipif(
-    os.getenv("RP_ENGINE_RUN_POSTGRES_TESTS") != "1",
-    reason="Set RP_ENGINE_RUN_POSTGRES_TESTS=1 to run PostgreSQL migration tests.",
-)
-
 _ROOT = Path(__file__).resolve().parents[3]
 _MODEL_TABLES = set(Base.metadata.tables)
 
@@ -59,23 +53,51 @@ def _alembic_config() -> Config:
     return Config(str(_ROOT / "alembic.ini"))
 
 
-async def _reset_schema_or_skip(engine: AsyncEngine) -> None:
-    try:
-        async with engine.begin() as connection:
-            await connection.execute(text("SELECT 1"))
-            await connection.execute(text("DROP SCHEMA public CASCADE"))
-            await connection.execute(text("CREATE SCHEMA public"))
-    except Exception as exc:
-        await engine.dispose()
-        pytest.skip(f"PostgreSQL not available for migration test: {exc}")
+def _point_alembic_env_at(monkeypatch: pytest.MonkeyPatch, config: PostgresConfig) -> None:
+    """`alembic/env.py` builds its own `Settings()` from the environment, ignoring
+    anything set on the `Config` object passed to `command.upgrade`/`downgrade` — so the
+    only way to target the testcontainers instance is via these env vars."""
+    monkeypatch.setenv("RP_ENGINE_POSTGRES_HOST", config.host)
+    monkeypatch.setenv("RP_ENGINE_POSTGRES_PORT", str(config.port))
+    monkeypatch.setenv("RP_ENGINE_POSTGRES_DATABASE", config.database)
+    monkeypatch.setenv("RP_ENGINE_POSTGRES_USER", config.user)
+    monkeypatch.setenv("RP_ENGINE_POSTGRES_PASSWORD", config.password)
+
+
+async def _reset_schema(engine: AsyncEngine) -> None:
+    async with engine.begin() as connection:
+        await connection.execute(text("DROP SCHEMA public CASCADE"))
+        await connection.execute(text("CREATE SCHEMA public"))
+
+
+@pytest.fixture(scope="module")
+def migration_postgres_config() -> Iterator[PostgresConfig]:
+    """A dedicated container, separate from the shared `postgres_config` fixture.
+
+    This suite drops/recreates the `public` schema around real Alembic upgrade/downgrade
+    cycles, which would destroy the tables the other (non-migration) contract tests share
+    a single container for.
+    """
+    with PostgresContainer("postgres:16-alpine") as container:
+        yield PostgresConfig(
+            host=container.get_container_host_ip(),
+            port=int(container.get_exposed_port(5432)),
+            database=container.dbname,
+            user=container.username,
+            password=container.password,
+            ssl_mode="disable",
+            pool_size=5,
+            max_overflow=5,
+        )
 
 
 @pytest_asyncio.fixture
-async def migrated_engine() -> AsyncIterator[AsyncEngine]:
-    settings = Settings(persistence_backend="postgres")
-    config = PostgresConfig.from_settings(settings)
-    engine = create_engine(config)
-    await _reset_schema_or_skip(engine)
+async def migrated_engine(
+    migration_postgres_config: PostgresConfig, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[AsyncEngine]:
+    _point_alembic_env_at(monkeypatch, migration_postgres_config)
+    engine = create_engine(migration_postgres_config)
+    await _reset_schema(engine)
 
     await asyncio.to_thread(command.upgrade, _alembic_config(), "head")
     yield engine
@@ -125,11 +147,12 @@ async def test_migrate_then_contract_all_stores(migrated_engine: AsyncEngine) ->
 
 
 @pytest.mark.asyncio
-async def test_migration_upgrade_downgrade_round_trip() -> None:
-    settings = Settings(persistence_backend="postgres")
-    config = PostgresConfig.from_settings(settings)
-    engine = create_engine(config)
-    await _reset_schema_or_skip(engine)
+async def test_migration_upgrade_downgrade_round_trip(
+    migration_postgres_config: PostgresConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _point_alembic_env_at(monkeypatch, migration_postgres_config)
+    engine = create_engine(migration_postgres_config)
+    await _reset_schema(engine)
 
     alembic_config = _alembic_config()
     await asyncio.to_thread(command.upgrade, alembic_config, "head")

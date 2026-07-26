@@ -25,7 +25,7 @@ from rp_engine.core.llm.errors import LLMConnectionError
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.user import User
-from rp_engine.infrastructure.catalog.scenario_catalog import SYSTEM_OWNER_ID
+from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 
 FIXED_USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 FIXED_GROUP_ID = UUID("00000000-0000-0000-0000-000000000555")
@@ -97,7 +97,7 @@ class FakePlaythroughService:
         self.started: list[tuple[str, UUID, str]] = []
         self.restarted: list[tuple[str, UUID]] = []
 
-    def list_scenarios(
+    async def list_scenarios(
         self, *, caller_group_chat_id: str | None = None
     ) -> list[ScenarioDefinition]:
         del caller_group_chat_id
