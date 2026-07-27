@@ -1,7 +1,13 @@
 from uuid import UUID
 
+import pytest
+
 from rp_engine.core.character.character import Character
-from rp_engine.core.conversation.builder import ConversationBuilder, ScenarioConversationInput
+from rp_engine.core.conversation.builder import (
+    RESUME_THINKING_MAX_CHARS,
+    ConversationBuilder,
+    ScenarioConversationInput,
+)
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
@@ -400,3 +406,59 @@ def test_builder_applies_directives_to_continue_and_resume() -> None:
 
     for conversation in (builder.build_continue(payload), builder.build_resume(payload)):
         assert any("Raise the stakes." in message for message in _system_contents(conversation))
+
+
+def _resume_directive(previous_thinking: str | None) -> str:
+    builder = ConversationBuilder()
+    conversation = builder.build_resume(
+        ScenarioConversationInput(
+            scenario=_scenario(characters={"protagonist": _character()}),
+            session=_session(active_participants={"protagonist": "belzebuth"}),
+            user=User(id=OWNER_ID, display_name="Pablo"),
+            memory_messages=[],
+            user_message="continue",
+        ),
+        previous_thinking=previous_thinking,
+    )
+    return conversation.messages[-1].content
+
+
+def test_resume_without_thinking_keeps_the_plain_directive() -> None:
+    directive = _resume_directive(None)
+
+    assert "cut off before it finished" in directive
+    assert "<notes>" not in directive
+
+
+@pytest.mark.parametrize("blank", ["", "   \n  "])
+def test_resume_treats_blank_thinking_as_absent(blank: str) -> None:
+    assert "<notes>" not in _resume_directive(blank)
+
+
+def test_resume_hands_back_the_previous_reasoning() -> None:
+    directive = _resume_directive("She reaches for the door, then hesitates.")
+
+    assert "<notes>" in directive
+    assert "She reaches for the door, then hesitates." in directive
+    # The whole point: stop it re-deriving the plan and burning the budget again.
+    assert "Do not reason about it again" in directive
+
+
+def test_resume_thinking_is_trimmed_to_its_tail() -> None:
+    """Reasoning dumps can rival the reply in size; returning all of it would trade a budget
+    problem for a context-pressure one. The tail holds the settled plan."""
+    thinking = "EARLY-DISCARDED-DRAFT " * 400 + "FINAL-PLAN"
+    assert len(thinking) > RESUME_THINKING_MAX_CHARS
+
+    directive = _resume_directive(thinking)
+
+    assert "FINAL-PLAN" in directive
+    assert "…" in directive
+    assert len(directive) < len(thinking)
+
+
+def test_short_thinking_is_passed_through_untrimmed() -> None:
+    directive = _resume_directive("A short plan.")
+
+    assert "…" not in directive
+    assert "A short plan." in directive

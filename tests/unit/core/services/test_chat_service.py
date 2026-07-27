@@ -4,13 +4,19 @@ from uuid import UUID
 
 import pytest
 
-from rp_engine.application.services.chat_service import ChatService
+from rp_engine.application.services.chat_service import (
+    FINISH_REASON_LENGTH,
+    FINISH_REASON_METADATA_KEY,
+    THINKING_METADATA_KEY,
+    ChatService,
+)
 from rp_engine.core.character.character import Character
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.engine.models import GenerationRequest
 from rp_engine.core.group.group import Group
+from rp_engine.core.llm.errors import EmptyGenerationError
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
@@ -864,3 +870,329 @@ async def test_persistent_directives_are_left_untouched_by_a_turn() -> None:
     saved = session_store.save.await_args.args[0]
     assert saved.directives.language == "fr"
     assert [rule.text for rule in saved.directives.rules] == ["No time skips."]
+
+
+def _empty_reply_service(
+    *,
+    thinking: str | None = "burned the whole budget reasoning",
+    finish_reason: str = "length",
+) -> tuple[ChatService, AsyncMock, AsyncMock]:
+    """A service whose model returns reasoning but no prose — the reasoning-model failure
+    mode where `max_tokens` is consumed before any reply is written."""
+    session = _session()
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(
+        return_value=LLMResponse(
+            content="   \n  ",
+            finish_reason=finish_reason,  # type: ignore[arg-type]
+            thinking=thinking,
+        )
+    )
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(
+        return_value=[
+            ConversationMessage(role=ConversationRole.USER, content="previous"),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="cut off mid-"),
+        ]
+    )
+    memory_strategy = Mock()
+    memory_strategy.build_context.return_value = []
+
+    scenario_session_store = AsyncMock()
+    scenario_session_store.get_by_id = AsyncMock(
+        return_value=session.with_directives(
+            SessionDirectives().with_director_instruction("Raise the stakes.")
+        )
+    )
+    scenario_definition_store = AsyncMock()
+    scenario_definition_store.get_by_id = AsyncMock(return_value=_definition())
+    user_store = AsyncMock()
+    user_store.get_by_id = AsyncMock(return_value=User(id=USER_ID, display_name="Pablo"))
+    group_store = AsyncMock()
+    group_store.get_by_id = AsyncMock(return_value=None)
+    trace_store = AsyncMock()
+
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+        user_identity_store=user_store,
+        group_identity_store=group_store,
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
+        generation_settings=GENERATION_SETTINGS,
+        generation_trace_store=trace_store,
+        generation_trace_mode="all",
+    )
+    return service, conversation_store, trace_store
+
+
+@pytest.mark.asyncio
+async def test_empty_reply_is_rejected_and_nothing_is_persisted() -> None:
+    service, conversation_store, _ = _empty_reply_service()
+
+    with pytest.raises(EmptyGenerationError) as excinfo:
+        await service.send_message(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+            message="hello",
+        )
+
+    assert excinfo.value.finish_reason == "length"
+    # Neither the player's message nor an empty narrator turn reaches the conversation.
+    conversation_store.save_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_empty_reply_is_still_traced_for_debugging() -> None:
+    service, _, trace_store = _empty_reply_service()
+
+    with pytest.raises(EmptyGenerationError):
+        await service.send_message(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+            message="hello",
+        )
+
+    trace_store.append.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_empty_reply_does_not_burn_the_director_instruction() -> None:
+    """The note was aimed at a reply the player never saw, so it must survive for the retry."""
+    service, _, _ = _empty_reply_service()
+    session_store = service._scenario_session_store  # type: ignore[attr-defined]
+
+    with pytest.raises(EmptyGenerationError):
+        await service.send_message(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+            message="hello",
+        )
+
+    session_store.save.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_empty_continue_does_not_append_a_resumable_empty_turn() -> None:
+    """The loop this prevents: an empty turn stored with `finish_reason: length` makes the
+    next `/continue` try to resume nothing, producing another empty turn."""
+    service, conversation_store, _ = _empty_reply_service()
+
+    with pytest.raises(EmptyGenerationError):
+        await service.continue_story(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        )
+
+    conversation_store.save_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_empty_regenerate_does_not_destroy_the_existing_history() -> None:
+    service, conversation_store, _ = _empty_reply_service()
+
+    with pytest.raises(EmptyGenerationError):
+        await service.regenerate_last_response(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        )
+
+    conversation_store.clear.assert_not_awaited()
+    conversation_store.save_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_reply_counts_as_empty() -> None:
+    service, _, _ = _empty_reply_service(thinking=None, finish_reason="stop")
+
+    with pytest.raises(EmptyGenerationError) as excinfo:
+        await service.send_message(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+            message="hello",
+        )
+
+    assert excinfo.value.finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_continue_hands_the_truncated_turns_reasoning_back_to_the_model() -> None:
+    """End of the chain: LM Studio reports `length` → the turn is stored with its reasoning →
+    `/continue` resumes *and* returns that reasoning so the model need not re-derive it."""
+    session = _session()
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="…and she left."))
+    truncated = ConversationMessage(
+        role=ConversationRole.CHARACTER,
+        content="She reached for the door and",
+        metadata={
+            FINISH_REASON_METADATA_KEY: FINISH_REASON_LENGTH,
+            THINKING_METADATA_KEY: "Plan: she hesitates, then leaves without a word.",
+        },
+    )
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(return_value=[truncated])
+    memory_strategy = Mock()
+    memory_strategy.build_context.return_value = [truncated]
+
+    scenario_session_store = AsyncMock()
+    scenario_session_store.get_by_id = AsyncMock(return_value=session)
+    scenario_definition_store = AsyncMock()
+    scenario_definition_store.get_by_id = AsyncMock(return_value=_definition())
+    user_store = AsyncMock()
+    user_store.get_by_id = AsyncMock(return_value=User(id=USER_ID, display_name="Pablo"))
+    group_store = AsyncMock()
+    group_store.get_by_id = AsyncMock(return_value=None)
+
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+        user_identity_store=user_store,
+        group_identity_store=group_store,
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
+        generation_settings=GENERATION_SETTINGS,
+    )
+
+    await service.continue_story(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+
+    directive = orchestrator.generate_reply.await_args.args[0].conversation.messages[-1]
+    assert "cut off before it finished" in directive.content
+    assert "Plan: she hesitates, then leaves without a word." in directive.content
+
+
+@pytest.mark.asyncio
+async def test_plain_continue_does_not_receive_prior_reasoning() -> None:
+    """A turn that ended naturally is advanced, not resumed — no notes, no resume directive."""
+    session = _session()
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="next beat"))
+    finished = ConversationMessage(
+        role=ConversationRole.CHARACTER,
+        content="She left.",
+        metadata={
+            FINISH_REASON_METADATA_KEY: "stop",
+            THINKING_METADATA_KEY: "Plan: she hesitates, then leaves.",
+        },
+    )
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(return_value=[finished])
+    memory_strategy = Mock()
+    memory_strategy.build_context.return_value = [finished]
+
+    scenario_session_store = AsyncMock()
+    scenario_session_store.get_by_id = AsyncMock(return_value=session)
+    scenario_definition_store = AsyncMock()
+    scenario_definition_store.get_by_id = AsyncMock(return_value=_definition())
+    user_store = AsyncMock()
+    user_store.get_by_id = AsyncMock(return_value=User(id=USER_ID, display_name="Pablo"))
+    group_store = AsyncMock()
+    group_store.get_by_id = AsyncMock(return_value=None)
+
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+        user_identity_store=user_store,
+        group_identity_store=group_store,
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
+        generation_settings=GENERATION_SETTINGS,
+    )
+
+    await service.continue_story(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+
+    directive = orchestrator.generate_reply.await_args.args[0].conversation.messages[-1]
+    assert "Continue the narration naturally" in directive.content
+    assert "<notes>" not in directive.content
+
+
+def _retry_service(history: list[ConversationMessage]) -> tuple[ChatService, AsyncMock]:
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="regenerated"))
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(return_value=history)
+    memory_strategy = Mock()
+    memory_strategy.build_context.side_effect = lambda messages: list(messages)
+
+    scenario_session_store = AsyncMock()
+    scenario_session_store.get_by_id = AsyncMock(return_value=_session())
+    scenario_definition_store = AsyncMock()
+    scenario_definition_store.get_by_id = AsyncMock(return_value=_definition())
+    user_store = AsyncMock()
+    user_store.get_by_id = AsyncMock(return_value=User(id=USER_ID, display_name="Pablo"))
+    group_store = AsyncMock()
+    group_store.get_by_id = AsyncMock(return_value=None)
+
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+        user_identity_store=user_store,
+        group_identity_store=group_store,
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
+        generation_settings=GENERATION_SETTINGS,
+    )
+    return service, orchestrator
+
+
+@pytest.mark.asyncio
+async def test_retrying_a_resumed_turn_resumes_again_with_the_truncated_turns_reasoning() -> None:
+    """`/retry` drops the failed turn, so the *truncated* turn becomes last again — and its
+    reasoning, not the discarded turn's, is what the replacement attempt should carry."""
+    truncated = ConversationMessage(
+        role=ConversationRole.CHARACTER,
+        content="She reached for the door and",
+        metadata={
+            FINISH_REASON_METADATA_KEY: FINISH_REASON_LENGTH,
+            THINKING_METADATA_KEY: "TRUNCATED-TURN-PLAN",
+        },
+    )
+    failed_resume = ConversationMessage(
+        role=ConversationRole.CHARACTER,
+        content="…hesitated.",
+        metadata={
+            FINISH_REASON_METADATA_KEY: "stop",
+            THINKING_METADATA_KEY: "DISCARDED-TURN-PLAN",
+        },
+    )
+    service, orchestrator = _retry_service(
+        [
+            ConversationMessage(role=ConversationRole.USER, content="go on"),
+            truncated,
+            failed_resume,
+        ]
+    )
+
+    await service.regenerate_last_response(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+
+    directive = orchestrator.generate_reply.await_args.args[0].conversation.messages[-1]
+    assert "cut off before it finished" in directive.content
+    assert "TRUNCATED-TURN-PLAN" in directive.content
+    assert "DISCARDED-TURN-PLAN" not in directive.content
+
+
+@pytest.mark.asyncio
+async def test_retrying_after_a_naturally_ended_turn_still_advances() -> None:
+    service, orchestrator = _retry_service(
+        [
+            ConversationMessage(role=ConversationRole.USER, content="go on"),
+            ConversationMessage(
+                role=ConversationRole.CHARACTER,
+                content="She left.",
+                metadata={FINISH_REASON_METADATA_KEY: "stop"},
+            ),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="A new beat."),
+        ]
+    )
+
+    await service.regenerate_last_response(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+
+    directive = orchestrator.generate_reply.await_args.args[0].conversation.messages[-1]
+    assert "Continue the narration naturally" in directive.content
+    assert "<notes>" not in directive.content

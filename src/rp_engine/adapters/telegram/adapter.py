@@ -22,7 +22,12 @@ from rp_engine.adapters.telegram.splitter import split_message
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.playthrough_service import PlaythroughStart
 from rp_engine.core.group.group import Group
-from rp_engine.core.llm.errors import LLMConnectionError, LLMGenerationError, LLMTimeoutError
+from rp_engine.core.llm.errors import (
+    EmptyGenerationError,
+    LLMConnectionError,
+    LLMGenerationError,
+    LLMTimeoutError,
+)
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession, SessionOwnerKind
@@ -55,6 +60,11 @@ NO_ACTIVE_PLAYTHROUGH_MESSAGE = (
 )
 
 GROUP_ADMIN_ONLY_MESSAGE = "Only group administrators can use this command."
+
+EMPTY_GENERATION_MESSAGE = (
+    "The model spent its whole budget thinking and didn't write a reply.\n"
+    "Nothing was saved — send your message again, or use /continue."
+)
 
 # Session-directive commands (S014). They all operate on the active playthrough.
 DIRECTIVE_COMMANDS: frozenset[TelegramCommand] = frozenset(
@@ -482,6 +492,18 @@ class TelegramAdapter:
                 text="The model took too long to reply. Please try again.",
             )
             return
+        # Must precede the LLMGenerationError arm below — EmptyGenerationError subclasses it.
+        except EmptyGenerationError as exc:
+            logger.warning(
+                "Telegram failure",
+                extra={
+                    "reason": "llm_empty_generation",
+                    "user_id": user_id,
+                    "finish_reason": exc.finish_reason,
+                },
+            )
+            await self._reply_with_split(message=message, text=EMPTY_GENERATION_MESSAGE)
+            return
         except LLMGenerationError:
             logger.exception(
                 "Telegram failure",
@@ -877,6 +899,12 @@ class TelegramAdapter:
     async def _send_narrator_reply(self, *, message: Any, chat: Any, text: str) -> None:
         """Send a narrator (story) reply and remember its message ids for `/retry`."""
         chunks = split_message(text, self._message_max_length)
+        if not chunks:
+            logger.warning(
+                "Refusing to send an empty narrator reply",
+                extra={"chat_id": self._chat_id(chat)},
+            )
+            return
         message_ids: list[int] = []
         for chunk in chunks:
             sent = await message.reply_text(chunk)

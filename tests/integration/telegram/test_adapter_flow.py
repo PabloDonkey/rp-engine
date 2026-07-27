@@ -12,6 +12,7 @@ from telegram import Update
 from rp_engine.adapters.telegram.adapter import (
     AUTHORIZED_START_NO_PLAY_MESSAGE,
     AUTHORIZED_START_RESUME_MESSAGE,
+    EMPTY_GENERATION_MESSAGE,
     GROUP_ADMIN_ONLY_MESSAGE,
     NO_ACTIVE_PLAYTHROUGH_MESSAGE,
     TelegramAdapter,
@@ -21,7 +22,7 @@ from rp_engine.adapters.telegram.beta_registry import TelegramBetaRegistry
 from rp_engine.adapters.telegram.commands import build_help_message
 from rp_engine.application.services.playthrough_service import PlaythroughStart
 from rp_engine.core.group.group import Group
-from rp_engine.core.llm.errors import LLMConnectionError
+from rp_engine.core.llm.errors import EmptyGenerationError, LLMConnectionError, LLMGenerationError
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import (
@@ -1194,3 +1195,55 @@ async def test_group_member_cannot_set_directives_but_admin_can() -> None:
         cast(Update, admin), cast(Any, FakeContext(FakeBot("administrator")))
     )
     assert service.calls == [("language", "fr")]
+
+
+@pytest.mark.asyncio
+async def test_empty_generation_tells_the_player_instead_of_sending_nothing() -> None:
+    """The original failure: `split_message("")` returns `[]`, so the send loop never ran and
+    the player got no reply and no error at all."""
+    chat_service = AsyncMock()
+    chat_service.send_message = AsyncMock(
+        side_effect=EmptyGenerationError("empty", finish_reason="length")
+    )
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(active=_session()),
+        authorization=TelegramAuthorization({"42"}),
+    )
+
+    responses = await _send(adapter, "hello there")
+
+    assert responses == [EMPTY_GENERATION_MESSAGE]
+
+
+@pytest.mark.asyncio
+async def test_empty_generation_on_continue_is_reported_too() -> None:
+    chat_service = AsyncMock()
+    chat_service.continue_story = AsyncMock(
+        side_effect=EmptyGenerationError("empty", finish_reason="length")
+    )
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(active=_session()),
+        authorization=TelegramAuthorization({"42"}),
+    )
+
+    responses = await _send(adapter, "/continue")
+
+    assert responses == [EMPTY_GENERATION_MESSAGE]
+
+
+@pytest.mark.asyncio
+async def test_generic_generation_errors_keep_their_own_message() -> None:
+    """EmptyGenerationError subclasses LLMGenerationError, so the arms must not collapse."""
+    chat_service = AsyncMock()
+    chat_service.send_message = AsyncMock(side_effect=LLMGenerationError("boom"))
+    adapter = _make_adapter(
+        chat_service=chat_service,
+        playthrough_service=FakePlaythroughService(active=_session()),
+        authorization=TelegramAuthorization({"42"}),
+    )
+
+    responses = await _send(adapter, "hello there")
+
+    assert responses == ["The model failed to generate a reply. Please try again."]

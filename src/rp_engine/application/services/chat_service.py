@@ -13,6 +13,7 @@ from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.engine.models import GenerationRequest
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.group.group import Group
+from rp_engine.core.llm.errors import EmptyGenerationError
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.models import ConversationIdentity
@@ -149,6 +150,10 @@ class ChatService:
                 response=llm_response,
                 latency_ms=self._to_latency_ms(started_at),
             )
+            # Guard before the trace-adjacent work below: the trace is already recorded (an
+            # empty generation is exactly what you want a trace for), but nothing has been
+            # persisted to the conversation and the director note is still unconsumed.
+            self._require_content(llm_response)
             character_response = llm_response.content
         await self._consume_director_instruction(session)
         await self._conversation_store.save_message(
@@ -199,7 +204,10 @@ class ChatService:
             # If the last narrator reply was cut off at the token limit, resume it
             # in place; otherwise advance the story with no player input.
             if self._should_resume(history):
-                conversation = self._conversation_builder.build_resume(builder_input)
+                conversation = self._conversation_builder.build_resume(
+                    builder_input,
+                    previous_thinking=self._last_thinking(history),
+                )
             else:
                 conversation = self._conversation_builder.build_continue(builder_input)
             request = GenerationRequest(
@@ -237,6 +245,10 @@ class ChatService:
                 response=llm_response,
                 latency_ms=self._to_latency_ms(started_at),
             )
+            # Guard before the trace-adjacent work below: the trace is already recorded (an
+            # empty generation is exactly what you want a trace for), but nothing has been
+            # persisted to the conversation and the director note is still unconsumed.
+            self._require_content(llm_response)
             character_response = llm_response.content
         await self._consume_director_instruction(session)
         await self._conversation_store.save_message(
@@ -291,13 +303,22 @@ class ChatService:
                 )
             elif latest_context_message.role == ConversationRole.CHARACTER:
                 context_messages = self._memory_strategy.build_context(trimmed_history)
-                conversation = self._conversation_builder.build_continue(
-                    self._build_input(
-                        context,
-                        memory_messages=context_messages,
-                        user_message="continue",
-                    )
+                builder_input = self._build_input(
+                    context,
+                    memory_messages=context_messages,
+                    user_message="continue",
                 )
+                # Mirror `continue_story`: once the failed turn is dropped, whatever is now
+                # last decides the mode. Retrying a resume must resume again — advancing
+                # instead would strand the cut-off sentence permanently, since the turn that
+                # would have finished it is the one being replaced.
+                if self._should_resume(trimmed_history):
+                    conversation = self._conversation_builder.build_resume(
+                        builder_input,
+                        previous_thinking=self._last_thinking(trimmed_history),
+                    )
+                else:
+                    conversation = self._conversation_builder.build_continue(builder_input)
             else:
                 raise ValueError("Conversation has no valid context to regenerate from.")
             request = GenerationRequest(
@@ -335,6 +356,9 @@ class ChatService:
                 response=llm_response,
                 latency_ms=self._to_latency_ms(started_at),
             )
+            # Must precede the `clear()` below — a retry that came back empty must not cost
+            # the player the history it was regenerating from.
+            self._require_content(llm_response)
             character_response = llm_response.content
 
         await self._consume_director_instruction(session)
@@ -346,6 +370,25 @@ class ChatService:
             self._narrator_message(llm_response, turn),
         )
         return character_response
+
+    @staticmethod
+    def _require_content(llm_response: LLMResponse) -> None:
+        """Reject a reply with no usable text before anything is persisted.
+
+        A reasoning model can burn its entire token budget thinking and stop before writing
+        any prose, which arrives here as empty content (the reasoning itself is captured
+        separately as `thinking`). Storing that would put an empty narrator turn into the
+        history — replayed into every later prompt, counted as a turn, and, when it carries
+        `finish_reason: length`, enough to make the next `/continue` try to resume nothing
+        and produce another empty turn. Raising instead leaves the conversation exactly as
+        it was, so the player can simply try again.
+        """
+        if llm_response.content.strip():
+            return
+        raise EmptyGenerationError(
+            "The model returned an empty reply.",
+            finish_reason=llm_response.finish_reason,
+        )
 
     async def _consume_director_instruction(self, session: ScenarioSession) -> None:
         """Clear the one-turn director instruction that the generation just consumed.
@@ -454,6 +497,18 @@ class ChatService:
             last.role == ConversationRole.CHARACTER
             and last.metadata.get(FINISH_REASON_METADATA_KEY) == FINISH_REASON_LENGTH
         )
+
+    @staticmethod
+    def _last_thinking(history: list[ConversationMessage]) -> str | None:
+        """Reasoning captured on the truncated turn being resumed, if any.
+
+        Only meaningful next to `_should_resume`: it is the plan for the very reply that ran
+        out of tokens, so handing it back stops the model re-deriving it.
+        """
+        if not history:
+            return None
+        thinking = history[-1].metadata.get(THINKING_METADATA_KEY, "").strip()
+        return thinking or None
 
     @staticmethod
     def _narrator_message(llm_response: LLMResponse, turn: int) -> ConversationMessage:

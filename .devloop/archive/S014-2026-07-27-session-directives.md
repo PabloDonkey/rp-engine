@@ -1,6 +1,23 @@
+> 🗄️ **ARCHIVED — COMPLETED 2026-07-27.** Frozen; do not edit. Kept as evolution history.
+> **Result:** Three player controls sharing one mechanism — `/director` (one turn, cleared by
+> the generation that consumes it), `/rule add|remove`/`/rules` (persistent, never-reused ids),
+> `/language` (persistent). New `SessionDirectives` value object on `ScenarioSession`, stored in
+> a dedicated `scenario_sessions.directives` JSONB column (migration `20260726_0008`, verified
+> reversible against the real dev DB with 13 live sessions). `ConversationBuilder` gained
+> Language → Scenario Rules → Director Instructions, placed after Response Format and before the
+> memory hint, omitted cleanly when empty. Admin panel session detail surfaces all three
+> read-only. Live-verified over Telegram: directives appear in the system prompt and are acted
+> on by the model.
+> **Produced ADR-025** (session reset tiers): `/restart` preserves player-owned settings,
+> `/clear` resets them — generalized from this epic's restart carry-over decision. The `/clear`
+> half is owned by S015.
+> **Live testing also surfaced three provider bugs**, now boarded separately: `finish_reason`
+> and token usage were never read from the SDK (fixed in `3061d6b`), and S017/S018/S019 cover
+> the assistant-role mapping bug, prefill continuation, and reasoning-marker parsing.
+
 # S014 · Session directives — Director Mode, Scenario Rules, Language preference
 
-**Status:** 🟢 In Progress — code complete 2026-07-26, awaiting live Telegram verification
+**Status:** ✅ COMPLETE — archived 2026-07-27
 **Effort:** ~2-3 days (three related features sharing one mechanism)
 **Risk:** Medium (touches `ConversationBuilder` prompt layout + session persistence + Telegram
 command surface)
@@ -100,7 +117,6 @@ settings, `/clear` resets them). The `/clear` half is owned by
       `test_scenario_catalog_dirs_defaults_to_data_catalog`, caused by
       `RP_ENGINE_SCENARIO_CATALOG_DIRS` being exported in the dev shell — unrelated).
       mypy clean on `src/`, ruff clean, frontend typecheck + build clean.
-- [ ] **Live-verify over Telegram**: set a rule and confirm it persists across turns; issue a
-      director instruction, confirm it applies once then disappears from the next prompt
-      (check the admin panel's per-message *System prompt* filter, S012); switch language and
-      confirm the replies follow.
+- [x] **Live-verified over Telegram** (2026-07-27): directives are present in the system
+      prompt and visibly acted on by the model, confirmed via the admin panel's per-message
+      *System prompt* and *Thinking* filters (S012).
