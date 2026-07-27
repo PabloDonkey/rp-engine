@@ -274,3 +274,34 @@ def test_mark_deleted_keeps_the_original_timestamp(sample_user_id: UUID):
     ).mark_deleted(at=datetime(2026, 7, 27, tzinfo=UTC))
 
     assert first.mark_deleted(at=datetime(2026, 7, 28, tzinfo=UTC)) is first
+
+
+def test_override_persona_replaces_an_existing_one(sample_user_id: UUID):
+    """The operator escape hatch. Kept separate from `with_persona` so the set-once guard
+    keeps protecting every path a player can reach."""
+    session = ScenarioSession.create_for_user(
+        scenario_definition_id="scenario_1", user_id=sample_user_id
+    ).with_persona(name="Sera Vane", description="A wary courier.")
+
+    corrected = session.override_persona(name="Sera Vayne", description="A wary courier.")
+
+    assert corrected.user_persona_name == "Sera Vayne"
+    assert corrected.user_persona_description == "A wary courier."
+
+
+def test_override_persona_also_sets_a_first_one(sample_user_id: UUID):
+    session = ScenarioSession.create_for_user(
+        scenario_definition_id="scenario_1", user_id=sample_user_id
+    ).override_persona(name="Kes")
+
+    assert session.user_persona_name == "Kes"
+    assert session.user_persona_description is None
+
+
+def test_override_persona_still_rejects_a_blank_name(sample_user_id: UUID):
+    session = ScenarioSession.create_for_user(
+        scenario_definition_id="scenario_1", user_id=sample_user_id
+    ).with_persona(name="Sera Vane")
+
+    with pytest.raises(ValueError):
+        session.override_persona(name="  ")

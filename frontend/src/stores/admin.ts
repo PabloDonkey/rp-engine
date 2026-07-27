@@ -116,6 +116,21 @@ export const useAdminStore = defineStore("admin", {
       }
     },
 
+    async setSessionPersona(
+      sessionId: string,
+      name: string,
+      description: string,
+    ): Promise<boolean> {
+      this.actionError = null;
+      try {
+        this.session = await api.setSessionPersona(sessionId, name, description);
+        return true;
+      } catch (error) {
+        this.actionError = error instanceof Error ? error.message : String(error);
+        return false;
+      }
+    },
+
     async toggleBlock(user: AdminUser): Promise<void> {
       const updated = user.is_blocked
         ? await api.unblockUser(user.id)

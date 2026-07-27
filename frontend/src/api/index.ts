@@ -20,8 +20,13 @@ const AdminSessionSchema = z.object({
   owner_kind: z.string(),
   owner_id: z.string(),
   created_at: z.string(),
+  updated_at: z.string(),
+  // Set when a /restart or /clear superseded this session. It stays fully readable.
+  deleted_at: z.string().nullable(),
   message_count: z.number().nullable(),
   directives: SessionDirectivesSchema,
+  user_persona_name: z.string().nullable(),
+  user_persona_description: z.string().nullable(),
 });
 
 const AdminMessageSchema = z.object({
@@ -127,6 +132,19 @@ export function deleteSession(sessionId: string): Promise<void> {
 export function deleteLastMessage(sessionId: string): Promise<DeletedMessage> {
   return request(`/sessions/${sessionId}/messages/last`, DeletedMessageSchema, {
     method: "DELETE",
+  });
+}
+
+// Sets or replaces. This is the operator exception to the set-once contract: players can
+// only change a persona with /clear, admins can correct one in place.
+export function setSessionPersona(
+  sessionId: string,
+  name: string,
+  description: string,
+): Promise<AdminSession> {
+  return request(`/sessions/${sessionId}/persona`, AdminSessionSchema, {
+    method: "PUT",
+    body: JSON.stringify({ name, description }),
   });
 }
 

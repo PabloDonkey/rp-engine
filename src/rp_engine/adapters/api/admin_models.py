@@ -94,6 +94,18 @@ class AdminSessionResponse(BaseModel):
         )
 
 
+class AdminSessionPersonaRequest(BaseModel):
+    """Operator-supplied persona: sets one, or replaces the one already there.
+
+    This is the admin exception to ADR-025's set-once contract. Players still have exactly
+    one way to change a persona — `/clear`, which starts a fresh session — because they
+    never reach this endpoint.
+    """
+
+    name: str
+    description: str = ""
+
+
 class AdminMessageResponse(BaseModel):
     role: str
     content: str

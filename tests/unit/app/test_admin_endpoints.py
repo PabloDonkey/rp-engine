@@ -156,6 +156,93 @@ def test_get_session_reports_default_directives(tmp_path: Path) -> None:
     }
 
 
+def test_get_session_exposes_the_persona_and_lifecycle(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(
+        return_value=_session().with_persona(name="Sera Vane", description="A wary courier.")
+    )
+    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+
+    body = client.get(f"/admin/sessions/{SESSION_ID}").json()
+
+    assert body["user_persona_name"] == "Sera Vane"
+    assert body["user_persona_description"] == "A wary courier."
+    assert body["deleted_at"] is None
+    assert body["updated_at"]
+
+
+def test_set_session_persona_fills_in_a_missing_one(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    session = _session()
+    container.admin_service.get_session = AsyncMock(return_value=session)
+    container.admin_service.set_session_persona = AsyncMock(
+        return_value=session.with_persona(name="Sera Vane", description="A wary courier.")
+    )
+    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+
+    response = client.put(
+        f"/admin/sessions/{SESSION_ID}/persona",
+        json={"name": "Sera Vane", "description": "A wary courier."},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user_persona_name"] == "Sera Vane"
+    container.admin_service.set_session_persona.assert_awaited_once()
+
+
+def test_set_session_persona_replaces_an_existing_one(tmp_path: Path) -> None:
+    """The admin exception to ADR-025: a player can only change a persona with /clear, an
+    operator looking at the whole session can correct one in place."""
+    client, container = _setup(tmp_path)
+    session = _session().with_persona(name="Sera Vane")
+    container.admin_service.get_session = AsyncMock(return_value=session)
+    container.admin_service.set_session_persona = AsyncMock(
+        return_value=session.override_persona(name="Sera Vayne", description="Fixed typo.")
+    )
+    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+
+    response = client.put(
+        f"/admin/sessions/{SESSION_ID}/persona",
+        json={"name": "Sera Vayne", "description": "Fixed typo."},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user_persona_name"] == "Sera Vayne"
+
+
+def test_set_session_persona_409_for_a_superseded_session(tmp_path: Path) -> None:
+    # Nothing set here would ever reach a prompt again, so it is refused rather than
+    # silently accepted as a no-op.
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session().mark_deleted())
+    container.admin_service.set_session_persona = AsyncMock()
+
+    response = client.put(f"/admin/sessions/{SESSION_ID}/persona", json={"name": "Sera Vane"})
+
+    assert response.status_code == 409
+    container.admin_service.set_session_persona.assert_not_awaited()
+
+
+def test_set_session_persona_400_on_a_blank_name(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.set_session_persona = AsyncMock()
+
+    response = client.put(f"/admin/sessions/{SESSION_ID}/persona", json={"name": "   "})
+
+    assert response.status_code == 400
+    container.admin_service.set_session_persona.assert_not_awaited()
+
+
+def test_set_session_persona_404_when_the_session_is_missing(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=None)
+
+    response = client.put(f"/admin/sessions/{SESSION_ID}/persona", json={"name": "Sera Vane"})
+
+    assert response.status_code == 404
+
+
 def test_get_session_transcript(tmp_path: Path) -> None:
     client, container = _setup(tmp_path)
     container.admin_service.get_session = AsyncMock(return_value=_session())

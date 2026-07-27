@@ -1608,9 +1608,10 @@ Session resets come in two tiers, distinguished by whether **player-owned** stat
   session. A pending one-turn director instruction is dropped: it was aimed at a reply that
   will now never happen.
 * **`/clear` — full reset.** Everything `/restart` does, plus player-owned settings return
-  to defaults. Under S015 this re-issues the persona prompt, and is **the only supported way
-  to change a persona**. It restarts the same scenario, it does not drop the player to "no
-  active playthrough".
+  to defaults. Under S015 this re-issues the persona prompt, and is **the only way a player
+  can change a persona**. It restarts the same scenario, it does not drop the player to "no
+  active playthrough". (An operator can also edit a persona directly from the admin panel —
+  see *Amendment* below.)
 * **`/play <id>` is unchanged.** A genuinely new session starts with defaults (and prompts
   for a persona); resuming an existing one resets nothing.
 
@@ -1633,6 +1634,26 @@ and differ only in whether player-owned state is carried over.
   `/clear` keeps the contract while bounding the blast radius to a fresh session. Language
   and rules already have per-setting resets (`/language auto`, `/rule remove`); `/clear` is
   the bulk path, not their replacement.
+
+## Amendment — 2026-07-27: admin-panel persona editing
+
+The set-once contract is a **player-facing** rule, and the reasoning behind it is about the
+player's experience: they must not be able to rewrite, mid-story, a name the story has
+already used. It was never a claim that the value is physically unchangeable.
+
+The admin panel may therefore set **or replace** a session's persona
+(`PUT /admin/sessions/{id}/persona`). This is expressed as a separate domain transition —
+`ScenarioSession.override_persona` — so `with_persona`'s guard keeps protecting every path a
+player can reach; the player-facing contract above is unchanged, and `/clear` remains their
+only way to change a persona.
+
+Two things follow, and the panel surfaces both:
+
+* Renaming changes how **past turns render**. Transcripts store `{{user}}` unresolved and
+  resolve it at render time, so history stays internally consistent but stops matching what
+  the player originally read. The panel confirms before a rename for exactly this reason.
+* A **superseded** session is refused (409). Its prompt is never built again, so editing it
+  would be a silent no-op.
 
 ## Rationale
 

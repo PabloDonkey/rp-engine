@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import * as api from "@/api";
@@ -91,6 +91,55 @@ async function onDeleteLastMessage(message: AdminMessage): Promise<void> {
   await store.deleteLastMessage(props.sessionId);
 }
 
+// The operator exception to the set-once contract (ADR-025): a player can only change a
+// persona with /clear, an admin can correct one in place. Superseded sessions are excluded
+// because a persona there would never reach a prompt.
+const personaDraft = reactive({ name: "", description: "" });
+const personaSaving = ref(false);
+
+const canEditPersona = computed(() => store.session !== null && !store.session.deleted_at);
+const hasPersona = computed(() => Boolean(store.session?.user_persona_name));
+
+// Keep the draft in step with whichever session is loaded, so the form opens on what is
+// currently stored rather than on a stale edit.
+watch(
+  () => store.session,
+  (session) => {
+    personaDraft.name = session?.user_persona_name ?? "";
+    personaDraft.description = session?.user_persona_description ?? "";
+  },
+  { immediate: true },
+);
+
+const personaDirty = computed(
+  () =>
+    personaDraft.name !== (store.session?.user_persona_name ?? "") ||
+    personaDraft.description !== (store.session?.user_persona_description ?? ""),
+);
+
+async function onSavePersona(): Promise<void> {
+  if (!personaDraft.name.trim()) return;
+  // Renaming re-renders past turns under the new name — transcripts store `{{user}}`
+  // unresolved — so the story stops matching what the player actually read.
+  if (
+    hasPersona.value &&
+    personaDraft.name.trim() !== store.session?.user_persona_name &&
+    !confirm(
+      `Rename this player's character from "${store.session?.user_persona_name}" to ` +
+        `"${personaDraft.name.trim()}"? Past turns will render under the new name, which ` +
+        "will not match what the player already read.",
+    )
+  ) {
+    return;
+  }
+  personaSaving.value = true;
+  try {
+    await store.setSessionPersona(props.sessionId, personaDraft.name, personaDraft.description);
+  } finally {
+    personaSaving.value = false;
+  }
+}
+
 function tracesForTurn(turn: string | undefined): AdminTrace[] {
   if (!turn) return [];
   return store.traces.filter((trace) => String(trace.record.turn ?? "") === turn);
@@ -149,8 +198,89 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           </button>
         </div>
       </div>
-      <div class="mb-4 text-xs text-neutral-500">
-        {{ new Date(store.session.created_at).toLocaleString() }}
+      <div class="mb-4 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+        <span>{{ new Date(store.session.created_at).toLocaleString() }}</span>
+        <span
+          v-if="store.session.deleted_at"
+          class="rounded border border-black/10 px-1.5 py-0.5 dark:border-white/10"
+          :title="`Superseded ${new Date(store.session.deleted_at).toLocaleString()}`"
+        >
+          superseded
+        </span>
+      </div>
+
+      <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+        Player persona
+      </h2>
+      <div class="mb-6 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10">
+        <!-- Editable here, but only here: /clear is still the only way a *player* can change
+             their character. An admin sees the whole session, so they can correct one. -->
+        <form v-if="canEditPersona" class="grid gap-2" @submit.prevent="onSavePersona">
+          <p v-if="!hasPersona" class="text-xs text-neutral-500">
+            <!-- v-pre: the placeholder is literal text, not an interpolation. -->
+            This session has no persona, so <code v-pre>{{user}}</code> falls back to the
+            player's Telegram name.
+          </p>
+          <p v-else class="text-xs text-neutral-500">
+            The player cannot change this themselves — /clear starts a fresh session instead.
+            Renaming re-renders past turns under the new name.
+          </p>
+          <label class="grid gap-1">
+            <span class="text-xs text-neutral-500">Name</span>
+            <input
+              v-model="personaDraft.name"
+              type="text"
+              maxlength="128"
+              placeholder="Sera Vane"
+              class="rounded-md border border-black/10 bg-transparent px-2 py-1.5 dark:border-white/10"
+            />
+          </label>
+          <label class="grid gap-1">
+            <span class="text-xs text-neutral-500">Description</span>
+            <textarea
+              v-model="personaDraft.description"
+              rows="3"
+              placeholder="A wary courier who trusts machines more than people. Loves rain, hates crowds."
+              class="rounded-md border border-black/10 bg-transparent px-2 py-1.5 dark:border-white/10"
+            ></textarea>
+          </label>
+          <div>
+            <button
+              type="submit"
+              :disabled="!personaDraft.name.trim() || !personaDirty || personaSaving"
+              class="rounded-md border border-black/10 px-3 py-1.5 text-sm font-medium disabled:opacity-40 dark:border-white/10"
+            >
+              {{ personaSaving ? "Saving…" : hasPersona ? "Update persona" : "Set persona" }}
+            </button>
+          </div>
+        </form>
+
+        <!-- Superseded: read-only. Nothing here would ever reach a prompt again. -->
+        <dl v-else-if="hasPersona" class="grid gap-2">
+          <div class="flex gap-2">
+            <dt class="w-32 shrink-0 text-neutral-500">Name</dt>
+            <dd>{{ store.session.user_persona_name }}</dd>
+          </div>
+          <div class="flex gap-2">
+            <dt class="w-32 shrink-0 text-neutral-500">Description</dt>
+            <dd>
+              <span v-if="!store.session.user_persona_description" class="text-neutral-500">
+                None
+              </span>
+              <span v-else class="whitespace-pre-wrap">
+                {{ store.session.user_persona_description }}
+              </span>
+            </dd>
+          </div>
+          <p class="text-xs text-neutral-500">
+            This session was superseded, so its persona is read-only.
+          </p>
+        </dl>
+
+        <p v-else class="text-sm text-neutral-500">
+          No persona, and this session was superseded — a persona set here would never reach
+          a prompt.
+        </p>
       </div>
 
       <!-- Read-only: directives are set by the player over Telegram (/language, /rule,

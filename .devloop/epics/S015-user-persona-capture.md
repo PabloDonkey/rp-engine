@@ -213,3 +213,14 @@ Where the shipped shape differs from, or goes beyond, the plan above:
   session rather than its argument; the store contract test asserts that explicitly.
 * A `FakePendingPersonaStore` was added to the Telegram test fixtures — the adapter's default
   store is file-backed under `data/`, so without it the suite wrote into the real data dir.
+
+* **Admin panel can set *and edit* a session's persona** (added after the first pass, on
+  request): `PUT /admin/sessions/{id}/persona` plus a two-field form on the session detail
+  page, pre-filled with what is stored. This is the **operator exception** to the set-once
+  contract — recorded as an amendment to ADR-025 — implemented as a separate domain
+  transition, `ScenarioSession.override_persona`, so the player-facing `with_persona` guard
+  is untouched. Refuses a superseded session (409, its prompt is never built again) and a
+  blank name (400). The UI confirms a *rename* specifically, because transcripts store
+  `{{user}}` unresolved: past turns re-render under the new name and stop matching what the
+  player read. Verified against the real dev DB: `updated_at` moved off its backfilled value
+  on write, and the test write was reverted afterwards.

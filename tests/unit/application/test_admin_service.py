@@ -1,4 +1,4 @@
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -233,3 +233,48 @@ async def test_get_scenario_returns_none_when_missing() -> None:
     service, _, _, _ = _service(scenarios=[])
 
     assert await service.get_scenario("nope") is None
+
+
+@pytest.mark.asyncio
+async def test_set_session_persona_saves_it_on_a_session_without_one() -> None:
+    session = _session(owner_id=USER_ID)
+    service, session_store, _, _ = _service(sessions=[session])
+
+    updated = await service.set_session_persona(
+        session.id, name="Sera Vane", description="A wary courier."
+    )
+
+    assert updated is not None
+    assert updated.user_persona_name == "Sera Vane"
+    stored = await session_store.get_by_id(session.id)
+    assert stored is not None and stored.user_persona_description == "A wary courier."
+
+
+@pytest.mark.asyncio
+async def test_set_session_persona_replaces_an_existing_one() -> None:
+    # The operator path uses `override_persona`; the player-facing `with_persona` guard is
+    # untouched and still refuses a second persona.
+    session = _session(owner_id=USER_ID).with_persona(name="Sera Vane")
+    service, session_store, _, _ = _service(sessions=[session])
+
+    updated = await service.set_session_persona(session.id, name="Sera Vayne")
+
+    assert updated is not None and updated.user_persona_name == "Sera Vayne"
+    stored = await session_store.get_by_id(session.id)
+    assert stored is not None and stored.user_persona_name == "Sera Vayne"
+
+
+@pytest.mark.asyncio
+async def test_set_session_persona_rejects_a_blank_name() -> None:
+    session = _session(owner_id=USER_ID)
+    service, _, _, _ = _service(sessions=[session])
+
+    with pytest.raises(ValueError):
+        await service.set_session_persona(session.id, name="   ")
+
+
+@pytest.mark.asyncio
+async def test_set_session_persona_returns_none_for_an_unknown_session() -> None:
+    service, _, _, _ = _service(sessions=[])
+
+    assert await service.set_session_persona(uuid4(), name="Sera Vane") is None

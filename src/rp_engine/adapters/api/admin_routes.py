@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from rp_engine.adapters.api.admin_models import (
     AdminDeletedMessageResponse,
     AdminMessageResponse,
+    AdminSessionPersonaRequest,
     AdminSessionResponse,
     AdminTraceResponse,
     AdminUserResponse,
@@ -78,6 +79,38 @@ def create_admin_router(
             raise HTTPException(status_code=404, detail="Session not found")
         traces = await admin_service.get_session_traces(session_id)
         return [AdminTraceResponse(record=record) for record in traces]
+
+    @router.put("/sessions/{session_id}/persona")
+    async def set_session_persona(
+        session_id: UUID, payload: AdminSessionPersonaRequest
+    ) -> AdminSessionResponse:
+        """Set or replace a session's persona.
+
+        The operator exception to ADR-025's set-once contract: `/clear` is still the only
+        way a *player* can change a persona, but an admin looking at the whole session can
+        correct one in place. Replacing a name changes how past turns render (transcripts
+        store `{{user}}` unresolved), so the panel confirms before sending.
+        """
+        session = await admin_service.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if not payload.name.strip():
+            raise HTTPException(status_code=400, detail="Persona name must not be empty")
+        if session.is_deleted:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This session was superseded by a restart or clear, so a persona would "
+                    "never reach a prompt. Set it on the live session instead."
+                ),
+            )
+        updated = await admin_service.set_session_persona(
+            session_id, name=payload.name, description=payload.description
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        transcript = await admin_service.get_session_transcript(session_id)
+        return AdminSessionResponse.from_session(updated, message_count=len(transcript))
 
     @router.delete("/sessions/{session_id}/messages/last")
     async def delete_last_message(session_id: UUID) -> AdminDeletedMessageResponse:

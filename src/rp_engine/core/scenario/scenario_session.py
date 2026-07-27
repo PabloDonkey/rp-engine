@@ -126,17 +126,31 @@ class ScenarioSession:
     def with_persona(self, *, name: str, description: str = "") -> "ScenarioSession":
         """Attach the player's persona. A session accepts one exactly once.
 
-        Immutability is the point: the name is substituted for `{{user}}` in every prompt
-        and in the transcript already written, so letting it change mid-story would rewrite
-        history. Changing persona means a new session, which is what `/clear` gives you.
+        Immutability is the point *for the player*: the name is substituted for `{{user}}`
+        in every prompt, so letting it change mid-story would disagree with the story they
+        have already read. Changing persona means a new session, which is what `/clear`
+        gives you. An operator can override it out-of-band — see `override_persona`.
         """
-        cleaned_name = name.strip()
-        if not cleaned_name:
-            raise ValueError("Persona name must not be empty.")
         if self.has_persona:
             raise ValueError(
                 f"Session {self.id} already has a persona; personas are immutable once set."
             )
+        return self.override_persona(name=name, description=description)
+
+    def override_persona(self, *, name: str, description: str = "") -> "ScenarioSession":
+        """Set the persona regardless of whether one is already present.
+
+        The **operator** escape hatch, used only by the admin panel — deliberately a
+        separate transition so `with_persona`'s set-once guard keeps protecting every path a
+        player can reach. Replacing a name rewrites how *past* turns render, because
+        transcripts store `{{user}}` unresolved and resolve it at render time: history stays
+        internally consistent, but diverges from what the player originally read. That is a
+        judgement call for a human with the whole session in front of them, which is exactly
+        who this is for.
+        """
+        cleaned_name = name.strip()
+        if not cleaned_name:
+            raise ValueError("Persona name must not be empty.")
         cleaned_description = description.strip()
         return replace(
             self,

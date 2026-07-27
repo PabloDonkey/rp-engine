@@ -282,6 +282,13 @@ history. `/clear` is the supported way to change it, by starting a new session.
 name otherwise (`ScenarioSession.resolve_user_name`). Group sessions are out of scope for
 now: they have no single player to ask, and their `{{user}}` stays the group's own name.
 
+Set-once is a **player-facing** contract. An operator may set *or replace* a persona from
+the admin panel (`PUT /admin/sessions/{id}/persona`) — for sessions that predate the feature,
+or to correct a typo'd name — through a separate domain transition, `override_persona`, so
+`with_persona`'s guard keeps protecting every path a player can reach. Superseded sessions
+are refused (409): their prompt is never built again, so an edit would be a silent no-op.
+See ADR-025's amendment for why renaming is confirmed in the UI.
+
 ## SessionDirectives
 
 `SessionDirectives` groups the three player-set controls that steer one session. They are

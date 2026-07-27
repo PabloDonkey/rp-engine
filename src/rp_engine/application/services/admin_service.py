@@ -74,6 +74,27 @@ class AdminService:
     async def get_session(self, session_id: UUID) -> ScenarioSession | None:
         return await self._scenario_session_store.get_by_id(session_id)
 
+    async def set_session_persona(
+        self,
+        session_id: UUID,
+        *,
+        name: str,
+        description: str = "",
+    ) -> ScenarioSession | None:
+        """Set or replace a session's persona; None when the session is missing.
+
+        Uses `override_persona`, the operator transition: the panel can both fill a gap
+        (sessions that started before personas existed) and correct a persona already in
+        place. Players keep the set-once contract — `/clear` remains their only way to
+        change one — because they never reach this path.
+        """
+        session = await self._scenario_session_store.get_by_id(session_id)
+        if session is None:
+            return None
+        return await self._scenario_session_store.save(
+            session.override_persona(name=name, description=description)
+        )
+
     async def get_session_transcript(self, session_id: UUID) -> list[ConversationMessage]:
         memory_key = ConversationIdentity.for_session(str(session_id)).to_memory_key()
         return await self._conversation_store.load_messages(memory_key)
