@@ -8,6 +8,8 @@ today), a new immutable persisted field + Alembic migration, and a `{{user}}` re
 **Design decisions:** locked in below (reply format, `/skip`, abandoned-prompt handling,
 reset tiers) — ready for implementation, no open questions remaining.
 **Depends on:** **ADR-025** (session reset tiers) — this epic implements the `/clear` half of it.
+**Sequence with:** [S016](S016-session-soft-delete-lifecycle.md) (session soft delete) — land it
+first or in the same change; `/clear` is a third path that supersedes a session.
 
 ## Context
 
@@ -123,11 +125,12 @@ Confirmed via exploration (`Explore` agent, see prior turn) that:
 - [ ] New `clear(...)`: same path as `restart` but carrying **nothing** player-owned — i.e.
       `_begin(directives=None, persona=None)`. Express the two as one parameterized path, not
       two implementations.
-- [ ] **Fix the orphaned-session hazard while here** (ADR-025, negative consequence 3):
-      `find_by_definition` selects with no `ORDER BY`, and both reset paths leave the old
-      session row behind — so a later `/play <same-id>` can resurrect a pre-reset session and
-      its transcript. Either delete the superseded session on reset, or order by `created_at
-      DESC` and take the newest. Pre-existing, but a third reset path makes it likelier.
+- [ ] **`clear` stamps the outgoing session as superseded**, exactly as `restart` does — see
+      [S016](S016-session-soft-delete-lifecycle.md), which owns the soft-delete lifecycle and
+      the session-resurrection fix (ADR-025, negative consequence 3). `/clear` is the third
+      path that supersedes a session, so **S016 should land first, or in the same change**;
+      building `clear` on top of the current orphan-and-hope behavior would add a third way to
+      hit that bug.
 
 ### Telegram adapter — pending-persona state
 - [ ] New small store mirroring `TelegramNarratorStore` (e.g. `TelegramPendingPersonaStore`),

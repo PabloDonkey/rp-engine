@@ -1661,4 +1661,7 @@ and differ only in whether player-owned state is carried over.
   `ScenarioSessionStore.find_by_definition` selects with no `ORDER BY` — with multiple rows
   per (owner, definition) a later `/play <same-id>` can resurrect a pre-reset session and its
   old transcript. This is pre-existing (S014 did not introduce it), but a third reset path
-  makes it more likely to be hit, so it needs fixing alongside `/clear`.
+  makes it more likely to be hit. Tracked as **S016**, which resolves it by soft-deleting the
+  superseded session (`deleted_at IS NULL` becomes the definition of "the current session")
+  rather than orphaning or purging it — keeping superseded playthroughs readable for debugging
+  and analysis. S016 should land before or with `/clear`.
