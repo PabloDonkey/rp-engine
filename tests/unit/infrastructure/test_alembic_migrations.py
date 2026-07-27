@@ -9,4 +9,4 @@ _ROOT = Path(__file__).resolve().parents[3]
 def test_alembic_has_a_single_head() -> None:
     config = Config(str(_ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260723_0007"]
+    assert script.get_heads() == ["20260726_0008"]

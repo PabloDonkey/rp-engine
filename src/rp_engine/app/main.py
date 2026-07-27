@@ -22,6 +22,7 @@ from rp_engine.application.services.group_identity_resolver import GroupIdentity
 from rp_engine.application.services.identity_resolver import IdentityResolver
 from rp_engine.application.services.playthrough_service import PlaythroughService
 from rp_engine.application.services.scenario_transfer_service import ScenarioTransferService
+from rp_engine.application.services.session_directive_service import SessionDirectiveService
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
@@ -73,6 +74,7 @@ class AppContainer:
     identity_resolver: IdentityResolver
     group_identity_resolver: GroupIdentityResolver
     playthrough_service: PlaythroughService
+    session_directive_service: SessionDirectiveService
     scenario_transfer_service: ScenarioTransferService
     scenario_catalog_dirs: list[str]
     admin_service: AdminService
@@ -123,6 +125,9 @@ def build_container(settings: Settings) -> AppContainer:
         scenario_session_store=scenario_session_store,
         conversation_store=conversation_store,
     )
+    session_directive_service = SessionDirectiveService(
+        scenario_session_store=scenario_session_store,
+    )
     memory_strategy = DumpEverythingStrategy()
     generation_settings = GenerationSettings(
         temperature=settings.lmstudio_temperature,
@@ -171,6 +176,7 @@ def build_container(settings: Settings) -> AppContainer:
             identity_resolver=identity_resolver,
             group_identity_resolver=group_identity_resolver,
             playthrough_service=playthrough_service,
+            session_directive_service=session_directive_service,
             authorization=telegram_authorization,
             admin_telegram_user_id=settings.telegram_admin_user_id,
             unauthorized_message=settings.telegram_unauthorized_message,
@@ -202,6 +208,7 @@ def build_container(settings: Settings) -> AppContainer:
         identity_resolver=identity_resolver,
         group_identity_resolver=group_identity_resolver,
         playthrough_service=playthrough_service,
+        session_directive_service=session_directive_service,
         scenario_transfer_service=scenario_transfer_service,
         scenario_catalog_dirs=settings.scenario_catalog_dirs,
         admin_service=admin_service,

@@ -16,6 +16,7 @@ from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
+from rp_engine.core.scenario.session_directives import SessionDirectives
 from rp_engine.core.user.user import User
 from rp_engine.core.world.world import World
 
@@ -729,3 +730,137 @@ async def test_chat_service_writes_generation_trace_only_on_errors(
     assert prompt_stats["total_prompt_tokens"] == (
         prompt_stats["system_tokens"] + prompt_stats["history_tokens"]
     )
+
+
+def _build_service_with_session_store(
+    session: ScenarioSession,
+    *,
+    fail_generation: bool = False,
+) -> tuple[ChatService, AsyncMock, AsyncMock]:
+    """A service whose session store is observable, for the director-instruction lifecycle."""
+    orchestrator = AsyncMock()
+    if fail_generation:
+        orchestrator.generate_reply = AsyncMock(side_effect=RuntimeError("provider down"))
+    else:
+        orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="scene"))
+
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(
+        return_value=[ConversationMessage(role=ConversationRole.USER, content="previous")]
+    )
+    memory_strategy = Mock()
+    memory_strategy.build_context.return_value = []
+
+    scenario_session_store = AsyncMock()
+    scenario_session_store.get_by_id = AsyncMock(return_value=session)
+    scenario_definition_store = AsyncMock()
+    scenario_definition_store.get_by_id = AsyncMock(return_value=_definition())
+    user_store = AsyncMock()
+    user_store.get_by_id = AsyncMock(return_value=User(id=USER_ID, display_name="Pablo"))
+    group_store = AsyncMock()
+    group_store.get_by_id = AsyncMock(return_value=None)
+
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+        user_identity_store=user_store,
+        group_identity_store=group_store,
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
+        generation_settings=GENERATION_SETTINGS,
+    )
+    return service, scenario_session_store, orchestrator
+
+
+@pytest.mark.asyncio
+async def test_director_instruction_is_cleared_after_a_successful_turn() -> None:
+    session = _session().with_directives(
+        SessionDirectives().with_director_instruction("Raise the stakes.")
+    )
+    service, session_store, _ = _build_service_with_session_store(session)
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello",
+    )
+
+    session_store.save.assert_awaited_once()
+    saved = session_store.save.await_args.args[0]
+    assert saved.directives.director_instruction == ""
+
+
+@pytest.mark.asyncio
+async def test_director_instruction_reaches_the_prompt_of_the_turn_that_consumes_it() -> None:
+    session = _session().with_directives(
+        SessionDirectives().with_director_instruction("Raise the stakes.")
+    )
+    service, _, orchestrator = _build_service_with_session_store(session)
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello",
+    )
+
+    request = orchestrator.generate_reply.await_args.args[0]
+    assert any("Raise the stakes." in message.content for message in request.conversation.messages)
+
+
+@pytest.mark.asyncio
+async def test_director_instruction_survives_a_failed_generation() -> None:
+    """A failed turn keeps the instruction alive for the retry the player is about to make."""
+    session = _session().with_directives(
+        SessionDirectives().with_director_instruction("Raise the stakes.")
+    )
+    service, session_store, _ = _build_service_with_session_store(session, fail_generation=True)
+
+    with pytest.raises(RuntimeError, match="provider down"):
+        await service.send_message(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+            message="hello",
+        )
+
+    session_store.save.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_session_without_director_instruction_is_not_rewritten() -> None:
+    service, session_store, _ = _build_service_with_session_store(_session())
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello",
+    )
+
+    session_store.save.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_continue_clears_the_director_instruction() -> None:
+    session = _session().with_directives(
+        SessionDirectives().with_director_instruction("Raise the stakes.")
+    )
+    service, session_store, _ = _build_service_with_session_store(session)
+
+    await service.continue_story(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+
+    session_store.save.assert_awaited_once()
+    assert session_store.save.await_args.args[0].directives.director_instruction == ""
+
+
+@pytest.mark.asyncio
+async def test_persistent_directives_are_left_untouched_by_a_turn() -> None:
+    directives, _ = SessionDirectives().with_language("fr").with_rule("No time skips.")
+    session = _session().with_directives(directives.with_director_instruction("Now."))
+    service, session_store, _ = _build_service_with_session_store(session)
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello",
+    )
+
+    saved = session_store.save.await_args.args[0]
+    assert saved.directives.language == "fr"
+    assert [rule.text for rule in saved.directives.rules] == ["No time skips."]

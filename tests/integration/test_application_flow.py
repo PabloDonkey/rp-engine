@@ -10,6 +10,7 @@ from rp_engine.adapters.telegram.adapter import TelegramAdapter
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.playthrough_service import PlaythroughStart
+from rp_engine.application.services.session_directive_service import SessionDirectiveService
 from rp_engine.core.character.character import Character
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
@@ -332,6 +333,9 @@ async def test_application_smoke_flow_without_external_services() -> None:
         identity_resolver=FakeIdentityResolver(),
         group_identity_resolver=FakeGroupIdentityResolver(),
         playthrough_service=FakePlaythroughService(),
+        session_directive_service=SessionDirectiveService(
+            scenario_session_store=FakeScenarioSessionStore()
+        ),
         authorization=TelegramAuthorization({"7"}),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -371,6 +375,9 @@ async def test_continue_command_is_not_saved_as_literal_command() -> None:
         identity_resolver=FakeIdentityResolver(),
         group_identity_resolver=FakeGroupIdentityResolver(),
         playthrough_service=FakePlaythroughService(),
+        session_directive_service=SessionDirectiveService(
+            scenario_session_store=FakeScenarioSessionStore()
+        ),
         authorization=TelegramAuthorization({"7"}),
         unauthorized_message="not authorized",
         message_max_length=3800,

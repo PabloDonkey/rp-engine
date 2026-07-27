@@ -7,6 +7,7 @@ from rp_engine.application.services.admin_service import AdminUserSummary
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
+from rp_engine.core.scenario.session_directives import SessionDirectives
 
 
 class AdminUserResponse(BaseModel):
@@ -35,6 +36,30 @@ class AdminUserResponse(BaseModel):
         )
 
 
+class AdminScenarioRuleResponse(BaseModel):
+    id: str
+    text: str
+
+
+class AdminSessionDirectivesResponse(BaseModel):
+    """The player's directives, read-only: the panel shows what the player set over
+    Telegram, it does not author it."""
+
+    language: str
+    rules: list[AdminScenarioRuleResponse]
+    director_instruction: str
+
+    @classmethod
+    def from_directives(cls, directives: SessionDirectives) -> "AdminSessionDirectivesResponse":
+        return cls(
+            language=directives.language,
+            rules=[
+                AdminScenarioRuleResponse(id=rule.id, text=rule.text) for rule in directives.rules
+            ],
+            director_instruction=directives.director_instruction,
+        )
+
+
 class AdminSessionResponse(BaseModel):
     id: UUID
     scenario_definition_id: str
@@ -42,6 +67,7 @@ class AdminSessionResponse(BaseModel):
     owner_id: UUID
     created_at: datetime
     message_count: int | None = None
+    directives: AdminSessionDirectivesResponse
 
     @classmethod
     def from_session(
@@ -54,6 +80,7 @@ class AdminSessionResponse(BaseModel):
             owner_id=session.owner_id,
             created_at=session.created_at,
             message_count=message_count,
+            directives=AdminSessionDirectivesResponse.from_directives(session.directives),
         )
 
 

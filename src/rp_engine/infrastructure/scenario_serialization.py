@@ -12,6 +12,11 @@ from uuid import UUID
 from rp_engine.core.character.character import Character
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
+from rp_engine.core.scenario.session_directives import (
+    LANGUAGE_AUTO,
+    ScenarioRule,
+    SessionDirectives,
+)
 from rp_engine.core.scenario.story_graph import StoryBeat, StoryGraph
 from rp_engine.core.scenario.visibility import ScenarioVisibility
 from rp_engine.core.world.world import World
@@ -145,6 +150,31 @@ def scenario_definition_from_payload(payload: dict[str, Any]) -> ScenarioDefinit
         return None
 
 
+def session_directives_to_payload(directives: SessionDirectives) -> dict[str, Any]:
+    return {
+        "language": directives.language,
+        "rules": [{"id": rule.id, "text": rule.text} for rule in directives.rules],
+        "director_instruction": directives.director_instruction,
+    }
+
+
+def session_directives_from_payload(data: dict[str, Any] | None) -> SessionDirectives:
+    """Directives are additive to an existing session, so a missing or malformed payload
+    degrades to the defaults rather than failing the whole session load."""
+    if not data:
+        return SessionDirectives()
+    rules = tuple(
+        ScenarioRule(id=str(rule["id"]), text=str(rule["text"]))
+        for rule in data.get("rules", [])
+        if isinstance(rule, dict) and "id" in rule and "text" in rule
+    )
+    return SessionDirectives(
+        language=str(data.get("language", LANGUAGE_AUTO)),
+        rules=rules,
+        director_instruction=str(data.get("director_instruction", "")),
+    )
+
+
 def scenario_session_to_payload(session: ScenarioSession) -> dict[str, Any]:
     return {
         "id": str(session.id),
@@ -156,6 +186,7 @@ def scenario_session_to_payload(session: ScenarioSession) -> dict[str, Any]:
         "story_progress": session.story_progress,
         "created_at": session.created_at.isoformat(),
         "metadata": session.metadata,
+        "directives": session_directives_to_payload(session.directives),
     }
 
 
@@ -173,6 +204,7 @@ def scenario_session_from_payload(payload: dict[str, Any]) -> ScenarioSession | 
             story_progress=payload.get("story_progress", {}),
             created_at=datetime.fromisoformat(payload["created_at"]),
             metadata=payload.get("metadata", {}),
+            directives=session_directives_from_payload(payload.get("directives")),
         )
     except (KeyError, ValueError, TypeError):
         return None

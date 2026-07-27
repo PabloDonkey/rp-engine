@@ -26,6 +26,13 @@ from rp_engine.core.llm.errors import LLMConnectionError, LLMGenerationError, LL
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession, SessionOwnerKind
+from rp_engine.core.scenario.session_directives import (
+    SUPPORTED_LANGUAGES,
+    ScenarioRule,
+    SessionDirectives,
+    language_name,
+    normalize_language,
+)
 from rp_engine.core.user.user import User
 
 logger = logging.getLogger(__name__)
@@ -48,6 +55,33 @@ NO_ACTIVE_PLAYTHROUGH_MESSAGE = (
 )
 
 GROUP_ADMIN_ONLY_MESSAGE = "Only group administrators can use this command."
+
+# Session-directive commands (S014). They all operate on the active playthrough.
+DIRECTIVE_COMMANDS: frozenset[TelegramCommand] = frozenset(
+    {
+        TelegramCommand.DIRECTOR,
+        TelegramCommand.RULE,
+        TelegramCommand.RULES,
+        TelegramCommand.LANGUAGE,
+    }
+)
+
+DIRECTOR_USAGE_MESSAGE = (
+    "Usage: /director <instruction>\n\n"
+    "Example: /director have someone interrupt the conversation.\n"
+    "It shapes the next reply only, and the story never mentions it."
+)
+
+RULE_USAGE_MESSAGE = (
+    "Usage:\n"
+    "/rule add <rule> - Add a rule for the rest of this adventure\n"
+    "/rule remove <id> - Remove one of your rules\n"
+    "/rules - List your rules"
+)
+
+NO_RULES_MESSAGE = (
+    "You haven't set any rules for this adventure.\nAdd one with /rule add <rule>."
+)
 
 UNAUTHORIZED_START_MESSAGE = (
     "Welcome. This bot is currently in closed beta.\n"
@@ -118,6 +152,20 @@ class PlaythroughServicePort(Protocol):
     async def resume_text(self, *, session: ScenarioSession) -> str | None: ...
 
 
+class SessionDirectiveServicePort(Protocol):
+    async def set_language(
+        self, *, session: ScenarioSession, language: str
+    ) -> SessionDirectives: ...
+
+    async def add_rule(self, *, session: ScenarioSession, text: str) -> ScenarioRule: ...
+
+    async def remove_rule(self, *, session: ScenarioSession, rule_id: str) -> bool: ...
+
+    async def set_director_instruction(
+        self, *, session: ScenarioSession, instruction: str
+    ) -> SessionDirectives: ...
+
+
 class GroupIdentityResolverPort(Protocol):
     async def resolve_identity(
         self,
@@ -136,6 +184,7 @@ class TelegramAdapter:
         identity_resolver: IdentityResolverPort,
         group_identity_resolver: GroupIdentityResolverPort,
         playthrough_service: PlaythroughServicePort,
+        session_directive_service: SessionDirectiveServicePort,
         authorization: TelegramAuthorization,
         unauthorized_message: str,
         message_max_length: int,
@@ -148,6 +197,7 @@ class TelegramAdapter:
         self._identity_resolver = identity_resolver
         self._group_identity_resolver = group_identity_resolver
         self._playthrough_service = playthrough_service
+        self._session_directive_service = session_directive_service
         self._authorization = authorization
         self._admin_telegram_user_id = admin_telegram_user_id
         self._unauthorized_message = unauthorized_message
@@ -327,6 +377,22 @@ class TelegramAdapter:
             )
             return
 
+        # /director, /rule, /rules, /language — session directives. Like the other story
+        # controls, groups restrict them to their administrators.
+        if parsed_message.command in DIRECTIVE_COMMANDS:
+            if owner.is_group and not await self._is_group_admin(context=context, update=update):
+                await self._reply_with_split(message=message, text=GROUP_ADMIN_ONLY_MESSAGE)
+                return
+            await self._reply_with_split(
+                message=message,
+                text=await self._handle_directive_command(
+                    command=parsed_message.command,
+                    argument=parsed_message.argument,
+                    session=active_session,
+                ),
+            )
+            return
+
         group_user_id = str(owner.resolved_user.id) if owner.is_group else None
         group_username = user.username if user is not None and owner.is_group else None
         group_display_name = user.full_name if user is not None and owner.is_group else None
@@ -438,6 +504,124 @@ class TelegramAdapter:
             return
 
         await self._send_narrator_reply(message=message, chat=chat, text=response)
+
+    async def _handle_directive_command(
+        self,
+        *,
+        command: TelegramCommand | None,
+        argument: str | None,
+        session: ScenarioSession,
+    ) -> str:
+        """Apply one session-directive command and return the reply text.
+
+        Parsing and wording live here; the directives themselves are owned by the domain,
+        so this only translates between Telegram syntax and `SessionDirectiveService`.
+        """
+        if command == TelegramCommand.DIRECTOR:
+            return await self._handle_director(session=session, argument=argument)
+        if command == TelegramCommand.LANGUAGE:
+            return await self._handle_language(session=session, argument=argument)
+        if command == TelegramCommand.RULES:
+            return self._format_rules(session.directives.rules)
+        if command == TelegramCommand.RULE:
+            return await self._handle_rule(session=session, argument=argument)
+        return RULE_USAGE_MESSAGE
+
+    async def _handle_director(
+        self,
+        *,
+        session: ScenarioSession,
+        argument: str | None,
+    ) -> str:
+        instruction = (argument or "").strip()
+        if not instruction:
+            pending = session.directives.director_instruction
+            if pending:
+                return (
+                    f"A director note is already queued for the next reply:\n\n{pending}\n\n"
+                    "Send /director <instruction> to replace it."
+                )
+            return DIRECTOR_USAGE_MESSAGE
+
+        await self._session_directive_service.set_director_instruction(
+            session=session,
+            instruction=instruction,
+        )
+        return "Director note set. It shapes the next reply only."
+
+    async def _handle_language(
+        self,
+        *,
+        session: ScenarioSession,
+        argument: str | None,
+    ) -> str:
+        requested = (argument or "").strip()
+        if not requested:
+            current = session.directives.language
+            return (
+                f"Current language: {language_name(current)} ({current}).\n\n"
+                f"Usage: /language <code>\n{self._supported_languages_text()}"
+            )
+
+        code = normalize_language(requested)
+        if code is None:
+            return (
+                f"Unsupported language '{requested}'.\n\n{self._supported_languages_text()}"
+            )
+
+        await self._session_directive_service.set_language(session=session, language=code)
+        if code == "auto":
+            return "Language set to automatic. The story follows the scenario and your writing."
+        return f"Language set to {language_name(code)}. Replies will be in {language_name(code)}."
+
+    async def _handle_rule(
+        self,
+        *,
+        session: ScenarioSession,
+        argument: str | None,
+    ) -> str:
+        pieces = (argument or "").strip().split(maxsplit=1)
+        subcommand = pieces[0].lower() if pieces else ""
+        remainder = pieces[1].strip() if len(pieces) > 1 else ""
+
+        if subcommand == "list":
+            return self._format_rules(session.directives.rules)
+
+        if subcommand == "add":
+            if not remainder:
+                return "Usage: /rule add <rule>"
+            rule = await self._session_directive_service.add_rule(
+                session=session, text=remainder
+            )
+            return f"Rule {rule.id} added: {rule.text}"
+
+        if subcommand == "remove":
+            rule_id = remainder.split(maxsplit=1)[0] if remainder else ""
+            if not rule_id:
+                return "Usage: /rule remove <id>"
+            removed = await self._session_directive_service.remove_rule(
+                session=session, rule_id=rule_id
+            )
+            if not removed:
+                return f"No rule with id {rule_id}. Use /rules to see your rules."
+            return f"Rule {rule_id} removed."
+
+        return RULE_USAGE_MESSAGE
+
+    @staticmethod
+    def _format_rules(rules: tuple[ScenarioRule, ...]) -> str:
+        if not rules:
+            return NO_RULES_MESSAGE
+        lines = ["Your rules for this adventure:", ""]
+        lines.extend(f"{rule.id}. {rule.text}" for rule in rules)
+        lines.append("")
+        lines.append("Remove one with /rule remove <id>.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _supported_languages_text() -> str:
+        codes = ", ".join(SUPPORTED_LANGUAGES)
+        return f"Supported codes: {codes}"
 
     async def _handle_admin_command(
         self,

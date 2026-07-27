@@ -8,6 +8,7 @@ from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
+from rp_engine.core.scenario.session_directives import SessionDirectives
 from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000042")
@@ -263,3 +264,37 @@ async def test_group_playthrough_is_independent() -> None:
     assert user_active is not None and group_active is not None
     assert user_active.id != group_active.id
     assert group_active.owner_kind == "group"
+
+
+@pytest.mark.asyncio
+async def test_restart_carries_persistent_directives_but_drops_the_director_note() -> None:
+    """Restarting the story is not a request to re-configure it, so language and rules
+    follow the player into the fresh session; the pending one-turn director note was
+    aimed at a reply that will now never happen."""
+    scenario = _scenario("vault", name="Vault", opening="You face the door.")
+    service, session_store, _ = _service(scenarios=[scenario])
+
+    first = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+    assert first is not None
+    directives, _ = SessionDirectives().with_language("fr").with_rule("No time skips.")
+    await session_store.save(
+        first.session.with_directives(directives.with_director_instruction("Raise the stakes."))
+    )
+
+    second = await service.restart(owner_kind="user", owner_id=USER_ID)
+
+    assert second is not None
+    assert second.session.directives.language == "fr"
+    assert [rule.text for rule in second.session.directives.rules] == ["No time skips."]
+    assert second.session.directives.director_instruction == ""
+
+
+@pytest.mark.asyncio
+async def test_new_playthrough_starts_with_default_directives() -> None:
+    scenario = _scenario("vault", name="Vault", opening="You face the door.")
+    service, _, _ = _service(scenarios=[scenario])
+
+    started = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+
+    assert started is not None
+    assert started.session.directives == SessionDirectives()

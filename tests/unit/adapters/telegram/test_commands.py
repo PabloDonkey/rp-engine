@@ -111,3 +111,38 @@ def test_build_help_message_is_authorization_aware() -> None:
     assert "/beta" in unauthorized
     assert "/scenarios" not in unauthorized
     assert "/play" not in unauthorized
+
+
+def test_parse_transport_message_for_director_command() -> None:
+    parsed = parse_transport_message("/director introduce a stranger")
+
+    assert parsed.command == TelegramCommand.DIRECTOR
+    assert parsed.argument == "introduce a stranger"
+
+
+def test_parse_transport_message_for_rule_subcommand() -> None:
+    parsed = parse_transport_message("/rule add keep replies short")
+
+    assert parsed.command == TelegramCommand.RULE
+    assert parsed.argument == "add keep replies short"
+
+
+def test_parse_transport_message_distinguishes_rule_from_rules() -> None:
+    assert parse_transport_message("/rules").command == TelegramCommand.RULES
+    assert parse_transport_message("/rule").command == TelegramCommand.RULE
+
+
+def test_parse_transport_message_for_language_command() -> None:
+    parsed = parse_transport_message("/language@rp_engine_bot fr")
+
+    assert parsed.command == TelegramCommand.LANGUAGE
+    assert parsed.argument == "fr"
+
+
+def test_authorized_help_documents_the_directive_commands() -> None:
+    help_text = build_help_message(authorized=True)
+
+    assert "/director" in help_text
+    assert "/rule add" in help_text
+    assert "/rules" in help_text
+    assert "/language" in help_text

@@ -151,9 +151,16 @@ Columns:
 - story_progress (JSONB — narrative progress)
 - created_at (timestamptz)
 - metadata (JSONB)
+- directives (JSONB — player directives: `{language, rules: [{id, text}], director_instruction}`)
 
 Composite index on (owner_kind, owner_id, scenario_definition_id) backs session reuse
 lookup on character selection.
+
+`directives` is one JSONB document rather than three columns: the three controls are read
+and written as a unit (the `SessionDirectives` value object), never queried individually,
+and the shape is expected to grow. Rows written before migration `20260726_0008` hold
+`{}`, which deserializes to the neutral defaults (`language: auto`, no rules, no pending
+director instruction).
 
 ### active_scenario_sessions
 

@@ -6,6 +6,7 @@ from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
+from rp_engine.core.scenario.session_directives import SessionDirectives
 from rp_engine.core.user.user import User
 from rp_engine.core.world.world import World
 
@@ -49,6 +50,7 @@ def _session(
     *,
     active_participants: dict[str, str] | None = None,
     metadata: dict[str, str] | None = None,
+    directives: SessionDirectives | None = None,
 ) -> ScenarioSession:
     return ScenarioSession(
         id=SESSION_ID,
@@ -57,6 +59,7 @@ def _session(
         owner_id=OWNER_ID,
         active_participants=active_participants or {},
         metadata=metadata or {},
+        directives=directives or SessionDirectives(),
     )
 
 
@@ -273,3 +276,127 @@ def test_builder_includes_switch_summary_context_when_present() -> None:
         for message in system_messages
     )
     assert any("hidden lab" in message for message in system_messages)
+
+
+def _system_contents(conversation: object) -> list[str]:
+    return [
+        message.content
+        for message in conversation.messages  # type: ignore[attr-defined]
+        if message.role == ConversationRole.SYSTEM
+    ]
+
+
+def _built_with(directives: SessionDirectives) -> list[str]:
+    builder = ConversationBuilder()
+    scenario = _scenario(characters={"protagonist": _character()})
+    session = _session(
+        active_participants={"protagonist": "belzebuth"},
+        directives=directives,
+    )
+    conversation = builder.build(
+        ScenarioConversationInput(
+            scenario=scenario,
+            session=session,
+            user=User(id=OWNER_ID, display_name="Pablo"),
+            memory_messages=[],
+            user_message="Continue.",
+        )
+    )
+    return _system_contents(conversation)
+
+
+def test_builder_omits_directive_sections_when_unset() -> None:
+    system_messages = _built_with(SessionDirectives())
+
+    joined = "\n".join(system_messages)
+    assert "[Language]" not in joined
+    assert "[Scenario Rules]" not in joined
+    assert "[Director Instructions]" not in joined
+
+
+def test_builder_omits_language_section_for_auto() -> None:
+    system_messages = _built_with(SessionDirectives(language="auto"))
+
+    assert not any("[Language]" in message for message in system_messages)
+
+
+def test_builder_renders_language_section() -> None:
+    system_messages = _built_with(SessionDirectives(language="fr"))
+
+    language_section = next(message for message in system_messages if "[Language]" in message)
+    assert "French" in language_section
+
+
+def test_builder_renders_session_rules_section() -> None:
+    directives, _ = SessionDirectives().with_rule("Keep replies under 100 words.")
+    directives, _ = directives.with_rule("No time skips.")
+
+    system_messages = _built_with(directives)
+
+    rules_section = next(message for message in system_messages if "[Scenario Rules]" in message)
+    assert "Keep replies under 100 words." in rules_section
+    assert "No time skips." in rules_section
+
+
+def test_builder_renders_director_instruction_section() -> None:
+    directives = SessionDirectives().with_director_instruction("Introduce a stranger.")
+
+    system_messages = _built_with(directives)
+
+    director_section = next(
+        message for message in system_messages if "[Director Instructions]" in message
+    )
+    assert "Introduce a stranger." in director_section
+    # The instruction is out-of-character: the model is told never to surface it.
+    assert "never mention it" in director_section
+
+
+def test_builder_orders_directive_sections_language_rules_then_director() -> None:
+    directives, _ = SessionDirectives().with_language("fr").with_rule("No time skips.")
+    directives = directives.with_director_instruction("Introduce a stranger.")
+
+    system_messages = _built_with(directives)
+
+    indexes = [
+        next(i for i, message in enumerate(system_messages) if header in message)
+        for header in (
+            "[Response Format]",
+            "[Language]",
+            "[Scenario Rules]",
+            "[Director Instructions]",
+        )
+    ]
+    assert indexes == sorted(indexes)
+    # ...and the dynamic context still comes last.
+    memory_hint_index = next(
+        i for i, message in enumerate(system_messages) if "conversation history" in message
+    )
+    assert memory_hint_index > indexes[-1]
+
+
+def test_builder_resolves_templates_inside_directive_sections() -> None:
+    directives, _ = SessionDirectives().with_rule("{{char}} never lies to {{user}}.")
+
+    system_messages = _built_with(directives)
+
+    rules_section = next(message for message in system_messages if "[Scenario Rules]" in message)
+    assert "Belzebuth never lies to Pablo." in rules_section
+
+
+def test_builder_applies_directives_to_continue_and_resume() -> None:
+    builder = ConversationBuilder()
+    scenario = _scenario(characters={"protagonist": _character()})
+    session = _session(
+        active_participants={"protagonist": "belzebuth"},
+        directives=SessionDirectives().with_director_instruction("Raise the stakes."),
+    )
+    payload = ScenarioConversationInput(
+        scenario=scenario,
+        session=session,
+        user=User(id=OWNER_ID, display_name="Pablo"),
+        memory_messages=[],
+        user_message="continue",
+    )
+
+    for conversation in (builder.build_continue(payload), builder.build_resume(payload)):
+        assert any("Raise the stakes." in message for message in _system_contents(conversation))

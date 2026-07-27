@@ -12,6 +12,7 @@ from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
+from rp_engine.core.scenario.session_directives import SessionDirectives
 from rp_engine.core.user.identity import UserIdentity
 from rp_engine.core.user.user import User
 from rp_engine.infrastructure.config.settings import Settings
@@ -119,6 +120,40 @@ def test_get_session_includes_message_count(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()["message_count"] == 1
+
+
+def test_get_session_exposes_directives(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    directives, _ = SessionDirectives().with_language("fr").with_rule("No time skips.")
+    container.admin_service.get_session = AsyncMock(
+        return_value=_session().with_directives(
+            directives.with_director_instruction("Raise the stakes.")
+        )
+    )
+    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+
+    response = client.get(f"/admin/sessions/{SESSION_ID}")
+
+    assert response.status_code == 200
+    assert response.json()["directives"] == {
+        "language": "fr",
+        "rules": [{"id": "1", "text": "No time skips."}],
+        "director_instruction": "Raise the stakes.",
+    }
+
+
+def test_get_session_reports_default_directives(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+
+    response = client.get(f"/admin/sessions/{SESSION_ID}")
+
+    assert response.json()["directives"] == {
+        "language": "auto",
+        "rules": [],
+        "director_instruction": "",
+    }
 
 
 def test_get_session_transcript(tmp_path: Path) -> None:

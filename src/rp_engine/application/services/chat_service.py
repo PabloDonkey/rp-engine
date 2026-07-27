@@ -150,6 +150,7 @@ class ChatService:
                 latency_ms=self._to_latency_ms(started_at),
             )
             character_response = llm_response.content
+        await self._consume_director_instruction(session)
         await self._conversation_store.save_message(
             memory_key,
             ConversationMessage(
@@ -237,6 +238,7 @@ class ChatService:
                 latency_ms=self._to_latency_ms(started_at),
             )
             character_response = llm_response.content
+        await self._consume_director_instruction(session)
         await self._conversation_store.save_message(
             memory_key,
             self._narrator_message(llm_response, turn),
@@ -335,6 +337,7 @@ class ChatService:
             )
             character_response = llm_response.content
 
+        await self._consume_director_instruction(session)
         await self._conversation_store.clear(memory_key)
         for message in trimmed_history:
             await self._conversation_store.save_message(memory_key, message)
@@ -343,6 +346,19 @@ class ChatService:
             self._narrator_message(llm_response, turn),
         )
         return character_response
+
+    async def _consume_director_instruction(self, session: ScenarioSession) -> None:
+        """Clear the one-turn director instruction that the generation just consumed.
+
+        Called only after a *successful* generation, so a failed turn keeps the
+        instruction alive for the retry the player is about to make.
+        """
+        directives = session.directives
+        if not directives.director_instruction:
+            return
+        await self._scenario_session_store.save(
+            session.with_directives(directives.without_director_instruction())
+        )
 
     async def clear_conversation(
         self,

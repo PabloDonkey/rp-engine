@@ -10,6 +10,7 @@ from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionSto
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession, SessionOwnerKind
+from rp_engine.core.scenario.session_directives import SessionDirectives
 
 logger = logging.getLogger(__name__)
 
@@ -105,9 +106,17 @@ class PlaythroughService:
         if scenario is None:
             return None
 
-        # Wipe the current playthrough's history before beginning again.
+        # Wipe the current playthrough's history before beginning again. The player's
+        # persistent directives (language, scenario rules) carry over — restarting the
+        # story is not a request to re-configure it — but a pending one-turn director
+        # instruction was aimed at a reply that will now never happen, so it is dropped.
         await self._conversation_store.clear(self._memory_key(active.id))
-        return await self._begin(owner_kind=owner_kind, owner_id=owner_id, scenario=scenario)
+        return await self._begin(
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            scenario=scenario,
+            directives=active.directives.without_director_instruction(),
+        )
 
     async def resume_text(self, *, session: ScenarioSession) -> str | None:
         """Latest narrator line for a session, used to auto-resume from `/start`."""
@@ -146,6 +155,7 @@ class PlaythroughService:
         owner_kind: SessionOwnerKind,
         owner_id: UUID,
         scenario: ScenarioDefinition,
+        directives: SessionDirectives | None = None,
     ) -> PlaythroughStart:
         participants = {
             role: character.id for role, character in scenario.characters.items()
@@ -155,12 +165,14 @@ class PlaythroughService:
                 scenario_definition_id=scenario.id,
                 user_id=owner_id,
                 active_participants=participants,
+                directives=directives,
             )
         else:
             session = ScenarioSession.create_for_group(
                 scenario_definition_id=scenario.id,
                 group_id=owner_id,
                 active_participants=participants,
+                directives=directives,
             )
         saved = await self._scenario_session_store.save(session)
         await self._scenario_session_store.set_active_for_owner(

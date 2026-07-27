@@ -11,6 +11,10 @@ SUPPORTED_COMMANDS: dict[str, TelegramCommand] = {
     TelegramCommand.CONTINUE.value: TelegramCommand.CONTINUE,
     TelegramCommand.RETRY.value: TelegramCommand.RETRY,
     TelegramCommand.RESTART.value: TelegramCommand.RESTART,
+    TelegramCommand.DIRECTOR.value: TelegramCommand.DIRECTOR,
+    TelegramCommand.RULE.value: TelegramCommand.RULE,
+    TelegramCommand.RULES.value: TelegramCommand.RULES,
+    TelegramCommand.LANGUAGE.value: TelegramCommand.LANGUAGE,
     TelegramCommand.ADMIN_BETA_LIST.value: TelegramCommand.ADMIN_BETA_LIST,
     TelegramCommand.ADMIN_BETA_ACCEPT.value: TelegramCommand.ADMIN_BETA_ACCEPT,
     TelegramCommand.ADMIN_BETA_REJECT.value: TelegramCommand.ADMIN_BETA_REJECT,
@@ -24,6 +28,10 @@ TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
     ("continue", "Let the story advance"),
     ("retry", "Regenerate the last narrator reply"),
     ("restart", "Restart the current adventure"),
+    ("director", "Steer the next reply: /director <instruction>"),
+    ("rules", "List the rules you set for this adventure"),
+    ("rule", "Manage rules: /rule add|remove"),
+    ("language", "Set the reply language: /language <code>"),
     ("cancel", "Cancel the current menu"),
     ("help", "Show available commands"),
     ("beta", "Request a beta seat"),
@@ -45,6 +53,11 @@ AUTHORIZED_HELP_MESSAGE = (
     "/continue - Let the story advance without input\n"
     "/retry - Regenerate the last narrator reply\n"
     "/restart - Restart the current adventure from the beginning\n"
+    "/director <instruction> - Steer the next reply only (the story never mentions it)\n"
+    "/rule add <rule> - Add a rule that applies for the rest of this adventure\n"
+    "/rules - List your rules\n"
+    "/rule remove <id> - Remove one of your rules\n"
+    "/language <code> - Reply language, e.g. en, fr, auto\n"
     "/cancel - Cancel the current menu\n"
     "/help - Show this help message\n"
     "/beta - Request a beta seat\n"

@@ -92,7 +92,7 @@ For Telegram, authorization and permissions are transport concerns handled in th
 * Private chats use user-level whitelist authorization.
 * Group chats use group-level whitelist authorization.
 * In authorized groups, all members can advance the story via `/chat <message>`; plain group messages are ignored.
-* Story/session-control commands (`/play`, `/restart`, `/continue`, `/retry`) are restricted to Telegram chat administrators and creators in group chats.
+* Story/session-control commands (`/play`, `/restart`, `/continue`, `/retry`) and session-directive commands (`/director`, `/rule`, `/rules`, `/language`) are restricted to Telegram chat administrators and creators in group chats.
 * Telegram message-size limits are handled by adapter-level message splitting during delivery.
 * Telegram external identities are resolved into internal engine users before calling use cases.
 * Telegram command menu registration (`set_my_commands`) is adapter/runtime-owned.
@@ -119,6 +119,7 @@ Example for Telegram:
 * `/continue` is translated to `ChatService.continue_story(...)` (which itself resumes a truncated reply or advances)
 * `/retry` is translated to `ChatService.regenerate_last_response(...)`, then the adapter replaces the previous narrator message in place
 * `/chat <message>` (groups) and plain private messages are translated to `ChatService.send_message(...)`
+* `/director <instruction>`, `/rule add|remove|list`, `/rules`, and `/language <code>` are translated to `SessionDirectiveService` calls; the adapter owns the subcommand syntax and the reply wording, the domain owns validation and rule-id allocation
 * `/help`, `/cancel`, and `/beta` are handled entirely by the Telegram adapter
 
 The engine and application services never parse Telegram command syntax. Persisting the
@@ -152,6 +153,8 @@ Current use-case API:
 * `PlaythroughService.list_scenarios()`
 * `PlaythroughService.start(...)` / `PlaythroughService.restart(...)`
 * `PlaythroughService.get_active(...)` / `PlaythroughService.resume_text(...)`
+* `SessionDirectiveService.set_language(...)` / `add_rule(...)` / `remove_rule(...)`
+* `SessionDirectiveService.set_director_instruction(...)` / `clear_director_instruction(...)` / `get(...)`
 
 Adapters call these use cases directly. Scenario selection is driven by the curated
 catalog and `PlaythroughService`; there is no user-facing character creation/selection.
@@ -485,6 +488,18 @@ Telegram Adapter deletes the previous narrator message and sends the new one
 Telegram Adapter
     ↓
 PlaythroughService.restart(...)
+```
+
+```text
+/director <instruction>            /rule add|remove <…>   /rules   /language <code>
+    ↓                                  ↓
+Telegram Adapter                   Telegram Adapter
+    ↓                                  ↓
+SessionDirectiveService            SessionDirectiveService
+.set_director_instruction(...)     .add_rule/.remove_rule/.set_language(...)
+    ↓                                  ↓
+consumed + cleared by the next     applied to every following turn until changed
+successful generation
 ```
 
 ```text

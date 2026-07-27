@@ -57,9 +57,11 @@ adapters/  →  application/  →  core/ (engine, domain, ports)
 - **`core/`** — domain + engine. Domain entities are **immutable** (`frozen=True` dataclasses
   with factory methods). `core/engine/orchestrator.py` (`RPOrchestrator`) drives a turn;
   `core/conversation/builder.py` (`ConversationBuilder`) turns scenario context into the
-  LLM prompt (templates `{{char}}`/`{{user}}`/`{{world}}`, scenario rules, initial context).
+  LLM prompt (templates `{{char}}`/`{{user}}`/`{{world}}`, scenario rules, initial context,
+  and the session's `SessionDirectives` sections — see `docs/DOMAIN_MODEL.md`).
 - **`application/services/`** — use-case orchestration. `PlaythroughService` (`ScenarioDefinitionStore`
-  → start/resume/restart a playthrough), `ChatService` (send/continue/retry a turn), and
+  → start/resume/restart a playthrough), `ChatService` (send/continue/retry a turn),
+  `SessionDirectiveService` (language / scenario rules / director instruction), and
   `ScenarioTransferService` (import/export scenarios + sessions, see below) are the primary
   entry points the adapters call.
 - **`adapters/`** — `telegram/` and `api/`. Transport concerns live here: slash-command

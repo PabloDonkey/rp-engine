@@ -244,6 +244,7 @@ holds all evolving state.
 * `story_progress` (`dict[str, Any]`) - runtime narrative progress (e.g. current beat).
 * `created_at` (`datetime`) - creation timestamp.
 * `metadata` (`dict[str, str]`) - optional session metadata.
+* `directives` (`SessionDirectives`) - the player's directives for this session.
 
 Session-scoped conversation persistence and memory keys are derived from
 `ScenarioSession.id`.
@@ -253,6 +254,43 @@ Definition vs runtime separation:
 * Immutable blueprint data lives on `ScenarioDefinition`.
 * Evolving state (participants, world state, story progress) lives on `ScenarioSession`.
 * Multiple sessions can run the same definition with independent state.
+
+## SessionDirectives
+
+`SessionDirectives` groups the three player-set controls that steer one session. They are
+grouped because they share a destination — a dedicated system-prompt section — and differ
+only in lifetime:
+
+| Field | Set by | Lifetime |
+|---|---|---|
+| `language` (`str`) | `/language <code>` | persistent, until changed (`auto` = no instruction) |
+| `rules` (`tuple[ScenarioRule, ...]`) | `/rule add`, `/rule remove` | persistent, until removed |
+| `director_instruction` (`str`) | `/director <instruction>` | one turn — cleared by the generation that consumes it |
+
+`ScenarioRule` is `(id, text)`. Rule ids are monotonic within a session and never reused,
+so an id a player read from `/rules` keeps pointing at the same rule after other rules are
+removed.
+
+Placement in the prompt (`ConversationBuilder`): permanent identity and behavior first,
+then persistent preferences, then the highest-priority-but-transient director note, then
+dynamic context:
+
+```
+Scenario → Character → World → Rules → Response Format
+  → Language → Scenario Rules → Director Instructions
+  → Memory hint → Recent Conversation
+```
+
+Empty sections are omitted entirely — never rendered as a bare header. Director
+instructions are out-of-character: the model is told to follow them silently and never
+acknowledge them. `ChatService` clears the instruction after a *successful* generation, so
+a failed turn keeps it alive for the retry.
+
+Reset semantics follow **ADR-025**: `/restart` carries `language` and `rules` into the fresh
+session (dropping only the pending director instruction, which was aimed at a reply that will
+never happen), while `/clear` resets them to defaults. The rule for any future per-session
+field: player-owned settings survive `/restart` and are reset by `/clear`; story-produced
+state is reset by both.
 
 ## Session (removed)
 

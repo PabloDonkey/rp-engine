@@ -24,6 +24,10 @@ from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import LLMConnectionError
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
+from rp_engine.core.scenario.session_directives import (
+    ScenarioRule,
+    SessionDirectives,
+)
 from rp_engine.core.user.user import User
 from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 
@@ -44,7 +48,12 @@ def _scenario(
     )
 
 
-def _session(*, owner_kind: str = "user", owner_id: UUID = FIXED_USER_ID) -> ScenarioSession:
+def _session(
+    *,
+    owner_kind: str = "user",
+    owner_id: UUID = FIXED_USER_ID,
+    directives: SessionDirectives | None = None,
+) -> ScenarioSession:
     return ScenarioSession(
         id=FIXED_SESSION_ID,
         scenario_definition_id="vault",
@@ -52,6 +61,7 @@ def _session(*, owner_kind: str = "user", owner_id: UUID = FIXED_USER_ID) -> Sce
         owner_id=owner_id,
         active_participants={},
         created_at=datetime(2026, 7, 12, tzinfo=UTC),
+        directives=directives or SessionDirectives(),
     )
 
 
@@ -141,6 +151,43 @@ class FakePlaythroughService:
         return self._resume
 
 
+class FakeSessionDirectiveService:
+    """Records directive writes; mirrors `SessionDirectiveService`'s domain-backed
+    behavior so the adapter's replies are exercised against real rule-id allocation."""
+
+    def __init__(self) -> None:
+        self.directives = SessionDirectives()
+        self.calls: list[tuple[str, str]] = []
+
+    async def set_language(
+        self, *, session: ScenarioSession, language: str
+    ) -> SessionDirectives:
+        del session
+        self.calls.append(("language", language))
+        self.directives = self.directives.with_language(language)
+        return self.directives
+
+    async def add_rule(self, *, session: ScenarioSession, text: str) -> ScenarioRule:
+        self.calls.append(("add_rule", text))
+        self.directives, rule = session.directives.with_rule(text)
+        return rule
+
+    async def remove_rule(self, *, session: ScenarioSession, rule_id: str) -> bool:
+        self.calls.append(("remove_rule", rule_id))
+        updated = session.directives.without_rule(rule_id)
+        if updated is None:
+            return False
+        self.directives = updated
+        return True
+
+    async def set_director_instruction(
+        self, *, session: ScenarioSession, instruction: str
+    ) -> SessionDirectives:
+        self.calls.append(("director", instruction))
+        self.directives = session.directives.with_director_instruction(instruction)
+        return self.directives
+
+
 @dataclass
 class FakeUser:
     id: int
@@ -225,12 +272,15 @@ def _make_adapter(
     admin_telegram_user_id: str = "",
     beta_registry: TelegramBetaRegistry | None = None,
     narrator_store: FakeNarratorStore | None = None,
+    session_directive_service: FakeSessionDirectiveService | None = None,
 ) -> TelegramAdapter:
     return TelegramAdapter(
         chat_service=chat_service,
         identity_resolver=FakeIdentityResolver(),
         group_identity_resolver=FakeGroupIdentityResolver(),
         playthrough_service=playthrough_service,
+        session_directive_service=session_directive_service
+        or FakeSessionDirectiveService(),
         authorization=authorization,
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -922,6 +972,7 @@ async def test_identity_resolution_uses_display_name_priority(
         identity_resolver=identity_resolver,
         group_identity_resolver=FakeGroupIdentityResolver(),
         playthrough_service=FakePlaythroughService(active=_session()),
+        session_directive_service=FakeSessionDirectiveService(),
         authorization=TelegramAuthorization({"77"}),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -949,6 +1000,7 @@ async def test_identity_resolution_prefers_persona_display_name() -> None:
         identity_resolver=identity_resolver,
         group_identity_resolver=FakeGroupIdentityResolver(),
         playthrough_service=FakePlaythroughService(active=_session()),
+        session_directive_service=FakeSessionDirectiveService(),
         authorization=TelegramAuthorization({"77"}),
         unauthorized_message="not authorized",
         message_max_length=3800,
@@ -968,3 +1020,177 @@ async def test_identity_resolution_prefers_persona_display_name() -> None:
     await adapter.handle_message(cast(Update, update), cast(Any, None))
     resolve_kwargs = identity_resolver.resolve_identity.await_args.kwargs
     assert resolve_kwargs["display_name"] == "Captain Alice"
+
+
+def _directive_adapter(
+    *,
+    directives: SessionDirectives | None = None,
+    active: bool = True,
+) -> tuple[TelegramAdapter, FakeSessionDirectiveService]:
+    service = FakeSessionDirectiveService()
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(
+            active=_session(directives=directives) if active else None
+        ),
+        authorization=TelegramAuthorization({"42"}),
+        session_directive_service=service,
+    )
+    return adapter, service
+
+
+async def _send(adapter: TelegramAdapter, text: str) -> list[str]:
+    update = _private_update(text)
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    assert update.effective_message is not None
+    return update.effective_message.responses
+
+
+@pytest.mark.asyncio
+async def test_director_sets_a_one_turn_instruction() -> None:
+    adapter, service = _directive_adapter()
+
+    responses = await _send(adapter, "/director introduce a stranger")
+
+    assert service.calls == [("director", "introduce a stranger")]
+    assert responses == ["Director note set. It shapes the next reply only."]
+
+
+@pytest.mark.asyncio
+async def test_director_without_argument_shows_usage() -> None:
+    adapter, service = _directive_adapter()
+
+    responses = await _send(adapter, "/director")
+
+    assert service.calls == []
+    assert "Usage: /director <instruction>" in responses[0]
+
+
+@pytest.mark.asyncio
+async def test_director_without_argument_reports_a_queued_note() -> None:
+    adapter, service = _directive_adapter(
+        directives=SessionDirectives().with_director_instruction("raise the stakes")
+    )
+
+    responses = await _send(adapter, "/director")
+
+    assert service.calls == []
+    assert "raise the stakes" in responses[0]
+
+
+@pytest.mark.asyncio
+async def test_language_sets_a_supported_code() -> None:
+    adapter, service = _directive_adapter()
+
+    responses = await _send(adapter, "/language FR")
+
+    assert service.calls == [("language", "fr")]
+    assert "French" in responses[0]
+
+
+@pytest.mark.asyncio
+async def test_language_rejects_an_unsupported_code() -> None:
+    adapter, service = _directive_adapter()
+
+    responses = await _send(adapter, "/language klingon")
+
+    assert service.calls == []
+    assert "Unsupported language 'klingon'" in responses[0]
+    assert "Supported codes:" in responses[0]
+
+
+@pytest.mark.asyncio
+async def test_language_without_argument_reports_the_current_setting() -> None:
+    adapter, service = _directive_adapter(directives=SessionDirectives(language="fr"))
+
+    responses = await _send(adapter, "/language")
+
+    assert service.calls == []
+    assert "Current language: French (fr)" in responses[0]
+
+
+@pytest.mark.asyncio
+async def test_rule_add_and_remove() -> None:
+    adapter, service = _directive_adapter()
+
+    added = await _send(adapter, "/rule add keep replies under 100 words")
+    assert service.calls == [("add_rule", "keep replies under 100 words")]
+    assert added == ["Rule 1 added: keep replies under 100 words"]
+
+    with_rule, _ = SessionDirectives().with_rule("keep replies under 100 words")
+    adapter, service = _directive_adapter(directives=with_rule)
+
+    removed = await _send(adapter, "/rule remove 1")
+    assert service.calls == [("remove_rule", "1")]
+    assert removed == ["Rule 1 removed."]
+
+
+@pytest.mark.asyncio
+async def test_rule_remove_reports_an_unknown_id() -> None:
+    with_rule, _ = SessionDirectives().with_rule("no time skips")
+    adapter, _ = _directive_adapter(directives=with_rule)
+
+    responses = await _send(adapter, "/rule remove 9")
+
+    assert "No rule with id 9" in responses[0]
+
+
+@pytest.mark.asyncio
+async def test_rules_lists_and_reports_emptiness() -> None:
+    adapter, _ = _directive_adapter()
+    empty = await _send(adapter, "/rules")
+    assert "haven't set any rules" in empty[0]
+
+    directives, _ = SessionDirectives().with_rule("no time skips")
+    directives, _ = directives.with_rule("keep it brief")
+    adapter, _ = _directive_adapter(directives=directives)
+
+    listed = await _send(adapter, "/rules")
+    assert "1. no time skips" in listed[0]
+    assert "2. keep it brief" in listed[0]
+
+
+@pytest.mark.asyncio
+async def test_rule_without_a_valid_subcommand_shows_usage() -> None:
+    adapter, service = _directive_adapter()
+
+    for text in ("/rule", "/rule add", "/rule remove", "/rule frobnicate"):
+        responses = await _send(adapter, text)
+        assert "Usage:" in responses[0], text
+
+    assert service.calls == []
+
+
+@pytest.mark.asyncio
+async def test_directive_commands_need_an_active_playthrough() -> None:
+    adapter, service = _directive_adapter(active=False)
+
+    responses = await _send(adapter, "/director do something")
+
+    assert service.calls == []
+    assert responses == [NO_ACTIVE_PLAYTHROUGH_MESSAGE]
+
+
+@pytest.mark.asyncio
+async def test_group_member_cannot_set_directives_but_admin_can() -> None:
+    service = FakeSessionDirectiveService()
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=FakePlaythroughService(
+            active=_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
+        ),
+        authorization=TelegramAuthorization(set(), {"-555"}),
+        session_directive_service=service,
+    )
+
+    member = _group_update("/language fr")
+    await adapter.handle_message(cast(Update, member), cast(Any, FakeContext(FakeBot("member"))))
+    assert member.effective_message is not None
+    assert member.effective_message.responses == [GROUP_ADMIN_ONLY_MESSAGE]
+    assert service.calls == []
+
+    admin = _group_update("/language fr")
+    await adapter.handle_message(
+        cast(Update, admin), cast(Any, FakeContext(FakeBot("administrator")))
+    )
+    assert service.calls == [("language", "fr")]

@@ -8,6 +8,12 @@ const AdminUserSchema = z.object({
   is_blocked: z.boolean(),
 });
 
+const SessionDirectivesSchema = z.object({
+  language: z.string(),
+  rules: z.array(z.object({ id: z.string(), text: z.string() })),
+  director_instruction: z.string(),
+});
+
 const AdminSessionSchema = z.object({
   id: z.string(),
   scenario_definition_id: z.string(),
@@ -15,6 +21,7 @@ const AdminSessionSchema = z.object({
   owner_id: z.string(),
   created_at: z.string(),
   message_count: z.number().nullable(),
+  directives: SessionDirectivesSchema,
 });
 
 const AdminMessageSchema = z.object({

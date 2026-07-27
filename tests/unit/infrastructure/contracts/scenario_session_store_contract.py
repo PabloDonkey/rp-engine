@@ -2,6 +2,7 @@ from uuid import UUID
 
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_session import ScenarioSession
+from rp_engine.core.scenario.session_directives import SessionDirectives
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000010")
 GROUP_ID = UUID("00000000-0000-0000-0000-000000000020")
@@ -49,9 +50,30 @@ async def assert_scenario_session_store_contract(store: ScenarioSessionStore) ->
     assert active is not None
     assert active.id == session.id
 
+    # Directives round-trip, and re-saving an existing session updates them in place.
+    directives, first_rule = SessionDirectives().with_language("fr").with_rule("No time skips.")
+    directives = directives.with_director_instruction("Raise the stakes.")
+    await store.save(session.with_directives(directives))
+
+    reloaded = await store.get_by_id(session.id)
+    assert reloaded is not None
+    assert reloaded.directives.language == "fr"
+    assert reloaded.directives.rules == (first_rule,)
+    assert reloaded.directives.director_instruction == "Raise the stakes."
+    # Everything else is untouched by a directive write.
+    assert reloaded.metadata == {"difficulty": "hard"}
+    assert reloaded.world_state == {"location": "vault"}
+
+    await store.save(reloaded.with_directives(reloaded.directives.without_director_instruction()))
+    consumed = await store.get_by_id(session.id)
+    assert consumed is not None
+    assert consumed.directives.director_instruction == ""
+    assert consumed.directives.rules == (first_rule,)
+
     group_session = ScenarioSession.create_for_group(
         scenario_definition_id="def-2", group_id=GROUP_ID
     )
+    assert group_session.directives == SessionDirectives()
     await store.save(group_session)
     assert await store.get_active_for_owner(owner_kind="group", owner_id=GROUP_ID) is None
 

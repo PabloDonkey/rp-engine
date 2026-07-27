@@ -12,7 +12,10 @@ from rp_engine.infrastructure.postgres.models import (
     ScenarioSessionRecord,
 )
 from rp_engine.infrastructure.postgres.transaction import session_scope
-from rp_engine.infrastructure.scenario_serialization import scenario_session_from_payload
+from rp_engine.infrastructure.scenario_serialization import (
+    scenario_session_from_payload,
+    session_directives_to_payload,
+)
 
 
 class PostgresScenarioSessionStore(ScenarioSessionStore):
@@ -65,6 +68,7 @@ class PostgresScenarioSessionStore(ScenarioSessionStore):
             "story_progress": dict(session.story_progress),
             "created_at": session.created_at,
             "payload_metadata": dict(session.metadata),
+            "directives": session_directives_to_payload(session.directives),
         }
         statement = insert(ScenarioSessionRecord).values(values)
         statement = statement.on_conflict_do_update(
@@ -78,6 +82,7 @@ class PostgresScenarioSessionStore(ScenarioSessionStore):
                 "story_progress": statement.excluded.story_progress,
                 "created_at": statement.excluded.created_at,
                 "metadata": statement.excluded.metadata,
+                "directives": statement.excluded.directives,
             },
         )
         async with session_scope(self._session_factory) as db_session:
@@ -149,5 +154,6 @@ class PostgresScenarioSessionStore(ScenarioSessionStore):
             "story_progress": record.story_progress or {},
             "created_at": created_at.isoformat(),
             "metadata": record.payload_metadata or {},
+            "directives": record.directives or {},
         }
         return scenario_session_from_payload(payload)

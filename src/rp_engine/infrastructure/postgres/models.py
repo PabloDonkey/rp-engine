@@ -88,6 +88,7 @@ class ScenarioSessionRecord(Base):
         nullable=False,
         default=dict,
     )
+    directives: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
 
     __table_args__ = (
         Index(

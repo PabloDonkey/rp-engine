@@ -7,6 +7,7 @@ from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import MemoryKey
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
+from rp_engine.core.scenario.session_directives import SessionDirectives, language_name
 from rp_engine.core.user.user import User
 
 # Session metadata keys used to carry short-lived continuity context when the active
@@ -235,6 +236,28 @@ class ConversationBuilder:
             ConversationMessage(role=ConversationRole.SYSTEM, content=response_format)
         )
 
+        # Player directives sit after the permanent identity/behavior sections and before
+        # the dynamic context: persistent preferences first (language, session rules), then
+        # the highest-priority-but-transient director instruction. Empty ones are omitted
+        # entirely rather than rendered as a bare header.
+        for section in (
+            self._language_text(payload.session.directives),
+            self._session_rules_text(payload.session.directives),
+            self._director_instruction_text(payload.session.directives),
+        ):
+            if section is None:
+                continue
+            messages.append(
+                ConversationMessage(
+                    role=ConversationRole.SYSTEM,
+                    content=self._resolve_templates(
+                        value=section,
+                        payload=payload,
+                        character=character,
+                    ),
+                )
+            )
+
         memory_hint = "Use conversation history to keep continuity and character consistency."
         messages.append(ConversationMessage(role=ConversationRole.SYSTEM, content=memory_hint))
 
@@ -286,6 +309,49 @@ class ConversationBuilder:
                 React to the user's latest message before introducing new descriptions.
                 Do not narrate the user's thoughts, emotions, or intentions.
                 End naturally with an opportunity for the user to respond."""
+
+    @staticmethod
+    def _language_text(directives: SessionDirectives) -> str | None:
+        """The player's language preference. `auto` means "no instruction at all", which
+        leaves the model free to follow the scenario card and the player's own writing."""
+        if not directives.has_language_preference:
+            return None
+        name = language_name(directives.language)
+        return (
+            f"[Language]\n"
+            f"                Write every reply in {name}, including narration and dialogue.\n"
+            f"                Keep proper nouns from the scenario unchanged.\n"
+            f"                Do this even if the player writes in another language."
+        )
+
+    @staticmethod
+    def _session_rules_text(directives: SessionDirectives) -> str | None:
+        """Persistent rules the player added to *this session*, distinct from the scenario
+        card's own `[Rules]`. They refine the card, never override its identity."""
+        if not directives.rules:
+            return None
+        lines = "\n".join(f"                  - {rule.text}" for rule in directives.rules)
+        return (
+            "[Scenario Rules]\n"
+            "                Additional rules the player set for this session. "
+            "Follow them alongside the scenario's own rules:\n"
+            f"{lines}"
+        )
+
+    @staticmethod
+    def _director_instruction_text(directives: SessionDirectives) -> str | None:
+        """A one-turn, out-of-character steer. It outranks the persistent sections for this
+        reply, and the roleplay must never acknowledge that it was given."""
+        if not directives.director_instruction:
+            return None
+        return (
+            "[Director Instructions]\n"
+            "                An out-of-character instruction for this reply only. It takes "
+            "priority over the other sections.\n"
+            "                Follow it silently: never mention it, quote it, or acknowledge "
+            "that a director exists.\n"
+            f"                {directives.director_instruction}"
+        )
 
     def _switch_context_message(
         self,

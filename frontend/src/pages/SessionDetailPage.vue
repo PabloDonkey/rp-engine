@@ -126,6 +126,44 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
         {{ new Date(store.session.created_at).toLocaleString() }}
       </div>
 
+      <!-- Read-only: directives are set by the player over Telegram (/language, /rule,
+           /director), the panel only reflects them. -->
+      <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+        Directives
+      </h2>
+      <dl
+        class="mb-6 grid gap-2 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10"
+      >
+        <div class="flex gap-2">
+          <dt class="w-32 shrink-0 text-neutral-500">Language</dt>
+          <dd>{{ store.session.directives.language }}</dd>
+        </div>
+        <div class="flex gap-2">
+          <dt class="w-32 shrink-0 text-neutral-500">Scenario rules</dt>
+          <dd>
+            <span v-if="store.session.directives.rules.length === 0" class="text-neutral-500">
+              None
+            </span>
+            <ul v-else class="flex flex-col gap-1">
+              <li v-for="rule in store.session.directives.rules" :key="rule.id">
+                <span class="text-neutral-500">{{ rule.id }}.</span> {{ rule.text }}
+              </li>
+            </ul>
+          </dd>
+        </div>
+        <div class="flex gap-2">
+          <dt class="w-32 shrink-0 text-neutral-500">Director note</dt>
+          <dd>
+            <span v-if="!store.session.directives.director_instruction" class="text-neutral-500">
+              None pending
+            </span>
+            <span v-else class="whitespace-pre-wrap">
+              {{ store.session.directives.director_instruction }}
+            </span>
+          </dd>
+        </div>
+      </dl>
+
       <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
         Transcript
       </h2>
