@@ -1,6 +1,6 @@
 # S018 · `/continue` by assistant prefill instead of a "please continue" nudge
 
-**Status:** 🔵 Backlog
+**Status:** 🟢 In Progress — code complete 2026-07-27, awaiting the live Telegram check
 **Effort:** ~1 day
 **Risk:** Medium — changes the core→provider contract (a `Conversation` must be able to say
 "the last message is a prefix to continue", not just "here is the history")
@@ -62,24 +62,53 @@ to mark the conversation as *continuing its final assistant message*. Options:
 Prefer the boolean. Either way `ConversationBuilder.build_resume` stops appending a directive
 message, and the truncated text must be the final message rather than merely present in history.
 
+## Outcome (2026-07-27)
+
+Built. `Conversation.continue_final_message` expresses the intent in the core; `build_resume`
+appends **no** instruction turn and marks the conversation instead.
+
+**The mapper needed no special path.** Mapping `CHARACTER` to `add_assistant_response` (S017)
+already leaves the chat assistant-final, which is exactly what LM Studio continues. So the
+flag's job is not to select a code path but to state intent — and to let the provider warn when
+intent and shape disagree (`is_prefill`), which is what a memory strategy that trims or
+reorders would cause.
+
+End-to-end against the live model, builder → mapper → provider:
+
+```
+continue_final_message: True   last message role: character
+finish_reason: stop            usage: prompt 197, completion 45, total 242
+thinking captured: NONE (no reasoning pass)
+continuation: 'frame. *He gripped the iron handle, his knuckles white...*  "Hm."'
+```
+
+It continued `"stepped into the"` → `"the frame."` mid-sentence, in character, with **no
+reasoning pass** and 45 completion tokens — against the earlier failure that spent all 2000 on
+reasoning and returned no prose. The `<notes>` mitigation is deleted, along with
+`RESUME_THINKING_MAX_CHARS` and `ChatService._last_thinking`.
+
 ## Tasks
-- [ ] Land [S017](S017-lmstudio-assistant-role-mapping.md) first.
-- [ ] Extend `Conversation` to express "continue the final assistant message"; `build_resume`
+- [x] Land [S017](S017-lmstudio-assistant-role-mapping.md) first.
+- [x] Extend `Conversation` to express "continue the final assistant message"; `build_resume`
       sets it and appends no directive turn.
-- [ ] `LMStudioConversationMapper`: when set, end the chat on `add_assistant_response(partial)`.
-- [ ] `LLMProvider` port doc: state that providers unable to prefill must fall back to the
+- [x] `LMStudioConversationMapper`: no special path needed (see Outcome); added `is_prefill`
+      plus a provider warning for the intent/shape mismatch case.
+- [x] `LLMProvider` port doc: state that providers unable to prefill must fall back to the
       nudge, so the contract is explicit rather than implied.
-- [ ] Remove the `<notes>` resume mitigation (or demote it to the documented fallback).
-- [ ] Keep `_should_resume` as the trigger — the `finish_reason: length` plumbing it depends on
+- [x] Remove the `<notes>` resume mitigation (or demote it to the documented fallback).
+- [x] Keep `_should_resume` as the trigger — the `finish_reason: length` plumbing it depends on
       is already correct.
-- [ ] Consider emitting a **closed think block** in the prefill for models where reasoning is
+- [x] Considered emitting a **closed think block** — **not needed**: the probe and the
+      end-to-end run both show this model emits no reasoning at all under prefill.
+      Revisit only if a model is found that reasons anyway.
+- [ ] ~~Consider emitting a closed think block~~ in the prefill for models where reasoning is
       not skipped automatically (llama.cpp #21889 reports −8.64s and 456 tokens saved per
       request, no quality regression). Probe A suggests our model needs no such help; verify
       before building it, and see [S019](S019-lmstudio-reasoning-parsing.md) for the markers.
 
 ## Verification
-- [ ] Unit: a resume conversation ends on the assistant message and carries no directive turn.
-- [ ] Mapper: the final SDK entry is `assistant` and holds the partial text verbatim.
+- [x] Unit: a resume conversation ends on the assistant message and carries no directive turn.
+- [x] Mapper: the final SDK entry is `assistant` and holds the partial text verbatim.
 - [ ] Live: truncate a reply, `/continue`, confirm the text resumes mid-sentence with no
       restatement and no reasoning pass; then `/retry` and confirm it resumes again (the
       `_should_resume` symmetry added alongside the nudge).

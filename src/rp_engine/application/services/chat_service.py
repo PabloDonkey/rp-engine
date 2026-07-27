@@ -204,10 +204,7 @@ class ChatService:
             # If the last narrator reply was cut off at the token limit, resume it
             # in place; otherwise advance the story with no player input.
             if self._should_resume(history):
-                conversation = self._conversation_builder.build_resume(
-                    builder_input,
-                    previous_thinking=self._last_thinking(history),
-                )
+                conversation = self._conversation_builder.build_resume(builder_input)
             else:
                 conversation = self._conversation_builder.build_continue(builder_input)
             request = GenerationRequest(
@@ -313,10 +310,7 @@ class ChatService:
                 # instead would strand the cut-off sentence permanently, since the turn that
                 # would have finished it is the one being replaced.
                 if self._should_resume(trimmed_history):
-                    conversation = self._conversation_builder.build_resume(
-                        builder_input,
-                        previous_thinking=self._last_thinking(trimmed_history),
-                    )
+                    conversation = self._conversation_builder.build_resume(builder_input)
                 else:
                     conversation = self._conversation_builder.build_continue(builder_input)
             else:
@@ -497,18 +491,6 @@ class ChatService:
             last.role == ConversationRole.CHARACTER
             and last.metadata.get(FINISH_REASON_METADATA_KEY) == FINISH_REASON_LENGTH
         )
-
-    @staticmethod
-    def _last_thinking(history: list[ConversationMessage]) -> str | None:
-        """Reasoning captured on the truncated turn being resumed, if any.
-
-        Only meaningful next to `_should_resume`: it is the plan for the very reply that ran
-        out of tokens, so handing it back stops the model re-deriving it.
-        """
-        if not history:
-            return None
-        thinking = history[-1].metadata.get(THINKING_METADATA_KEY, "").strip()
-        return thinking or None
 
     @staticmethod
     def _narrator_message(llm_response: LLMResponse, turn: int) -> ConversationMessage:

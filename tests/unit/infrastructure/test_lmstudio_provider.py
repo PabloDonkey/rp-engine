@@ -20,7 +20,9 @@ class FakeChat:
     def add_user_message(self, message: str) -> None:
         self.user_messages.append(message)
 
-    def add_assistant_message(self, message: str) -> None:
+    # `add_assistant_response` is the SDK's real name; a double exposing
+    # `add_assistant_message` is what let the role bug hide in production.
+    def add_assistant_response(self, message: str) -> None:
         self.assistant_messages.append(message)
 
 

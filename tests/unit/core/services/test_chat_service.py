@@ -304,16 +304,16 @@ async def test_continue_resumes_when_last_reply_was_truncated(
     scenario_context: ScenarioContext,
 ) -> None:
     service, orchestrator, conversation_store = _build_service(scenario_context=scenario_context)
-    conversation_store.load_messages = AsyncMock(
-        return_value=[
-            ConversationMessage(role=ConversationRole.USER, content="I look around", metadata={}),
-            ConversationMessage(
-                role=ConversationRole.CHARACTER,
-                content="A door creaks open and behind it",
-                metadata={"finish_reason": "length"},
-            ),
-        ]
-    )
+    history = [
+        ConversationMessage(role=ConversationRole.USER, content="I look around", metadata={}),
+        ConversationMessage(
+            role=ConversationRole.CHARACTER,
+            content="A door creaks open and behind it",
+            metadata={"finish_reason": "length"},
+        ),
+    ]
+    conversation_store.load_messages = AsyncMock(return_value=history)
+    service._memory_strategy.build_context.side_effect = lambda messages: list(messages)
     orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content=" stands a figure."))
 
     response = await service.continue_story(
@@ -321,9 +321,13 @@ async def test_continue_resumes_when_last_reply_was_truncated(
     )
 
     assert response == " stands a figure."
-    directive = orchestrator.generate_reply.await_args.args[0].conversation.messages[-1]
-    assert directive.metadata == {"source": "resume_command"}
-    assert "cut off" in directive.content
+    # Resume is an assistant prefill: the truncated reply is the final message and there is
+    # no instruction turn to open a new assistant turn.
+    conversation = orchestrator.generate_reply.await_args.args[0].conversation
+    assert conversation.continue_final_message is True
+    assert conversation.metadata["source"] == "resume_command"
+    assert conversation.messages[-1].role == ConversationRole.CHARACTER
+    assert conversation.messages[-1].content == "A door creaks open and behind it"
     # The resumed continuation is appended as its own narrator turn.
     conversation_store.save_message.assert_awaited_with(
         MemoryKey(f"session_{SESSION_ID}"),
@@ -1011,9 +1015,9 @@ async def test_whitespace_only_reply_counts_as_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_continue_hands_the_truncated_turns_reasoning_back_to_the_model() -> None:
-    """End of the chain: LM Studio reports `length` → the turn is stored with its reasoning →
-    `/continue` resumes *and* returns that reasoning so the model need not re-derive it."""
+async def test_continue_builds_an_assistant_prefill_from_the_truncated_turn() -> None:
+    """End of the chain: LM Studio reports `length` → the turn is stored → `/continue` builds
+    an assistant prefill, so the model continues those exact tokens without re-planning."""
     session = _session()
     orchestrator = AsyncMock()
     orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="…and she left."))
@@ -1054,9 +1058,10 @@ async def test_continue_hands_the_truncated_turns_reasoning_back_to_the_model() 
         conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
     )
 
-    directive = orchestrator.generate_reply.await_args.args[0].conversation.messages[-1]
-    assert "cut off before it finished" in directive.content
-    assert "Plan: she hesitates, then leaves without a word." in directive.content
+    conversation = orchestrator.generate_reply.await_args.args[0].conversation
+    assert conversation.continue_final_message is True
+    assert conversation.messages[-1].role == ConversationRole.CHARACTER
+    assert conversation.messages[-1].content == "She reached for the door and"
 
 
 @pytest.mark.asyncio
@@ -1102,9 +1107,9 @@ async def test_plain_continue_does_not_receive_prior_reasoning() -> None:
         conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
     )
 
-    directive = orchestrator.generate_reply.await_args.args[0].conversation.messages[-1]
-    assert "Continue the narration naturally" in directive.content
-    assert "<notes>" not in directive.content
+    conversation = orchestrator.generate_reply.await_args.args[0].conversation
+    assert conversation.continue_final_message is False
+    assert "Continue the narration naturally" in conversation.messages[-1].content
 
 
 def _retry_service(history: list[ConversationMessage]) -> tuple[ChatService, AsyncMock]:
@@ -1138,9 +1143,9 @@ def _retry_service(history: list[ConversationMessage]) -> tuple[ChatService, Asy
 
 
 @pytest.mark.asyncio
-async def test_retrying_a_resumed_turn_resumes_again_with_the_truncated_turns_reasoning() -> None:
-    """`/retry` drops the failed turn, so the *truncated* turn becomes last again — and its
-    reasoning, not the discarded turn's, is what the replacement attempt should carry."""
+async def test_retrying_a_resumed_turn_prefills_the_truncated_turn_again() -> None:
+    """`/retry` drops the failed turn, so the *truncated* turn becomes last again and the
+    replacement attempt is a prefill of that text — not of the discarded turn's."""
     truncated = ConversationMessage(
         role=ConversationRole.CHARACTER,
         content="She reached for the door and",
@@ -1169,10 +1174,10 @@ async def test_retrying_a_resumed_turn_resumes_again_with_the_truncated_turns_re
         conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
     )
 
-    directive = orchestrator.generate_reply.await_args.args[0].conversation.messages[-1]
-    assert "cut off before it finished" in directive.content
-    assert "TRUNCATED-TURN-PLAN" in directive.content
-    assert "DISCARDED-TURN-PLAN" not in directive.content
+    conversation = orchestrator.generate_reply.await_args.args[0].conversation
+    assert conversation.continue_final_message is True
+    assert conversation.messages[-1].content == "She reached for the door and"
+    assert not any("…hesitated." in message.content for message in conversation.messages)
 
 
 @pytest.mark.asyncio
@@ -1193,6 +1198,6 @@ async def test_retrying_after_a_naturally_ended_turn_still_advances() -> None:
         conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
     )
 
-    directive = orchestrator.generate_reply.await_args.args[0].conversation.messages[-1]
-    assert "Continue the narration naturally" in directive.content
-    assert "<notes>" not in directive.content
+    conversation = orchestrator.generate_reply.await_args.args[0].conversation
+    assert conversation.continue_final_message is False
+    assert "Continue the narration naturally" in conversation.messages[-1].content

@@ -1,6 +1,6 @@
 # S017 · LM Studio mapper sends every narrator reply as a *user* message
 
-**Status:** 🔵 Backlog — **highest severity of the current LLM-path bugs**
+**Status:** 🟢 In Progress — code complete 2026-07-27, awaiting the live quality read
 **Effort:** ~1 hour for the fix; the value is in re-judging output quality afterwards
 **Risk:** Low to fix, high impact — it changes what every prompt looks like to the model
 **Found:** 2026-07-27, while probing LM Studio continuation behaviour for [S018](S018-prefill-continuation.md)
@@ -45,21 +45,37 @@ wrong method name into a silent behavioural downgrade instead of an `AttributeEr
 - **Blocks [S018](S018-prefill-continuation.md) entirely**: prefill continuation requires the
   final message to genuinely be an assistant message.
 
+## Outcome (2026-07-27)
+
+Fixed. The `getattr` chain is gone — the mapper binds `add_assistant_response` directly.
+Removing it **immediately caught a second stale double**: `FakeChat` in
+`test_lmstudio_provider.py` also defined `add_assistant_message`, so it failed loudly the
+moment the real name was bound. That is the behaviour the epic asked for, demonstrated on its
+own first run.
+
+The same probe-then-fallback shape in `_get_config` (`stop`/`stop_sequences`/`stop_strings`)
+was also removed — `stop_strings` is now passed to the constructor. It was correct only by
+accident, since no earlier name exists on `LlmPredictionConfig`.
+
+Verified end to end against the live model: a resume prompt returned an in-character
+continuation, which requires the assistant role to be right.
+
 ## Tasks
 
-- [ ] Call `chat.add_assistant_response(content)`.
-- [ ] **Delete the `getattr` fallback chain.** Bind to the real method and let a missing one
+- [x] Call `chat.add_assistant_response(content)`.
+- [x] **Delete the `getattr` fallback chain.** Bind to the real method and let a missing one
       raise. A silent fallback to the wrong role is worse than a crash on an SDK upgrade —
       that is the whole lesson of this bug.
-- [ ] Assert on roles, not just call success: build a `Conversation` with a character reply,
+- [x] Assert on roles, not just call success: build a `Conversation` with a character reply,
       map it, and check the resulting entries are `['system', 'user', 'assistant', …]`. The
       existing mapper tests pass today *with the bug present*, so role assertions are the
       point.
-- [ ] Grep for the same `getattr`-probe-then-fallback shape elsewhere in the provider
+- [x] Grep for the same `getattr`-probe-then-fallback shape elsewhere in the provider
       (`_extract_content` and the `stop`/`stop_sequences`/`stop_strings` loop in `_get_config`
       use it too) and note any that could fail silently the same way.
 
 ## Verification
-- [ ] Unit: mapper emits `assistant` entries for `ConversationRole.CHARACTER`.
+- [x] Unit: mapper emits `assistant` entries for `ConversationRole.CHARACTER`, and a
+      multi-turn history alternates user/assistant.
 - [ ] Live: play several turns and compare voice/consistency against the current behaviour.
       This is a qualitative change — the tests can only prove the roles are right.

@@ -75,6 +75,20 @@ class LMStudioProvider(LLMProvider):
     ) -> LLMResponse:
         model = lms.llm(self._model_name)
         chat = self._conversation_mapper.map_conversation(conversation)
+        # Prefill needs no special call: mapping a character message to
+        # `add_assistant_response` already leaves the chat assistant-final, which LM Studio
+        # continues in place. What can silently break it is the *shape* not matching the
+        # intent — e.g. a memory strategy that trims or reorders so the truncated reply is
+        # no longer last. Then the model opens a new turn and re-plans, which is the exact
+        # failure prefill exists to remove, so say so rather than fail quietly.
+        if conversation.continue_final_message and not self._conversation_mapper.is_prefill(
+            conversation
+        ):
+            logger.warning(
+                "Resume requested but the conversation is not assistant-final; "
+                "the model will open a new turn instead of continuing.",
+                extra={"model_name": self._model_name},
+            )
         config = self._get_config(settings)
         logger.info(
             f"LmStudio.generate with config {config}"
@@ -113,7 +127,10 @@ class LMStudioProvider(LLMProvider):
         # A positive per-request cap wins; otherwise fall back to the configured default.
         # A resolved cap of 0 means "no limit" — pass None so LM Studio leaves it unbounded.
         resolved_max_tokens = settings.max_tokens or self._default_max_tokens
-        config = lms.LlmPredictionConfig(
+        # `stop_strings` is the SDK's field name. This used to probe `stop`/`stop_sequences`/
+        # `stop_strings` in order and set the first that existed — the same shape as the
+        # assistant-role bug, and correct only by accident since no earlier name exists.
+        return lms.LlmPredictionConfig(
             max_tokens=resolved_max_tokens if resolved_max_tokens > 0 else None,
             temperature=(
                 settings.temperature if settings.temperature >= 0 else self._default_temperature
@@ -122,14 +139,8 @@ class LMStudioProvider(LLMProvider):
             repeat_penalty=self._repeat_penalty,
             top_p_sampling=settings.top_p if settings.top_p is not None else self._top_p_sampling,
             min_p_sampling=self._min_p_sampling,
+            stop_strings=list(settings.stop_sequences) if settings.stop_sequences else None,
         )
-        if settings.stop_sequences:
-            stop_values = list(settings.stop_sequences)
-            for attr in ("stop", "stop_sequences", "stop_strings"):
-                if hasattr(config, attr):
-                    setattr(config, attr, stop_values)
-                    break
-        return config
 
     @staticmethod
     def _extract_content(result: Any) -> str:

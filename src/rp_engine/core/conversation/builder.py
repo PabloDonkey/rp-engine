@@ -15,10 +15,6 @@ from rp_engine.core.user.user import User
 SWITCH_CONTEXT_TO_CHARACTER_ID = "switch_context_to_character_id"
 SWITCH_CONTEXT_SUMMARY = "switch_context_summary"
 
-# How much of a cut-off turn's reasoning is handed back on `/continue`. Bounded because the
-# point of returning it is to *save* budget: a full reasoning dump can rival the reply itself.
-RESUME_THINKING_MAX_CHARS = 2000
-
 
 @dataclass(frozen=True, slots=True)
 class ScenarioConversationInput:
@@ -75,65 +71,31 @@ class ConversationBuilder:
             source="continue_command",
         )
 
-    def build_resume(
-        self,
-        payload: ScenarioConversationInput,
-        *,
-        previous_thinking: str | None = None,
-    ) -> Conversation:
+    def build_resume(self, payload: ScenarioConversationInput) -> Conversation:
         """Continue a narrator reply that was cut off at the token limit.
 
-        The truncated reply is the last message in history; this asks the model to keep
-        writing from exactly where it stopped rather than starting a new beat.
-
-        When the cut-off turn captured reasoning, it is handed back as the model's own
-        working notes. A reasoning model asked to resume will otherwise re-derive the whole
-        plan from scratch, which is what consumed the budget the first time — the observed
-        failure was a resume that spent every token thinking and returned no prose at all.
-        Returning the plan lets it skip straight to writing.
+        Built as an **assistant prefill**: the truncated text is the final message and the
+        conversation is marked `continue_final_message`, so the provider keeps generating
+        from those exact tokens. No instruction turn is appended — asking in a new user turn
+        opens a new assistant turn, and that is precisely when a reasoning model re-plans
+        from scratch. Probed against the live model: prefill continues mid-sentence and
+        emits no reasoning at all, where the equivalent instruction turn reasoned first.
         """
-        return self._build_directive(
-            payload,
-            directive=self._resume_directive_text(previous_thinking),
-            source="resume_command",
+        character = self._resolve_active_character(payload)
+        system_messages = self._build_system_messages(payload, character)
+        history_messages = [
+            self._resolve_message_templates(
+                message=message,
+                payload=payload,
+                character=character,
+            )
+            for message in payload.memory_messages
+        ]
+        return Conversation(
+            messages=[*system_messages, *history_messages],
+            metadata={"session_id": str(payload.session.id), "source": "resume_command"},
+            continue_final_message=True,
         )
-
-    @classmethod
-    def _resume_directive_text(cls, previous_thinking: str | None) -> str:
-        directive = (
-            "Your previous reply was cut off before it finished. Continue it from "
-            "exactly where it stopped. Do not repeat any earlier text, do not restate "
-            "what already happened, and write only the missing continuation."
-        )
-        notes = cls._trim_thinking(previous_thinking)
-        if notes is None:
-            return directive
-        return (
-            f"{directive}\n\n"
-            "These are your own working notes from that same unfinished reply:\n"
-            f"<notes>\n{notes}\n</notes>\n"
-            "The plan is already made. Do not reason about it again and do not draft it "
-            "again — write the remaining prose directly. Any wording in the notes that "
-            "already appears above has been said; continue past it."
-        )
-
-    @staticmethod
-    def _trim_thinking(previous_thinking: str | None) -> str | None:
-        """Keep only the tail of the reasoning.
-
-        Captured reasoning can run to thousands of tokens and often holds several full
-        drafts. Feeding all of it back would trade the budget problem for a context-pressure
-        one, so only the tail is kept — that is where the model's settled plan and latest
-        draft live, the earlier passes being discarded alternatives.
-        """
-        if previous_thinking is None:
-            return None
-        cleaned = previous_thinking.strip()
-        if not cleaned:
-            return None
-        if len(cleaned) <= RESUME_THINKING_MAX_CHARS:
-            return cleaned
-        return "…" + cleaned[-RESUME_THINKING_MAX_CHARS:].lstrip()
 
     def _build_directive(
         self,
