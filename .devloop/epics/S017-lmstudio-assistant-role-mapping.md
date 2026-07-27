@@ -60,6 +60,19 @@ accident, since no earlier name exists on `LlmPredictionConfig`.
 Verified end to end against the live model: a resume prompt returned an in-character
 continuation, which requires the assistant role to be right.
 
+**Live testing then exposed a latent incompatibility the bug had been hiding.** `lms.Chat`
+rejects consecutive assistant responses (`Multi-part or consecutive assistant responses are
+not supported`), but consecutive narrator turns are ordinary here — `/continue` advances with
+no player turn between, a resumed reply is stored as its own message, and a playthrough opens
+with a narrator message. While every reply was mis-sent as `user`, the constraint was never
+reached; sending the correct role hit it on the first `/retry`.
+
+The mapper now collapses runs of narrator messages into one assistant turn, joining directly
+after a turn that stopped at `length` (the rest of that sentence) and with a paragraph break
+otherwise (a separate beat). Reproduced and fixed against the **real** SDK, not a double —
+and both `FakeChat` doubles now enforce the constraint, since a double weaker than reality is
+what let this reach production in the first place.
+
 ## Tasks
 
 - [x] Call `chat.add_assistant_response(content)`.

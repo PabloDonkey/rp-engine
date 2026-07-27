@@ -23,6 +23,10 @@ class FakeChat:
     # `add_assistant_response` is the SDK's real name; a double exposing
     # `add_assistant_message` is what let the role bug hide in production.
     def add_assistant_response(self, message: str) -> None:
+        if self.assistant_messages and not self.user_messages:
+            raise RuntimeError(
+                "Multi-part or consecutive assistant responses are not supported."
+            )
         self.assistant_messages.append(message)
 
 

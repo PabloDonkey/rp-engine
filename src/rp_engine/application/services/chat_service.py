@@ -8,7 +8,13 @@ from uuid import UUID, uuid4
 from rp_engine.core.character.character import Character
 from rp_engine.core.conversation.builder import ConversationBuilder, ScenarioConversationInput
 from rp_engine.core.conversation.conversation import Conversation
-from rp_engine.core.conversation.message import ConversationMessage
+from rp_engine.core.conversation.message import (
+    FINISH_REASON_LENGTH,
+    FINISH_REASON_METADATA_KEY,
+    THINKING_METADATA_KEY,
+    TURN_METADATA_KEY,
+    ConversationMessage,
+)
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.engine.models import GenerationRequest
 from rp_engine.core.engine.orchestrator import RPOrchestrator
@@ -37,14 +43,15 @@ from rp_engine.core.world.world import World
 
 logger = logging.getLogger(__name__)
 
-# Conversation-message metadata key recording the LLM's stop reason for a narrator turn.
-FINISH_REASON_METADATA_KEY = "finish_reason"
-# finish_reason value that means the model hit its token limit mid-reply.
-FINISH_REASON_LENGTH = "length"
-# Conversation-message metadata key recording the character-reply turn number.
-TURN_METADATA_KEY = "turn"
-# Conversation-message metadata key recording the model's captured thinking/reasoning text.
-THINKING_METADATA_KEY = "thinking"
+# Metadata keys live in the core (`core/conversation/message.py`) and are re-exported here
+# so existing importers of `chat_service.FINISH_REASON_METADATA_KEY` keep working.
+__all__ = [
+    "FINISH_REASON_LENGTH",
+    "FINISH_REASON_METADATA_KEY",
+    "THINKING_METADATA_KEY",
+    "TURN_METADATA_KEY",
+    "ChatService",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -487,10 +494,7 @@ class ChatService:
         if not history:
             return False
         last = history[-1]
-        return (
-            last.role == ConversationRole.CHARACTER
-            and last.metadata.get(FINISH_REASON_METADATA_KEY) == FINISH_REASON_LENGTH
-        )
+        return last.role == ConversationRole.CHARACTER and last.was_truncated
 
     @staticmethod
     def _narrator_message(llm_response: LLMResponse, turn: int) -> ConversationMessage:

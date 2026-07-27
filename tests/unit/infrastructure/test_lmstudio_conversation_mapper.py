@@ -23,6 +23,12 @@ class FakeChat:
         self.entries.append(("user", message))
 
     def add_assistant_response(self, message: str) -> None:
+        # The real SDK rejects this outright; a double that allows it let a live crash
+        # through once already. Mirror the constraint so it cannot happen again.
+        if self.entries and self.entries[-1][0] == "assistant":
+            raise RuntimeError(
+                "Multi-part or consecutive assistant responses are not supported."
+            )
         self.entries.append(("assistant", message))
 
 
@@ -135,3 +141,99 @@ def test_is_prefill_requires_an_assistant_final_conversation() -> None:
     assert not mapper.is_prefill(Conversation(messages=[system, user, character]))
     # Nothing to prefill from.
     assert not mapper.is_prefill(Conversation(messages=[system], continue_final_message=True))
+
+
+@pytest.mark.usefixtures("fake_chat")
+def test_consecutive_narrator_turns_are_merged_into_one_assistant_message() -> None:
+    """`lms.Chat` rejects consecutive assistant responses outright, but consecutive narrator
+    turns are ordinary: `/continue` advances with no player turn between. Regression for the
+    live crash `Multi-part or consecutive assistant responses are not supported`."""
+    conversation = Conversation(
+        messages=[
+            ConversationMessage(role=ConversationRole.SYSTEM, content="sys"),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="The opening."),
+            ConversationMessage(role=ConversationRole.USER, content="I look around."),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="A door creaks."),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="Someone enters."),
+        ]
+    )
+
+    mapped = LMStudioConversationMapper().map_conversation(conversation)
+
+    assert mapped.entries == [
+        ("assistant", "The opening."),
+        ("user", "I look around."),
+        ("assistant", "A door creaks.\n\nSomeone enters."),
+    ]
+
+
+@pytest.mark.usefixtures("fake_chat")
+def test_a_truncated_turn_is_rejoined_without_a_paragraph_break() -> None:
+    """A resumed continuation is the rest of the sentence, not a new beat."""
+    conversation = Conversation(
+        messages=[
+            ConversationMessage(role=ConversationRole.SYSTEM, content="sys"),
+            ConversationMessage(role=ConversationRole.USER, content="go on"),
+            ConversationMessage(
+                role=ConversationRole.CHARACTER,
+                content="A door creaks open and behind it",
+                metadata={"finish_reason": "length"},
+            ),
+            ConversationMessage(
+                role=ConversationRole.CHARACTER,
+                content=" stands a figure.",
+                metadata={"finish_reason": "stop"},
+            ),
+        ]
+    )
+
+    mapped = LMStudioConversationMapper().map_conversation(conversation)
+
+    assert mapped.entries[-1] == (
+        "assistant",
+        "A door creaks open and behind it stands a figure.",
+    )
+
+
+@pytest.mark.usefixtures("fake_chat")
+def test_merging_preserves_the_prefill_shape_for_a_resume() -> None:
+    """The merged run must still end with the truncated text, so the prefill continues from
+    the right tokens."""
+    conversation = Conversation(
+        messages=[
+            ConversationMessage(role=ConversationRole.SYSTEM, content="sys"),
+            ConversationMessage(role=ConversationRole.USER, content="go on"),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="A first beat."),
+            ConversationMessage(
+                role=ConversationRole.CHARACTER,
+                content="She reached for the door and",
+                metadata={"finish_reason": "length"},
+            ),
+        ],
+        continue_final_message=True,
+    )
+
+    mapper = LMStudioConversationMapper()
+    mapped = mapper.map_conversation(conversation)
+
+    assert mapper.is_prefill(conversation)
+    assert mapped.entries[-1] == (
+        "assistant",
+        "A first beat.\n\nShe reached for the door and",
+    )
+
+
+@pytest.mark.usefixtures("fake_chat")
+def test_a_run_of_three_narrator_turns_collapses_to_one_entry() -> None:
+    conversation = Conversation(
+        messages=[
+            ConversationMessage(role=ConversationRole.SYSTEM, content="sys"),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="one"),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="two"),
+            ConversationMessage(role=ConversationRole.CHARACTER, content="three"),
+        ]
+    )
+
+    mapped = LMStudioConversationMapper().map_conversation(conversation)
+
+    assert mapped.entries == [("assistant", "one\n\ntwo\n\nthree")]
