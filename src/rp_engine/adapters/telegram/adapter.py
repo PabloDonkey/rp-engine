@@ -18,9 +18,11 @@ from rp_engine.adapters.telegram.commands import (
 from rp_engine.adapters.telegram.feedback import TelegramProcessingFeedbackFactory
 from rp_engine.adapters.telegram.models import TelegramCommand
 from rp_engine.adapters.telegram.narrator_store import TelegramNarratorStore
+from rp_engine.adapters.telegram.pending_persona_store import TelegramPendingPersonaStore
 from rp_engine.adapters.telegram.splitter import split_message
 from rp_engine.application.services.chat_service import ChatService
 from rp_engine.application.services.playthrough_service import PlaythroughStart
+from rp_engine.core.conversation.builder import ConversationBuilder
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import (
     EmptyGenerationError,
@@ -29,6 +31,7 @@ from rp_engine.core.llm.errors import (
     LLMTimeoutError,
 )
 from rp_engine.core.memory.models import ConversationIdentity
+from rp_engine.core.prompts.templates import resolve_templates
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession, SessionOwnerKind
 from rp_engine.core.scenario.session_directives import (
@@ -38,6 +41,7 @@ from rp_engine.core.scenario.session_directives import (
     language_name,
     normalize_language,
 )
+from rp_engine.core.scenario.user_persona import parse_persona_reply
 from rp_engine.core.user.user import User
 
 logger = logging.getLogger(__name__)
@@ -92,6 +96,44 @@ RULE_USAGE_MESSAGE = (
 NO_RULES_MESSAGE = (
     "You haven't set any rules for this adventure.\nAdd one with /rule add <rule>."
 )
+
+# S015 — persona capture. The prompt replaces the story intro for a brand-new session; the
+# intro is sent once the player has answered (or skipped).
+PERSONA_PROMPT_MESSAGE = (
+    "Before we begin — who are you playing?\n\n"
+    "Send one message with your character's name on the first line, and a description of "
+    "what they are and their likes/dislikes underneath.\n\n"
+    "For example:\n"
+    "Sera Vane\n"
+    "A wary courier who trusts machines more than people. Loves rain, hates crowds.\n\n"
+    "This cannot be changed once the adventure starts — /clear is the way to start over "
+    "with a different character.\n"
+    "Send /skip to use your Telegram name with no description."
+)
+
+PERSONA_NAME_REQUIRED_MESSAGE = (
+    "I need a name on the first line to know who you're playing.\n"
+    "Send it again, or /skip to use your Telegram name."
+)
+
+PERSONA_PROMPT_EXPIRED_MESSAGE = (
+    "That character couldn't be applied — the adventure has moved on since I asked.\n"
+    "Use /start to pick up where you are, or /clear to start over."
+)
+
+NOTHING_TO_SKIP_MESSAGE = "There's nothing to skip right now."
+
+CLEAR_CONFIRM_MESSAGE = (
+    "/clear starts this adventure completely over:\n\n"
+    "• the story restarts from the beginning\n"
+    "• you choose a new character\n"
+    "• your language and rules go back to defaults\n\n"
+    "The transcript so far is kept for the record, but you cannot play it further.\n"
+    "Send /clear confirm to go ahead, or /restart to just replay the story with your "
+    "current character and settings."
+)
+
+CLEAR_USAGE_MESSAGE = "Usage: /clear confirm"
 
 UNAUTHORIZED_START_MESSAGE = (
     "Welcome. This bot is currently in closed beta.\n"
@@ -159,6 +201,21 @@ class PlaythroughServicePort(Protocol):
         owner_id: Any,
     ) -> PlaythroughStart | None: ...
 
+    async def clear(
+        self,
+        *,
+        owner_kind: SessionOwnerKind,
+        owner_id: Any,
+    ) -> PlaythroughStart | None: ...
+
+    async def set_persona(
+        self,
+        *,
+        session_id: UUID,
+        name: str,
+        description: str = "",
+    ) -> PlaythroughStart | None: ...
+
     async def resume_text(self, *, session: ScenarioSession) -> str | None: ...
 
 
@@ -202,6 +259,7 @@ class TelegramAdapter:
         processing_feedback_factory: TelegramProcessingFeedbackFactory | None = None,
         beta_registry: TelegramBetaRegistry | None = None,
         narrator_store: TelegramNarratorStore | None = None,
+        pending_persona_store: TelegramPendingPersonaStore | None = None,
     ) -> None:
         self._chat_service = chat_service
         self._identity_resolver = identity_resolver
@@ -217,6 +275,7 @@ class TelegramAdapter:
         )
         self._beta_registry = beta_registry or TelegramBetaRegistry()
         self._narrator_store = narrator_store or TelegramNarratorStore()
+        self._pending_persona_store = pending_persona_store or TelegramPendingPersonaStore()
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
@@ -309,6 +368,19 @@ class TelegramAdapter:
         # chat id; direct chats are outsiders for RESTRICTED scenarios.
         caller_group_chat_id = self._chat_id(chat) if owner.is_group else None
 
+        # A pending persona prompt claims the *next plain-text message* (and /skip), but
+        # deliberately blocks nothing else: an abandoned prompt must never wedge a chat, so
+        # every other command falls through to its normal handler below.
+        if parsed_message.command == TelegramCommand.SKIP or not parsed_message.is_command:
+            handled = await self._try_handle_persona_reply(
+                message=message,
+                owner=owner,
+                parsed_text=parsed_message.text,
+                is_skip=parsed_message.command == TelegramCommand.SKIP,
+            )
+            if handled:
+                return
+
         # /cancel — no scripted menus exist in this pass; acknowledge and move on.
         if parsed_message.command == TelegramCommand.CANCEL:
             await self._reply_with_split(message=message, text="Nothing to cancel.")
@@ -352,7 +424,16 @@ class TelegramAdapter:
                     text=f"No scenario '{scenario_id}'. Use /scenarios to see the library.",
                 )
                 return
-            await self._reply_with_split(message=message, text=self._format_start(started))
+            # A genuinely new personal playthrough asks who the player is *before* showing
+            # the intro; resuming an existing one asks nothing, and group sessions have no
+            # single player to ask (their `{{user}}` is the group itself).
+            if not started.resumed and not owner.is_group:
+                await self._prompt_for_persona(message=message, owner=owner, started=started)
+                return
+            await self._reply_with_split(
+                message=message,
+                text=self._format_start(started, user=owner.resolved_user),
+            )
             return
 
         # The remaining commands operate on the active playthrough.
@@ -371,7 +452,9 @@ class TelegramAdapter:
             extra={"memory_key": conversation_identity.to_memory_key().value},
         )
 
-        # /restart — story control -> group admins only.
+        # /restart — story control -> group admins only. It carries the player's character,
+        # language and rules into the new session (ADR-025), so it never re-asks for a
+        # persona; /clear below is the tier that resets them.
         if parsed_message.command == TelegramCommand.RESTART:
             if owner.is_group and not await self._is_group_admin(context=context, update=update):
                 await self._reply_with_split(message=message, text=GROUP_ADMIN_ONLY_MESSAGE)
@@ -383,7 +466,37 @@ class TelegramAdapter:
                 await self._reply_with_split(message=message, text=NO_ACTIVE_PLAYTHROUGH_MESSAGE)
                 return
             await self._reply_with_split(
-                message=message, text=self._format_start(restarted, restarted=True)
+                message=message,
+                text=self._format_start(restarted, user=owner.resolved_user, restarted=True),
+            )
+            return
+
+        # /clear — the full reset. It is the only command that destroys player-authored
+        # configuration and sits one letter from /continue in the menu, so it confirms
+        # first. Story control -> group admins only, like /restart.
+        if parsed_message.command == TelegramCommand.CLEAR:
+            if owner.is_group and not await self._is_group_admin(context=context, update=update):
+                await self._reply_with_split(message=message, text=GROUP_ADMIN_ONLY_MESSAGE)
+                return
+            confirmation = (parsed_message.argument or "").strip().lower()
+            if not confirmation:
+                await self._reply_with_split(message=message, text=CLEAR_CONFIRM_MESSAGE)
+                return
+            if confirmation != "confirm":
+                await self._reply_with_split(message=message, text=CLEAR_USAGE_MESSAGE)
+                return
+            cleared = await self._playthrough_service.clear(
+                owner_kind=owner.owner_kind, owner_id=owner.owner_id
+            )
+            if cleared is None:
+                await self._reply_with_split(message=message, text=NO_ACTIVE_PLAYTHROUGH_MESSAGE)
+                return
+            if not owner.is_group:
+                await self._prompt_for_persona(message=message, owner=owner, started=cleared)
+                return
+            await self._reply_with_split(
+                message=message,
+                text=self._format_start(cleared, user=owner.resolved_user, restarted=True),
             )
             return
 
@@ -1039,15 +1152,106 @@ class TelegramAdapter:
             lines.append(f"  /play {scenario.id}")
         return "\n".join(lines)
 
+    async def _prompt_for_persona(
+        self,
+        *,
+        message: Any,
+        owner: _OwnerContext,
+        started: PlaythroughStart,
+    ) -> None:
+        """Ask who the player is, and remember which session the answer belongs to.
+
+        Writing the pending state unconditionally is what makes an abandoned prompt
+        harmless: a second `/play` or `/clear` overwrites the pointer, so the reply always
+        lands on the session the player most recently started.
+        """
+        await self._pending_persona_store.set(
+            owner_kind=owner.owner_kind,
+            owner_id=str(owner.owner_id),
+            session_id=started.session.id,
+        )
+        await self._reply_with_split(message=message, text=PERSONA_PROMPT_MESSAGE)
+
+    async def _try_handle_persona_reply(
+        self,
+        *,
+        message: Any,
+        owner: _OwnerContext,
+        parsed_text: str,
+        is_skip: bool,
+    ) -> bool:
+        """Consume this message as a persona reply if one is owed. Returns whether it was
+        handled, so the caller can fall through to normal dispatch when it wasn't."""
+        if owner.is_group:
+            return False
+
+        pending_session_id = await self._pending_persona_store.get(
+            owner_kind=owner.owner_kind, owner_id=str(owner.owner_id)
+        )
+        if pending_session_id is None:
+            if is_skip:
+                await self._reply_with_split(message=message, text=NOTHING_TO_SKIP_MESSAGE)
+                return True
+            return False
+
+        if is_skip:
+            name, description = owner.resolved_user.display_name, ""
+        else:
+            try:
+                name, description = parse_persona_reply(parsed_text)
+            except ValueError:
+                # Ask again rather than guessing: a blank first line is not a skip, and the
+                # pending state stays so the next message is still read as the answer.
+                await self._reply_with_split(
+                    message=message, text=PERSONA_NAME_REQUIRED_MESSAGE
+                )
+                return True
+
+        started = await self._playthrough_service.set_persona(
+            session_id=pending_session_id, name=name, description=description
+        )
+        await self._pending_persona_store.clear(
+            owner_kind=owner.owner_kind, owner_id=str(owner.owner_id)
+        )
+        if started is None:
+            await self._reply_with_split(message=message, text=PERSONA_PROMPT_EXPIRED_MESSAGE)
+            return True
+
+        await self._reply_with_split(
+            message=message,
+            text=(
+                f"You are playing {started.session.user_persona_name}.\n\n"
+                f"{self._format_start(started, user=owner.resolved_user)}"
+            ),
+        )
+        return True
+
     @staticmethod
-    def _format_start(start: PlaythroughStart, *, restarted: bool = False) -> str:
+    def _format_start(
+        start: PlaythroughStart,
+        *,
+        user: User,
+        restarted: bool = False,
+    ) -> str:
         if restarted:
             verb = "Restarted"
         elif start.resumed:
             verb = "Resuming"
         else:
             verb = "Starting"
-        return f"{verb}: {start.scenario.name}\n\n{start.opening}"
+        # Scenario text is stored with its `{{...}}` placeholders intact and resolved at
+        # render time, so the opening the player reads names their persona exactly as the
+        # prompt does.
+        character = ConversationBuilder.resolve_active_character(
+            scenario=start.scenario, session=start.session
+        )
+        opening = resolve_templates(
+            start.opening,
+            user_name=start.session.resolve_user_name(user.display_name),
+            character_name=character.name if character is not None else "",
+            world_name=start.scenario.world.name if start.scenario.world is not None else "",
+        )
+        return f"{verb}: {start.scenario.name}\n\n{opening}"
 
 
 class TelegramRuntime:

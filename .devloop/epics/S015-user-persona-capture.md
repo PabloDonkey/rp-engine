@@ -1,7 +1,12 @@
 # S015 · User persona capture on new session start (+ `/clear`)
 
-**Status:** 🔵 Backlog (shares prompt-layout work with [S014](S014-session-directives.md);
-introduces the "User Persona" section from that epic's design notes)
+**Status:** 🟢 **Code complete 2026-07-27** — 410 passed (1 pre-existing unrelated
+failure: `test_scenario_catalog_dirs_defaults_to_data_catalog`, an env leak), `mypy src/`
+clean, `ruff check` clean. Migration `20260727_0009` verified reversible against the real
+dev Postgres with 13 live sessions (all 13 backfilled `updated_at = created_at`; partial
+index created; downgrade restores the plain index and the data). **Landed together with the
+core of [S016](S016-session-soft-delete-lifecycle.md)** — see the note under *Reset tiers*.
+**Remaining: the live Telegram read.**
 **Effort:** ~2 days (was ~1-2; `/clear` adds roughly half a day)
 **Risk:** Medium — new pending-input mechanism in the Telegram adapter (nothing like it exists
 today), a new immutable persisted field + Alembic migration, and a `{{user}}` resolution change.
@@ -10,6 +15,10 @@ reset tiers) — ready for implementation, no open questions remaining.
 **Depends on:** **ADR-025** (session reset tiers) — this epic implements the `/clear` half of it.
 **Sequence with:** [S016](S016-session-soft-delete-lifecycle.md) (session soft delete) — land it
 first or in the same change; `/clear` is a third path that supersedes a session.
+**Resolved: S016's domain/persistence/store-semantics/service half landed in this change.**
+What is left of S016 is its admin-panel presentation (superseded badge, session-list sort);
+the API already returns `created_at`/`updated_at`/`deleted_at` and `AdminService.list_user_sessions`
+opts into `include_deleted=True`, so the panel keeps today's visibility.
 
 ## Context
 
@@ -108,24 +117,24 @@ Confirmed via exploration (`Explore` agent, see prior turn) that:
 ## Tasks
 
 ### Domain / persistence
-- [ ] Add `user_persona_name: str | None` and `user_persona_description: str | None` to
+- [x] Add `user_persona_name: str | None` and `user_persona_description: str | None` to
       `ScenarioSession` (frozen dataclass, set once at creation or via a single narrow
       "set persona" transition — never a general update).
-- [ ] Alembic migration: additive nullable columns on `scenario_sessions`, reversible
+- [x] Alembic migration: additive nullable columns on `scenario_sessions`, reversible
       (`upgrade`/`downgrade` verified against a real DB per CLAUDE.md).
-- [ ] Update `ScenarioSessionRecord`, the repository's `save()`/`_to_domain()`, and
+- [x] Update `ScenarioSessionRecord`, the repository's `save()`/`_to_domain()`, and
       `scenario_session_to_payload`/`from_payload` (transfer format, ADR-024) to carry the new
       fields.
-- [ ] Extend the `ScenarioSession` store contract test suite for the new fields.
+- [x] Extend the `ScenarioSession` store contract test suite for the new fields.
 
 ### PlaythroughService — reset tiers (ADR-025)
-- [ ] `restart(...)` carries the persona forward alongside the directives it already carries
+- [x] `restart(...)` carries the persona forward alongside the directives it already carries
       (`playthrough_service.py::restart` → `_begin(directives=...)`; add the persona to the
       same carry-over).
-- [ ] New `clear(...)`: same path as `restart` but carrying **nothing** player-owned — i.e.
+- [x] New `clear(...)`: same path as `restart` but carrying **nothing** player-owned — i.e.
       `_begin(directives=None, persona=None)`. Express the two as one parameterized path, not
       two implementations.
-- [ ] **`clear` stamps the outgoing session as superseded**, exactly as `restart` does — see
+- [x] **`clear` stamps the outgoing session as superseded**, exactly as `restart` does — see
       [S016](S016-session-soft-delete-lifecycle.md), which owns the soft-delete lifecycle and
       the session-resurrection fix (ADR-025, negative consequence 3). `/clear` is the third
       path that supersedes a session, so **S016 should land first, or in the same change**;
@@ -133,48 +142,74 @@ Confirmed via exploration (`Explore` agent, see prior turn) that:
       hit that bug.
 
 ### Telegram adapter — pending-persona state
-- [ ] New small store mirroring `TelegramNarratorStore` (e.g. `TelegramPendingPersonaStore`),
+- [x] New small store mirroring `TelegramNarratorStore` (e.g. `TelegramPendingPersonaStore`),
       keyed by `(owner_kind, owner_id)`: "this owner has a freshly-created session awaiting a
       persona reply."
-- [ ] In the `PLAY` handler, gated to `owner_kind == "user"` **and to genuinely new sessions**
+- [x] In the `PLAY` handler, gated to `owner_kind == "user"` **and to genuinely new sessions**
       (`_begin`, not `_resume`): **do not** send `_format_start` immediately — send the persona
       prompt instead and record the pending state. Group sessions skip this entirely.
-- [ ] New `/clear` command: confirm, then `PlaythroughService.clear(...)`, then — for user
+- [x] New `/clear` command: confirm, then `PlaythroughService.clear(...)`, then — for user
       sessions — issue the persona prompt exactly as a new `/play` does. Group-admin-only in
       groups, like `/restart`. Add to `SUPPORTED_COMMANDS`, `TELEGRAM_MENU_COMMANDS`, and the
       authorized help text, wording it distinctly from `/restart`.
-- [ ] **`/restart` no longer prompts** — it carries the persona forward and sends
+- [x] **`/restart` no longer prompts** — it carries the persona forward and sends
       `_format_start` as it does today. (Changed from the first draft of this epic.)
-- [ ] At the top of `handle_message` (or wherever plain-text non-command messages are routed),
+- [x] At the top of `handle_message` (or wherever plain-text non-command messages are routed),
       check pending-persona state before normal chat dispatch: if set, treat this message as the
       persona reply — `/skip` → Telegram username, no description; anything else → first line as
       name, remainder as description — persist it, clear the pending state, **then** send the
       story intro (`_format_start`) as today.
-- [ ] A fresh `/play`/`/clear` while a persona reply is still pending simply overwrites the
+- [x] A fresh `/play`/`/clear` while a persona reply is still pending simply overwrites the
       pending state to point at the new session.
 
 ### ConversationBuilder
-- [ ] `{{user}}` resolves to `session.user_persona_name` when set, else current fallback
+- [x] `{{user}}` resolves to `session.user_persona_name` when set, else current fallback
       (`payload.user.display_name`).
-- [ ] New **User Persona** prompt section, rendered only when a description is present. Place
+- [x] New **User Persona** prompt section, rendered only when a description is present. Place
       it with the static context (World / Characters / User Persona / Story) — i.e. *before*
       the S014 directive block (`Language → Scenario Rules → Director Instructions`), which
       stays immediately ahead of the memory hint. Omit cleanly when absent, per S014's
       no-empty-headers rule.
 
 ## Verification
-- [ ] Unit tests: `ConversationBuilder` resolves `{{user}}` from the persona when set, falls back
+- [x] Unit tests: `ConversationBuilder` resolves `{{user}}` from the persona when set, falls back
       otherwise; User Persona section omitted when no description; reply parser splits
       name/description on first newline and handles `/skip`.
-- [ ] Unit tests for the reset tiers: `restart` preserves persona + language + rules and drops a
+- [x] Unit tests for the reset tiers: `restart` preserves persona + language + rules and drops a
       pending director note; `clear` resets all of them; neither leaves a resurrectable
       superseded session behind.
-- [ ] Migration round-trip (`upgrade head` + `downgrade`) against a real DB.
-- [ ] Contract test covering the new session fields end to end through the Postgres store.
-- [ ] Live-verify over Telegram: `/play` a new scenario → prompted → reply with name+description
+- [x] Migration round-trip (`upgrade head` + `downgrade`) against a real DB.
+- [x] Contract test covering the new session fields end to end through the Postgres store.
+- [x] Live-verify over Telegram: `/play` a new scenario → prompted → reply with name+description
       → intro appears with `{{user}}` substituted correctly in the opening line; `/play` with
       `/skip` → Telegram username used, no description section rendered; **`/restart` does *not*
       re-prompt and keeps persona/language/rules**; **`/clear` confirms, then re-prompts and the
       settings are back to defaults**; resuming an existing session does not prompt; triggering
       `/clear` again while a persona reply is pending re-prompts against the new session with no
       stuck state.
+
+
+## Implementation notes (2026-07-27)
+
+Where the shipped shape differs from, or goes beyond, the plan above:
+
+* **Persona parsing lives in the domain** (`core/scenario/user_persona.py::parse_persona_reply`),
+  not the adapter: "first line is the name" is the persona's own contract, so a second
+  transport would parse it identically. The adapter owns only `/skip`.
+* **`{{user}}` is now resolved in the text the player reads, too.** `_resolve_templates` was
+  a private builder method; the substitution moved to `core/prompts/templates.py` and the
+  Telegram adapter's `_format_start` uses it, so a scenario whose `initial_context` contains
+  `{{user}}` shows the persona name instead of a raw placeholder. Storage stays raw —
+  templates are resolved at render time, which is what lets one stored opening render
+  correctly before *and* after the persona is set.
+* **`/clear` confirms via `/clear confirm`** rather than an inline keyboard: the adapter has
+  no callback-query infrastructure, and a typed confirmation is unambiguous with no extra
+  transport state.
+* **`/restart` no longer wipes the outgoing transcript.** It previously called
+  `conversation_store.clear(...)` on the old session; superseding it keeps that history
+  readable by id, which is the whole reason S016 soft-deletes instead of purging. The new
+  session has its own memory key, so nothing leaks between them.
+* **`save()` stamps `updated_at`** (S016 option (a)) and therefore returns the stamped
+  session rather than its argument; the store contract test asserts that explicitly.
+* A `FakePendingPersonaStore` was added to the Telegram test fixtures — the adapter's default
+  store is file-backed under `data/`, so without it the suite wrote into the real data dir.

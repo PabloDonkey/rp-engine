@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -82,6 +82,10 @@ class ScenarioSessionRecord(Base):
     world_state: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
     story_progress: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Null means "this is the live session for its owner + scenario". Set when a reset
+    # (`/restart`, `/clear`) supersedes it; the row and its transcript stay readable by id.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     payload_metadata: Mapped[dict[str, object]] = mapped_column(
         "metadata",
         JSONB,
@@ -89,13 +93,18 @@ class ScenarioSessionRecord(Base):
         default=dict,
     )
     directives: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    user_persona_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    user_persona_description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
+        # Partial: every hot lookup asks for the owner's *live* session, so superseded
+        # rows are dead weight in the index.
         Index(
             "ix_scenario_sessions_owner_definition",
             "owner_kind",
             "owner_id",
             "scenario_definition_id",
+            postgresql_where=text("deleted_at IS NULL"),
         ),
     )
 

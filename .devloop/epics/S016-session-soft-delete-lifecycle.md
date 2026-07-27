@@ -1,6 +1,8 @@
 # S016 · Session lifecycle timestamps + soft delete (fixes session resurrection)
 
-**Status:** 🔵 Backlog
+**Status:** 🟡 **Core landed 2026-07-27 with [S015](S015-user-persona-capture.md)** — domain,
+persistence, store semantics and `PlaythroughService` are done and the resurrection bug is
+fixed. **What remains is the admin-panel presentation** (the "payoff" section below).
 **Effort:** ~1 day
 **Risk:** Low-Medium (schema + one query-semantics change that every session lookup inherits;
 the risk is *missing* a call site, not the change itself)
@@ -53,7 +55,8 @@ delete is what *an operator* does on purpose. Two different intents, two differe
 
 ## Design notes / decisions to make at implementation time
 
-- **Naming.** `deleted_at` is what was asked for and matches the conventional soft-delete idiom.
+- **Naming — decided: `deleted_at`.** (What was asked for, and the conventional idiom.)
+  `deleted_at` is what was asked for and matches the conventional soft-delete idiom.
   `superseded_at` would describe the actual event more precisely (nobody deleted anything — a
   reset replaced it). Pick one and use it everywhere; not worth a long debate, but worth five
   seconds before the migration is written, because renaming a column later costs a migration.
@@ -83,37 +86,37 @@ delete is what *an operator* does on purpose. Two different intents, two differe
 ## Tasks
 
 ### Domain
-- [ ] Add `updated_at: datetime` and `deleted_at: datetime | None` to `ScenarioSession`
+- [x] Add `updated_at: datetime` and `deleted_at: datetime | None` to `ScenarioSession`
       (frozen dataclass; `deleted_at` defaults to `None`).
-- [ ] A narrow transition for supersession (e.g. `mark_deleted(at=...)`) rather than a general
+- [x] A narrow transition for supersession (e.g. `mark_deleted(at=...)`) rather than a general
       setter — mirrors how `with_directives(...)` was added in S014.
 
 ### Persistence
-- [ ] Alembic migration, reversible, chained after the current head (`20260726_0008` at time of
+- [x] Alembic migration, reversible, chained after the current head (`20260726_0008` at time of
       writing — recheck): add `updated_at timestamptz NOT NULL` (backfill existing rows from
       `created_at`, not `now()`, so history isn't falsified) and `deleted_at timestamptz NULL`.
       Rework `ix_scenario_sessions_owner_definition` as a partial index.
-- [ ] `ScenarioSessionRecord`, the repository's `save()`/`_to_domain()`, and the shared
+- [x] `ScenarioSessionRecord`, the repository's `save()`/`_to_domain()`, and the shared
       `scenario_session_to_payload`/`from_payload` (transfer format, ADR-024) carry both fields.
-- [ ] Verify `upgrade head` **and** `downgrade` against a real DB (CLAUDE.md bar).
+- [x] Verify `upgrade head` **and** `downgrade` against a real DB (CLAUDE.md bar).
 
 ### Store semantics — the actual fix
-- [ ] `find_by_definition`: filter `deleted_at IS NULL`, and add `ORDER BY created_at DESC` as a
+- [x] `find_by_definition`: filter `deleted_at IS NULL`, and add `ORDER BY created_at DESC` as a
       belt-and-braces tiebreak so a duplicate-live-row bug can never again be non-deterministic.
-- [ ] `get_active_for_owner`: filter `deleted_at IS NULL` defensively (the active pointer is
+- [x] `get_active_for_owner`: filter `deleted_at IS NULL` defensively (the active pointer is
       already repointed on reset, so this is a second line of defence, not the mechanism).
-- [ ] `get_by_id`: **no filter** — soft-deleted sessions must stay openable by id, that's the
+- [x] `get_by_id`: **no filter** — soft-deleted sessions must stay openable by id, that's the
       whole point.
-- [ ] `find_by_owner`: gains `include_deleted: bool = False`. Default-off keeps every engine
+- [x] `find_by_owner`: gains `include_deleted: bool = False`. Default-off keeps every engine
       caller honest; the admin panel opts in.
-- [ ] Extend the store contract suite: a soft-deleted session is invisible to
+- [x] Extend the store contract suite: a soft-deleted session is invisible to
       `find_by_definition`/`get_active_for_owner`, still readable via `get_by_id`, and appears in
       `find_by_owner` only with `include_deleted=True`.
 
 ### PlaythroughService
-- [ ] `restart` (and S015's `clear`) stamp `deleted_at` on the outgoing session before `_begin`
+- [x] `restart` (and S015's `clear`) stamp `deleted_at` on the outgoing session before `_begin`
       creates its replacement.
-- [ ] Regression test that reproduces the original bug: start → restart → `/play <same-id>`
+- [x] Regression test that reproduces the original bug: start → restart → `/play <same-id>`
       returns the **post**-restart session, deterministically, with its own transcript.
 
 ### Admin panel — the payoff
@@ -139,3 +142,31 @@ Retention/purge policy for soft-deleted sessions (they accumulate forever under 
 If that becomes a real concern rather than a hypothetical one, it's a follow-up — and probably
 an ADR, since "how long do we keep player conversation data" is a decision, not an implementation
 detail.
+
+
+## What landed on 2026-07-27 (with S015)
+
+Migration `20260727_0009` (shared with S015's persona columns), verified reversible against
+the real dev Postgres with 13 live sessions — `updated_at` backfilled from each row's own
+`created_at`, `ix_scenario_sessions_owner_definition` reworked as
+`WHERE deleted_at IS NULL`, `created_at` dropped from the upsert's `SET` clause.
+
+Store semantics as specified: `find_by_definition` filters `deleted_at IS NULL` and orders
+`created_at DESC`; `get_active_for_owner` filters defensively; `get_by_id` is unfiltered;
+`find_by_owner` gained `include_deleted: bool = False`. `updated_at` is repository-managed
+(option **(a)**), so `save()` returns the stamped session — the contract test asserts this.
+`restart` and `clear` share `PlaythroughService._reset` and stamp the outgoing session.
+The resurrection regression test is
+`test_replaying_a_scenario_after_a_restart_resumes_the_new_session`.
+
+One behavior change worth flagging: **`/restart` no longer clears the outgoing session's
+transcript.** Keeping it is the point of superseding rather than purging, and it is what
+makes the admin-panel work below worth doing.
+
+### Still open (the admin-panel payoff)
+
+The backend is already prepared: `AdminService.list_user_sessions` passes
+`include_deleted=True`, and `AdminSessionResponse` exposes `created_at`, `updated_at`,
+`deleted_at`, and the persona. What is missing is the **frontend**: a muted "superseded"
+badge, newest-first sorting, and the deliberate decision about what `session_count` on the
+users list should mean (it is currently live-only, which was the recommended default).

@@ -149,18 +149,36 @@ Columns:
 - active_participants (JSONB — {role: character_id})
 - world_state (JSONB — runtime variables)
 - story_progress (JSONB — narrative progress)
-- created_at (timestamptz)
+- created_at (timestamptz — insert-only; deliberately absent from the upsert's SET clause)
+- updated_at (timestamptz, NOT NULL — stamped by the repository on every `save`)
+- deleted_at (timestamptz, NULL — **null = the live session**; set when a reset supersedes it)
 - metadata (JSONB)
 - directives (JSONB — player directives: `{language, rules: [{id, text}], director_instruction}`)
+- user_persona_name (VARCHAR(128), NULL — the player's character; what `{{user}}` resolves to)
+- user_persona_description (TEXT, NULL — rendered as the prompt's `[User Persona]` section)
 
 Composite index on (owner_kind, owner_id, scenario_definition_id) backs session reuse
-lookup on character selection.
+lookup on character selection. Since migration `20260727_0009` it is **partial**
+(`WHERE deleted_at IS NULL`): every hot lookup asks for the owner's live session, so
+superseded rows are dead weight in the index.
 
 `directives` is one JSONB document rather than three columns: the three controls are read
 and written as a unit (the `SessionDirectives` value object), never queried individually,
 and the shape is expected to grow. Rows written before migration `20260726_0008` hold
 `{}`, which deserializes to the neutral defaults (`language: auto`, no rules, no pending
 director instruction).
+
+The persona is **two real columns**, not a JSONB bag: it is schema-visible identity with an
+"immutable once set" contract, and one of the two fields is what every `{{user}}` in every
+prompt resolves to. Migration `20260727_0009` added them nullable with no backfill — a null
+name means "no persona", i.e. today's transport-display-name behavior.
+
+`updated_at` is written by `PostgresScenarioSessionStore.save()` rather than by a column
+`onupdate=`, which would silently never fire: this store writes via
+`INSERT ... ON CONFLICT DO UPDATE`, and SQLAlchemy's `onupdate` only applies to ORM/Core
+`UPDATE` statements. `save()` therefore returns the *stamped* session, not its argument.
+Migration `20260727_0009` backfilled existing rows from `created_at`, not `now()`, so the
+column never claims a historical session was touched on migration day.
 
 ### active_scenario_sessions
 

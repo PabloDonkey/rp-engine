@@ -185,8 +185,12 @@ def scenario_session_to_payload(session: ScenarioSession) -> dict[str, Any]:
         "world_state": session.world_state,
         "story_progress": session.story_progress,
         "created_at": session.created_at.isoformat(),
+        "updated_at": session.updated_at.isoformat(),
+        "deleted_at": session.deleted_at.isoformat() if session.deleted_at is not None else None,
         "metadata": session.metadata,
         "directives": session_directives_to_payload(session.directives),
+        "user_persona_name": session.user_persona_name,
+        "user_persona_description": session.user_persona_description,
     }
 
 
@@ -194,6 +198,11 @@ def scenario_session_from_payload(payload: dict[str, Any]) -> ScenarioSession | 
     from datetime import datetime
 
     try:
+        created_at = datetime.fromisoformat(payload["created_at"])
+        # Both lifecycle stamps are additive (S016): payloads exported before they existed
+        # date the session from its creation and count as live, which is what they were.
+        raw_updated_at = payload.get("updated_at")
+        raw_deleted_at = payload.get("deleted_at")
         return ScenarioSession(
             id=UUID(payload["id"]),
             scenario_definition_id=payload["scenario_definition_id"],
@@ -202,9 +211,20 @@ def scenario_session_from_payload(payload: dict[str, Any]) -> ScenarioSession | 
             active_participants=payload.get("active_participants", {}),
             world_state=payload.get("world_state", {}),
             story_progress=payload.get("story_progress", {}),
-            created_at=datetime.fromisoformat(payload["created_at"]),
+            created_at=created_at,
+            updated_at=datetime.fromisoformat(raw_updated_at) if raw_updated_at else created_at,
+            deleted_at=datetime.fromisoformat(raw_deleted_at) if raw_deleted_at else None,
             metadata=payload.get("metadata", {}),
             directives=session_directives_from_payload(payload.get("directives")),
+            user_persona_name=_optional_text(payload.get("user_persona_name")),
+            user_persona_description=_optional_text(payload.get("user_persona_description")),
         )
     except (KeyError, ValueError, TypeError):
         return None
+
+
+def _optional_text(value: Any) -> str | None:
+    """Normalize an optional free-text field: absent, null and blank all mean "unset"."""
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None

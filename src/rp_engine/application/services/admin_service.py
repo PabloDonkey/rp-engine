@@ -64,7 +64,12 @@ class AdminService:
         return await self._user_identity_store.get_by_id(user_id)
 
     async def list_user_sessions(self, user_id: UUID) -> list[ScenarioSession]:
-        return await self._scenario_session_store.find_by_owner("user", user_id)
+        # The panel exists to debug playthroughs, so it opts into the superseded sessions
+        # the engine hides — a restart's predecessor and its transcript are often exactly
+        # what you came to read. `session_count` on the users list stays live-only.
+        return await self._scenario_session_store.find_by_owner(
+            "user", user_id, include_deleted=True
+        )
 
     async def get_session(self, session_id: UUID) -> ScenarioSession | None:
         return await self._scenario_session_store.get_by_id(session_id)

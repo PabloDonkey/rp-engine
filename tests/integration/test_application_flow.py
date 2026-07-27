@@ -181,9 +181,12 @@ class FakeScenarioSessionStore:
             return None
         return _fixed_session()
 
-    async def find_by_owner(self, owner_kind: str, owner_id: UUID) -> list[ScenarioSession]:
+    async def find_by_owner(
+        self, owner_kind: str, owner_id: UUID, *, include_deleted: bool = False
+    ) -> list[ScenarioSession]:
         del owner_kind
         del owner_id
+        del include_deleted
         return []
 
     async def find_by_definition(

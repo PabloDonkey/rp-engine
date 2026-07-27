@@ -5,6 +5,7 @@ from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import MemoryKey
+from rp_engine.core.prompts.templates import resolve_templates
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives, language_name
@@ -227,6 +228,22 @@ class ConversationBuilder:
                 ConversationMessage(role=ConversationRole.SYSTEM, content=world_info)
             )
 
+        # Who the player is, alongside the other static context (scenario, character,
+        # world) rather than with the directive block below — a persona is world state
+        # for the whole playthrough, not a preference the player can revise turn by turn.
+        user_persona = self._user_persona_text(payload.session)
+        if user_persona is not None:
+            messages.append(
+                ConversationMessage(
+                    role=ConversationRole.SYSTEM,
+                    content=self._resolve_templates(
+                        value=user_persona,
+                        payload=payload,
+                        character=character,
+                    ),
+                )
+            )
+
         if payload.scenario.rules:
             scenario_rules = self._resolve_templates(
                 value=self._scenario_rules_text(payload.scenario.rules),
@@ -321,6 +338,22 @@ class ConversationBuilder:
                 End naturally with an opportunity for the user to respond."""
 
     @staticmethod
+    def _user_persona_text(session: ScenarioSession) -> str | None:
+        """The player's own character. Rendered only when they wrote a description — the
+        name alone already reaches the model everywhere `{{user}}` is substituted, and a
+        header with nothing under it is noise."""
+        description = (session.user_persona_description or "").strip()
+        if not description or not session.has_persona:
+            return None
+        return (
+            "[User Persona]\n"
+            f"                The player is playing {session.user_persona_name}.\n"
+            f"                {description}\n"
+            "                Portray them consistently with this, but never write their "
+            "dialogue, thoughts, or decisions for them."
+        )
+
+    @staticmethod
     def _language_text(directives: SessionDirectives) -> str | None:
         """The player's language preference. `auto` means "no instruction at all", which
         leaves the model free to follow the scenario card and the player's own writing."""
@@ -412,11 +445,11 @@ class ConversationBuilder:
         payload: ScenarioConversationInput,
         character: Character | None,
     ) -> str:
-        character_name = character.name if character is not None else "the character"
-        world_name = payload.scenario.world.name if payload.scenario.world is not None else ""
-        return (
-            value.replace("{{char}}", character_name)
-            .replace("{{user}}", payload.user.display_name)
-            .replace("{{world}}", world_name)
-            .strip()
+        return resolve_templates(
+            value,
+            # The player's persona name wins over the transport display name once set:
+            # `{{user}}` is the character they are playing, not the account they play from.
+            user_name=payload.session.resolve_user_name(payload.user.display_name),
+            character_name=character.name if character is not None else "",
+            world_name=payload.scenario.world.name if payload.scenario.world is not None else "",
         )

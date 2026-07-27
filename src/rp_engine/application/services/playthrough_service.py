@@ -99,6 +99,73 @@ class PlaythroughService:
         owner_kind: SessionOwnerKind,
         owner_id: UUID,
     ) -> PlaythroughStart | None:
+        """Story reset: begin the same scenario again, keeping what the *player* chose.
+
+        Language, scenario rules and the user persona carry over — restarting a scene to
+        try a different approach is not a request to re-configure the story (ADR-025). A
+        pending one-turn director instruction is dropped: it was aimed at a reply that will
+        now never happen.
+        """
+        return await self._reset(
+            owner_kind=owner_kind, owner_id=owner_id, carry_player_state=True
+        )
+
+    async def clear(
+        self,
+        *,
+        owner_kind: SessionOwnerKind,
+        owner_id: UUID,
+    ) -> PlaythroughStart | None:
+        """Full reset: everything `restart` does, plus player-owned settings return to
+        defaults (ADR-025).
+
+        This is the only supported way to change a persona, which is otherwise immutable
+        for a session's life. It restarts the same scenario rather than dropping the player
+        to "no active playthrough".
+        """
+        return await self._reset(
+            owner_kind=owner_kind, owner_id=owner_id, carry_player_state=False
+        )
+
+    async def set_persona(
+        self,
+        *,
+        session_id: UUID,
+        name: str,
+        description: str = "",
+    ) -> PlaythroughStart | None:
+        """Attach the player's persona to a freshly-begun session and hand back its intro.
+
+        Returns None when the session is gone, superseded, or already carries a persona —
+        all three mean the reply arrived for a playthrough that has moved on.
+        """
+        session = await self._scenario_session_store.get_by_id(session_id)
+        if session is None or session.is_deleted:
+            return None
+        scenario = await self._scenario_definition_store.get_by_id(session.scenario_definition_id)
+        if scenario is None:
+            return None
+        try:
+            with_persona = session.with_persona(name=name, description=description)
+        except ValueError:
+            logger.info("Rejected a persona for a session that has one", extra={
+                "session_id": str(session_id)
+            })
+            return None
+        saved = await self._scenario_session_store.save(with_persona)
+        return PlaythroughStart(
+            session=saved, scenario=scenario, opening=self._opening_text(scenario)
+        )
+
+    async def _reset(
+        self,
+        *,
+        owner_kind: SessionOwnerKind,
+        owner_id: UUID,
+        carry_player_state: bool,
+    ) -> PlaythroughStart | None:
+        """The one reset path. `/restart` and `/clear` differ only in whether the player's
+        own state rides along, so they are a parameter here rather than two code paths."""
         active = await self.get_active(owner_kind=owner_kind, owner_id=owner_id)
         if active is None:
             return None
@@ -106,16 +173,22 @@ class PlaythroughService:
         if scenario is None:
             return None
 
-        # Wipe the current playthrough's history before beginning again. The player's
-        # persistent directives (language, scenario rules) carry over — restarting the
-        # story is not a request to re-configure it — but a pending one-turn director
-        # instruction was aimed at a reply that will now never happen, so it is dropped.
-        await self._conversation_store.clear(self._memory_key(active.id))
+        # Supersede rather than orphan. The outgoing session keeps its row and its whole
+        # transcript (both stay readable by id, which is what makes a bad playthrough
+        # debuggable), but `deleted_at` takes it out of every "resume this scenario"
+        # lookup — otherwise `/play <same id>` could resurrect the pre-reset story.
+        await self._scenario_session_store.save(active.mark_deleted())
         return await self._begin(
             owner_kind=owner_kind,
             owner_id=owner_id,
             scenario=scenario,
-            directives=active.directives.without_director_instruction(),
+            directives=(
+                active.directives.without_director_instruction() if carry_player_state else None
+            ),
+            user_persona_name=active.user_persona_name if carry_player_state else None,
+            user_persona_description=(
+                active.user_persona_description if carry_player_state else None
+            ),
         )
 
     async def resume_text(self, *, session: ScenarioSession) -> str | None:
@@ -156,6 +229,8 @@ class PlaythroughService:
         owner_id: UUID,
         scenario: ScenarioDefinition,
         directives: SessionDirectives | None = None,
+        user_persona_name: str | None = None,
+        user_persona_description: str | None = None,
     ) -> PlaythroughStart:
         participants = {
             role: character.id for role, character in scenario.characters.items()
@@ -166,6 +241,8 @@ class PlaythroughService:
                 user_id=owner_id,
                 active_participants=participants,
                 directives=directives,
+                user_persona_name=user_persona_name,
+                user_persona_description=user_persona_description,
             )
         else:
             session = ScenarioSession.create_for_group(
@@ -173,6 +250,8 @@ class PlaythroughService:
                 group_id=owner_id,
                 active_participants=participants,
                 directives=directives,
+                user_persona_name=user_persona_name,
+                user_persona_description=user_persona_description,
             )
         saved = await self._scenario_session_store.save(session)
         await self._scenario_session_store.set_active_for_owner(

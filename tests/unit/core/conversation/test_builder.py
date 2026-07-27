@@ -2,6 +2,7 @@ from uuid import UUID
 
 from rp_engine.core.character.character import Character
 from rp_engine.core.conversation.builder import ConversationBuilder, ScenarioConversationInput
+from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
@@ -51,6 +52,8 @@ def _session(
     active_participants: dict[str, str] | None = None,
     metadata: dict[str, str] | None = None,
     directives: SessionDirectives | None = None,
+    user_persona_name: str | None = None,
+    user_persona_description: str | None = None,
 ) -> ScenarioSession:
     return ScenarioSession(
         id=SESSION_ID,
@@ -60,6 +63,8 @@ def _session(
         active_participants=active_participants or {},
         metadata=metadata or {},
         directives=directives or SessionDirectives(),
+        user_persona_name=user_persona_name,
+        user_persona_description=user_persona_description,
     )
 
 
@@ -458,3 +463,87 @@ def test_continue_is_not_a_prefill() -> None:
     assert conversation.continue_final_message is False
     assert conversation.messages[-1].role == ConversationRole.USER
     assert "Continue the narration naturally" in conversation.messages[-1].content
+
+
+# --------------------------------------------------------------------------- #
+# User persona (S015)
+# --------------------------------------------------------------------------- #
+
+
+def _system_content(conversation: Conversation) -> str:
+    return "\n".join(
+        message.content
+        for message in conversation.messages
+        if message.role == ConversationRole.SYSTEM
+    )
+
+
+def _build(session: ScenarioSession, *, display_name: str = "Pablo") -> Conversation:
+    return ConversationBuilder().build(
+        ScenarioConversationInput(
+            scenario=_scenario(characters={"protagonist": _character()}),
+            session=session,
+            user=User(id=OWNER_ID, display_name=display_name),
+            memory_messages=[],
+            user_message="Hi {{char}}, it is {{user}}.",
+        )
+    )
+
+
+def test_builder_resolves_user_template_from_the_persona_name() -> None:
+    conversation = _build(_session(user_persona_name="Sera Vane"))
+
+    assert conversation.messages[-1].content == "Hi Belzebuth, it is Sera Vane."
+
+
+def test_builder_falls_back_to_the_display_name_without_a_persona() -> None:
+    conversation = _build(_session())
+
+    assert conversation.messages[-1].content == "Hi Belzebuth, it is Pablo."
+
+
+def test_builder_renders_the_user_persona_section() -> None:
+    conversation = _build(
+        _session(
+            user_persona_name="Sera Vane",
+            user_persona_description="A wary courier. Loves rain, hates crowds.",
+        )
+    )
+
+    content = _system_content(conversation)
+    assert "[User Persona]" in content
+    assert "The player is playing Sera Vane." in content
+    assert "A wary courier. Loves rain, hates crowds." in content
+
+
+def test_builder_omits_the_user_persona_section_without_a_description() -> None:
+    # The name still reaches the model through every `{{user}}`; an empty header would not
+    # add anything.
+    conversation = _build(_session(user_persona_name="Sera Vane"))
+
+    assert "[User Persona]" not in _system_content(conversation)
+
+
+def test_builder_omits_the_user_persona_section_when_no_persona_is_set() -> None:
+    assert "[User Persona]" not in _system_content(_build(_session()))
+
+
+def test_user_persona_section_precedes_the_directive_block() -> None:
+    """The persona is static world state, so it sits with the scenario/world context rather
+    than with the player's turn-by-turn directives."""
+    conversation = ConversationBuilder().build(
+        ScenarioConversationInput(
+            scenario=_scenario(characters={"protagonist": _character()}),
+            session=_session(
+                user_persona_name="Sera Vane",
+                user_persona_description="A wary courier.",
+                directives=SessionDirectives().with_language("fr"),
+            ),
+            user=User(id=OWNER_ID, display_name="Pablo"),
+            memory_messages=[],
+            user_message="Hello.",
+        )
+    )
+
+    content = _system_content(conversation)
+    assert content.index("[User Persona]") < content.index("[Language]")

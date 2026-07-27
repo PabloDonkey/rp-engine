@@ -53,24 +53,34 @@ class FakeScenarioSessionStore:
     async def get_by_id(self, session_id: UUID) -> ScenarioSession | None:
         return self.sessions.get(session_id)
 
-    async def find_by_owner(self, owner_kind: str, owner_id: UUID) -> list[ScenarioSession]:
+    async def find_by_owner(
+        self, owner_kind: str, owner_id: UUID, *, include_deleted: bool = False
+    ) -> list[ScenarioSession]:
         return [
             s
             for s in self.sessions.values()
-            if s.owner_kind == owner_kind and s.owner_id == owner_id
+            if s.owner_kind == owner_kind
+            and s.owner_id == owner_id
+            and (include_deleted or not s.is_deleted)
         ]
 
     async def find_by_definition(
         self, *, owner_kind: str, owner_id: UUID, scenario_definition_id: str
     ) -> ScenarioSession | None:
-        for s in self.sessions.values():
-            if (
-                s.owner_kind == owner_kind
+        # Mirrors the real store: superseded sessions are invisible here, newest first.
+        matches = sorted(
+            (
+                s
+                for s in self.sessions.values()
+                if s.owner_kind == owner_kind
                 and s.owner_id == owner_id
                 and s.scenario_definition_id == scenario_definition_id
-            ):
-                return s
-        return None
+                and not s.is_deleted
+            ),
+            key=lambda s: s.created_at,
+            reverse=True,
+        )
+        return matches[0] if matches else None
 
     async def save(self, session: ScenarioSession) -> ScenarioSession:
         self.sessions[session.id] = session
@@ -88,7 +98,8 @@ class FakeScenarioSessionStore:
         self, *, owner_kind: str, owner_id: UUID
     ) -> ScenarioSession | None:
         session_id = self.active.get((owner_kind, owner_id))
-        return self.sessions.get(session_id) if session_id else None
+        session = self.sessions.get(session_id) if session_id else None
+        return None if session is None or session.is_deleted else session
 
 
 class FakeConversationStore:
@@ -196,7 +207,7 @@ async def test_start_unknown_scenario_returns_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_restart_wipes_history_and_starts_fresh() -> None:
+async def test_restart_supersedes_the_old_session_and_starts_fresh() -> None:
     scenario = _scenario("vault", name="Vault", opening="You face the door.")
     service, session_store, conversation_store = _service(scenarios=[scenario])
 
@@ -212,8 +223,11 @@ async def test_restart_wipes_history_and_starts_fresh() -> None:
 
     assert second is not None
     assert second.session.id != first.session.id
-    # Old playthrough history was cleared.
-    assert _memory_key(first.session.id).value not in conversation_store.messages
+    # The old session is superseded rather than orphaned or purged: it keeps its whole
+    # transcript for debugging, but no longer counts as the player's session.
+    superseded = await session_store.get_by_id(first.session.id)
+    assert superseded is not None and superseded.is_deleted
+    assert len(conversation_store.messages[_memory_key(first.session.id).value]) == 2
     # New playthrough seeded with the opening only.
     new_history = conversation_store.messages[_memory_key(second.session.id).value]
     assert new_history == [
@@ -221,6 +235,30 @@ async def test_restart_wipes_history_and_starts_fresh() -> None:
     ]
     active = await session_store.get_active_for_owner(owner_kind="user", owner_id=USER_ID)
     assert active is not None and active.id == second.session.id
+
+
+@pytest.mark.asyncio
+async def test_replaying_a_scenario_after_a_restart_resumes_the_new_session() -> None:
+    """The session-resurrection regression: before superseded sessions were filtered out,
+    `find_by_definition` could hand back a *pre*-restart session and its old transcript."""
+    scenario = _scenario("vault", name="Vault", opening="You face the door.")
+    service, _, conversation_store = _service(scenarios=[scenario])
+
+    first = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+    assert first is not None
+    await conversation_store.save_message(
+        _memory_key(first.session.id),
+        ConversationMessage(role=ConversationRole.CHARACTER, content="The old story."),
+    )
+    second = await service.restart(owner_kind="user", owner_id=USER_ID)
+    assert second is not None
+
+    replayed = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+
+    assert replayed is not None
+    assert replayed.resumed is True
+    assert replayed.session.id == second.session.id
+    assert replayed.opening == "You face the door."
 
 
 @pytest.mark.asyncio
@@ -298,3 +336,117 @@ async def test_new_playthrough_starts_with_default_directives() -> None:
 
     assert started is not None
     assert started.session.directives == SessionDirectives()
+
+
+# --------------------------------------------------------------------------- #
+# Reset tiers (ADR-025) and persona capture (S015)
+# --------------------------------------------------------------------------- #
+
+
+async def _configured_playthrough(
+    service: PlaythroughService, session_store: FakeScenarioSessionStore
+) -> None:
+    """Give the active session everything a player can own: persona, language, rules and a
+    pending director note."""
+    active = await service.get_active(owner_kind="user", owner_id=USER_ID)
+    assert active is not None
+    directives, _ = SessionDirectives().with_language("fr").with_rule("No time skips.")
+    await session_store.save(
+        active.with_persona(name="Sera Vane", description="A wary courier.").with_directives(
+            directives.with_director_instruction("Raise the stakes.")
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_restart_carries_the_persona_forward() -> None:
+    scenario = _scenario("vault", name="Vault", opening="You face the door.")
+    service, session_store, _ = _service(scenarios=[scenario])
+    await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+    await _configured_playthrough(service, session_store)
+
+    restarted = await service.restart(owner_kind="user", owner_id=USER_ID)
+
+    assert restarted is not None
+    assert restarted.session.user_persona_name == "Sera Vane"
+    assert restarted.session.user_persona_description == "A wary courier."
+
+
+@pytest.mark.asyncio
+async def test_clear_resets_every_player_owned_setting() -> None:
+    scenario = _scenario("vault", name="Vault", opening="You face the door.")
+    service, session_store, _ = _service(scenarios=[scenario])
+    first = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+    assert first is not None
+    await _configured_playthrough(service, session_store)
+
+    cleared = await service.clear(owner_kind="user", owner_id=USER_ID)
+
+    assert cleared is not None
+    assert cleared.session.id != first.session.id
+    assert cleared.session.has_persona is False
+    assert cleared.session.directives == SessionDirectives()
+
+
+@pytest.mark.asyncio
+async def test_clear_supersedes_the_old_session_like_restart_does() -> None:
+    scenario = _scenario("vault", name="Vault", opening="You face the door.")
+    service, session_store, _ = _service(scenarios=[scenario])
+    first = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+    assert first is not None
+
+    await service.clear(owner_kind="user", owner_id=USER_ID)
+
+    superseded = await session_store.get_by_id(first.session.id)
+    assert superseded is not None and superseded.is_deleted
+    # ...and it is not resurrectable by replaying the same scenario.
+    replayed = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+    assert replayed is not None and replayed.session.id != first.session.id
+
+
+@pytest.mark.asyncio
+async def test_clear_without_active_returns_none() -> None:
+    service, _, _ = _service(scenarios=[])
+    assert await service.clear(owner_kind="user", owner_id=USER_ID) is None
+
+
+@pytest.mark.asyncio
+async def test_set_persona_attaches_the_persona_and_returns_the_intro() -> None:
+    scenario = _scenario("vault", name="Vault", opening="You face the door.")
+    service, session_store, _ = _service(scenarios=[scenario])
+    started = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+    assert started is not None
+
+    result = await service.set_persona(
+        session_id=started.session.id, name="Sera Vane", description="A wary courier."
+    )
+
+    assert result is not None
+    assert result.opening == "You face the door."
+    stored = await session_store.get_by_id(started.session.id)
+    assert stored is not None
+    assert stored.user_persona_name == "Sera Vane"
+    assert stored.user_persona_description == "A wary courier."
+
+
+@pytest.mark.asyncio
+async def test_set_persona_refuses_a_session_that_already_has_one() -> None:
+    scenario = _scenario("vault", name="Vault", opening="You face the door.")
+    service, _, _ = _service(scenarios=[scenario])
+    started = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+    assert started is not None
+    await service.set_persona(session_id=started.session.id, name="Sera Vane")
+
+    assert await service.set_persona(session_id=started.session.id, name="Someone Else") is None
+
+
+@pytest.mark.asyncio
+async def test_set_persona_refuses_a_superseded_session() -> None:
+    """A reply that arrives after the player restarted must not land on the dead session."""
+    scenario = _scenario("vault", name="Vault", opening="You face the door.")
+    service, _, _ = _service(scenarios=[scenario])
+    started = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+    assert started is not None
+    await service.clear(owner_kind="user", owner_id=USER_ID)
+
+    assert await service.set_persona(session_id=started.session.id, name="Sera Vane") is None

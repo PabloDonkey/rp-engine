@@ -1565,7 +1565,7 @@ problem dual persistence left unresolved.
 
 # ADR-025 — Session Reset Tiers: `/restart` Preserves Player Settings, `/clear` Resets Them
 
-**Status:** Proposed
+**Status:** Accepted — implemented 2026-07-27 (S015; the soft-delete half is S016)
 
 **Date:** 2026-07-27
 
@@ -1665,3 +1665,10 @@ and differ only in whether player-owned state is carried over.
   superseded session (`deleted_at IS NULL` becomes the definition of "the current session")
   rather than orphaning or purging it — keeping superseded playthroughs readable for debugging
   and analysis. S016 should land before or with `/clear`.
+
+  **Resolved 2026-07-27**, alongside `/clear`: `ScenarioSession` gained `updated_at` and
+  `deleted_at` (migration `20260727_0009`), both resets stamp the outgoing session, and
+  `find_by_definition` / `get_active_for_owner` / `find_by_owner` filter on
+  `deleted_at IS NULL`. A consequence worth stating: `/restart` no longer wipes the outgoing
+  session's transcript — superseding it keeps that history readable by id, which is the
+  point. What remains of S016 is the admin panel's presentation of superseded sessions.

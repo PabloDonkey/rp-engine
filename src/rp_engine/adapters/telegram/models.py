@@ -13,6 +13,8 @@ class TelegramCommand(StrEnum):
     CONTINUE = "/continue"
     RETRY = "/retry"
     RESTART = "/restart"
+    CLEAR = "/clear"
+    SKIP = "/skip"
     DIRECTOR = "/director"
     RULE = "/rule"
     RULES = "/rules"

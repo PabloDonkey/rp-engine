@@ -48,6 +48,7 @@ async def test_telegram_runtime_registers_command_menu_on_start() -> None:
         "continue",
         "retry",
         "restart",
+        "clear",
         "director",
         "rules",
         "rule",

@@ -17,11 +17,15 @@ class InMemoryScenarioSessionStore(ScenarioSessionStore):
     async def get_by_id(self, session_id: UUID) -> ScenarioSession | None:
         return self.sessions.get(session_id)
 
-    async def find_by_owner(self, owner_kind: str, owner_id: UUID) -> list[ScenarioSession]:
+    async def find_by_owner(
+        self, owner_kind: str, owner_id: UUID, *, include_deleted: bool = False
+    ) -> list[ScenarioSession]:
         return [
             session
             for session in self.sessions.values()
-            if session.owner_kind == owner_kind and session.owner_id == owner_id
+            if session.owner_kind == owner_kind
+            and session.owner_id == owner_id
+            and (include_deleted or not session.is_deleted)
         ]
 
     async def find_by_definition(

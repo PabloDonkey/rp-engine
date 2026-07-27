@@ -202,3 +202,75 @@ def test_scenario_session_has_unique_ids():
     )
 
     assert session1.id != session2.id
+
+
+def test_with_persona_sets_name_and_description(sample_user_id: UUID):
+    session = ScenarioSession.create_for_user(
+        scenario_definition_id="scenario_1", user_id=sample_user_id
+    )
+
+    updated = session.with_persona(name="  Sera Vane  ", description="  A wary courier.  ")
+
+    assert updated.user_persona_name == "Sera Vane"
+    assert updated.user_persona_description == "A wary courier."
+    assert updated.has_persona is True
+    # The original is untouched — the session is immutable like the rest of the domain.
+    assert session.has_persona is False
+
+
+def test_with_persona_stores_a_missing_description_as_none(sample_user_id: UUID):
+    session = ScenarioSession.create_for_user(
+        scenario_definition_id="scenario_1", user_id=sample_user_id
+    ).with_persona(name="Kes")
+
+    assert session.user_persona_description is None
+
+
+def test_with_persona_rejects_a_second_persona(sample_user_id: UUID):
+    """Immutable once set: the name is substituted into every prompt and into the
+    transcript already written, so changing it would rewrite history."""
+    session = ScenarioSession.create_for_user(
+        scenario_definition_id="scenario_1", user_id=sample_user_id
+    ).with_persona(name="Sera Vane")
+
+    with pytest.raises(ValueError, match="immutable"):
+        session.with_persona(name="Someone Else")
+
+
+def test_with_persona_rejects_a_blank_name(sample_user_id: UUID):
+    session = ScenarioSession.create_for_user(
+        scenario_definition_id="scenario_1", user_id=sample_user_id
+    )
+
+    with pytest.raises(ValueError):
+        session.with_persona(name="   ")
+
+
+def test_resolve_user_name_prefers_the_persona_over_the_fallback(sample_user_id: UUID):
+    session = ScenarioSession.create_for_user(
+        scenario_definition_id="scenario_1", user_id=sample_user_id
+    )
+
+    assert session.resolve_user_name("Pablo") == "Pablo"
+    assert session.with_persona(name="Sera Vane").resolve_user_name("Pablo") == "Sera Vane"
+
+
+def test_mark_deleted_stamps_a_live_session(sample_user_id: UUID):
+    session = ScenarioSession.create_for_user(
+        scenario_definition_id="scenario_1", user_id=sample_user_id
+    )
+    assert session.is_deleted is False
+
+    superseded = session.mark_deleted(at=datetime(2026, 7, 27, tzinfo=UTC))
+
+    assert superseded.is_deleted is True
+    assert superseded.deleted_at == datetime(2026, 7, 27, tzinfo=UTC)
+
+
+def test_mark_deleted_keeps_the_original_timestamp(sample_user_id: UUID):
+    # Idempotent, so re-superseding never falsifies *when* a session actually ended.
+    first = ScenarioSession.create_for_user(
+        scenario_definition_id="scenario_1", user_id=sample_user_id
+    ).mark_deleted(at=datetime(2026, 7, 27, tzinfo=UTC))
+
+    assert first.mark_deleted(at=datetime(2026, 7, 28, tzinfo=UTC)) is first

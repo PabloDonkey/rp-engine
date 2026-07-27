@@ -243,8 +243,12 @@ holds all evolving state.
 * `world_state` (`dict[str, Any]`) - runtime world variables.
 * `story_progress` (`dict[str, Any]`) - runtime narrative progress (e.g. current beat).
 * `created_at` (`datetime`) - creation timestamp.
+* `updated_at` (`datetime`) - last write of any kind; stamped by the store on every `save`.
+* `deleted_at` (`datetime | None`) - **null = the live session**; set when a reset supersedes it.
 * `metadata` (`dict[str, str]`) - optional session metadata.
 * `directives` (`SessionDirectives`) - the player's directives for this session.
+* `user_persona_name` (`str | None`) - the player's own character; what `{{user}}` resolves to.
+* `user_persona_description` (`str | None`) - free text rendered as the `[User Persona]` section.
 
 Session-scoped conversation persistence and memory keys are derived from
 `ScenarioSession.id`.
@@ -254,6 +258,29 @@ Definition vs runtime separation:
 * Immutable blueprint data lives on `ScenarioDefinition`.
 * Evolving state (participants, world state, story progress) lives on `ScenarioSession`.
 * Multiple sessions can run the same definition with independent state.
+
+### Lifecycle
+
+`deleted_at IS NULL` **is** the definition of "the current session" for an owner and
+scenario. `/restart` and `/clear` do not delete or orphan the outgoing session — they stamp
+it (`ScenarioSession.mark_deleted()`) and create its replacement. A superseded session keeps
+its row *and its whole transcript*, and stays readable by id, so a playthrough's full history
+remains available for debugging; it simply stops being found by `find_by_definition`,
+`get_active_for_owner`, and the default `find_by_owner`. Hard delete (the admin panel's
+"Delete session") is a separate, real purge.
+
+### User persona
+
+The player's own character, captured on a genuinely new session before the story intro is
+shown: the first line of their reply is the name, the rest is the description (`/skip` falls
+back to the transport display name with no description). It is **immutable once set** —
+`ScenarioSession.with_persona()` refuses a second one — because the name is substituted into
+every prompt and into the transcript already written, so changing it mid-story would rewrite
+history. `/clear` is the supported way to change it, by starting a new session.
+
+`{{user}}` resolves to `user_persona_name` when set and falls back to the transport display
+name otherwise (`ScenarioSession.resolve_user_name`). Group sessions are out of scope for
+now: they have no single player to ask, and their `{{user}}` stays the group's own name.
 
 ## SessionDirectives
 
@@ -276,21 +303,27 @@ then persistent preferences, then the highest-priority-but-transient director no
 dynamic context:
 
 ```
-Scenario → Character → World → Rules → Response Format
+Scenario → Character → World → User Persona → Rules → Response Format
   → Language → Scenario Rules → Director Instructions
   → Memory hint → Recent Conversation
 ```
+
+`User Persona` sits with the static context rather than the directive block: it is world
+state for the whole playthrough, not a preference the player revises turn by turn. It is
+rendered only when a description exists — the name alone already reaches the model through
+every `{{user}}`.
 
 Empty sections are omitted entirely — never rendered as a bare header. Director
 instructions are out-of-character: the model is told to follow them silently and never
 acknowledge them. `ChatService` clears the instruction after a *successful* generation, so
 a failed turn keeps it alive for the retry.
 
-Reset semantics follow **ADR-025**: `/restart` carries `language` and `rules` into the fresh
-session (dropping only the pending director instruction, which was aimed at a reply that will
-never happen), while `/clear` resets them to defaults. The rule for any future per-session
-field: player-owned settings survive `/restart` and are reset by `/clear`; story-produced
-state is reset by both.
+Reset semantics follow **ADR-025**: `/restart` carries `language`, `rules` and the user
+persona into the fresh session (dropping only the pending director instruction, which was
+aimed at a reply that will never happen), while `/clear` resets them to defaults and asks for
+a new persona. The rule for any future per-session field: player-owned settings survive
+`/restart` and are reset by `/clear`; story-produced state is reset by both. Both tiers share
+one code path (`PlaythroughService._reset`), differing only in a `carry_player_state` flag.
 
 ## Session (removed)
 

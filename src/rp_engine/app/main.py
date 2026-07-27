@@ -14,6 +14,7 @@ from rp_engine.adapters.telegram.adapter import (
 )
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.adapters.telegram.narrator_store import TelegramNarratorStore
+from rp_engine.adapters.telegram.pending_persona_store import TelegramPendingPersonaStore
 from rp_engine.app.lifespan import create_lifespan
 from rp_engine.app.runtime_state import RuntimeState
 from rp_engine.application.services.admin_service import AdminService
@@ -182,6 +183,7 @@ def build_container(settings: Settings) -> AppContainer:
             unauthorized_message=settings.telegram_unauthorized_message,
             message_max_length=settings.telegram_message_max_length,
             narrator_store=TelegramNarratorStore(),
+            pending_persona_store=TelegramPendingPersonaStore(),
         )
         telegram_application = create_telegram_application(
             token=settings.telegram_bot_token,

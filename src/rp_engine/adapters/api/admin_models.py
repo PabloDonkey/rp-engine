@@ -66,8 +66,14 @@ class AdminSessionResponse(BaseModel):
     owner_kind: str
     owner_id: UUID
     created_at: datetime
+    updated_at: datetime
+    # Set on a session superseded by /restart or /clear. It stays fully readable here —
+    # that is the point of superseding rather than deleting.
+    deleted_at: datetime | None = None
     message_count: int | None = None
     directives: AdminSessionDirectivesResponse
+    user_persona_name: str | None = None
+    user_persona_description: str | None = None
 
     @classmethod
     def from_session(
@@ -79,8 +85,12 @@ class AdminSessionResponse(BaseModel):
             owner_kind=session.owner_kind,
             owner_id=session.owner_id,
             created_at=session.created_at,
+            updated_at=session.updated_at,
+            deleted_at=session.deleted_at,
             message_count=message_count,
             directives=AdminSessionDirectivesResponse.from_directives(session.directives),
+            user_persona_name=session.user_persona_name,
+            user_persona_description=session.user_persona_description,
         )
 
 

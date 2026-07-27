@@ -12,9 +12,12 @@ from telegram import Update
 from rp_engine.adapters.telegram.adapter import (
     AUTHORIZED_START_NO_PLAY_MESSAGE,
     AUTHORIZED_START_RESUME_MESSAGE,
+    CLEAR_CONFIRM_MESSAGE,
     EMPTY_GENERATION_MESSAGE,
     GROUP_ADMIN_ONLY_MESSAGE,
     NO_ACTIVE_PLAYTHROUGH_MESSAGE,
+    PERSONA_NAME_REQUIRED_MESSAGE,
+    PERSONA_PROMPT_MESSAGE,
     TelegramAdapter,
 )
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
@@ -54,6 +57,7 @@ def _session(
     owner_kind: str = "user",
     owner_id: UUID = FIXED_USER_ID,
     directives: SessionDirectives | None = None,
+    user_persona_name: str | None = None,
 ) -> ScenarioSession:
     return ScenarioSession(
         id=FIXED_SESSION_ID,
@@ -62,7 +66,9 @@ def _session(
         owner_id=owner_id,
         active_participants={},
         created_at=datetime(2026, 7, 12, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 12, tzinfo=UTC),
         directives=directives or SessionDirectives(),
+        user_persona_name=user_persona_name,
     )
 
 
@@ -107,6 +113,10 @@ class FakePlaythroughService:
         self._resume = resume
         self.started: list[tuple[str, UUID, str]] = []
         self.restarted: list[tuple[str, UUID]] = []
+        self.cleared: list[tuple[str, UUID]] = []
+        self.personas: list[tuple[UUID, str, str]] = []
+        # Set by tests that need `start` to behave as "an existing session was found".
+        self.resume_started = False
 
     async def list_scenarios(
         self, *, caller_group_chat_id: str | None = None
@@ -134,7 +144,10 @@ class FakePlaythroughService:
         session = _session(owner_kind=owner_kind, owner_id=owner_id)
         self._active = session
         return PlaythroughStart(
-            session=session, scenario=scenario, opening=scenario.initial_context
+            session=session,
+            scenario=scenario,
+            opening=scenario.initial_context,
+            resumed=self.resume_started,
         )
 
     async def restart(self, *, owner_kind: str, owner_id: UUID) -> PlaythroughStart | None:
@@ -142,9 +155,38 @@ class FakePlaythroughService:
         if self._active is None:
             return None
         scenario = next(iter(self._known.values()))
-        session = _session(owner_kind=owner_kind, owner_id=owner_id)
+        # A restart carries the player's persona forward, which is why it never re-asks.
+        session = _session(
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            user_persona_name=self._active.user_persona_name,
+        )
+        self._active = session
         return PlaythroughStart(
             session=session, scenario=scenario, opening=scenario.initial_context
+        )
+
+    async def clear(self, *, owner_kind: str, owner_id: UUID) -> PlaythroughStart | None:
+        self.cleared.append((owner_kind, owner_id))
+        if self._active is None:
+            return None
+        scenario = next(iter(self._known.values()))
+        session = _session(owner_kind=owner_kind, owner_id=owner_id)
+        self._active = session
+        return PlaythroughStart(
+            session=session, scenario=scenario, opening=scenario.initial_context
+        )
+
+    async def set_persona(
+        self, *, session_id: UUID, name: str, description: str = ""
+    ) -> PlaythroughStart | None:
+        self.personas.append((session_id, name, description))
+        if self._active is None or self._active.id != session_id:
+            return None
+        scenario = next(iter(self._known.values()))
+        self._active = self._active.with_persona(name=name, description=description)
+        return PlaythroughStart(
+            session=self._active, scenario=scenario, opening=scenario.initial_context
         )
 
     async def resume_text(self, *, session: ScenarioSession) -> str | None:
@@ -237,6 +279,20 @@ class FakeNarratorStore:
         self.data.pop(chat_id, None)
 
 
+class FakePendingPersonaStore:
+    def __init__(self) -> None:
+        self.data: dict[tuple[str, str], UUID] = {}
+
+    async def get(self, *, owner_kind: str, owner_id: str) -> UUID | None:
+        return self.data.get((owner_kind, owner_id))
+
+    async def set(self, *, owner_kind: str, owner_id: str, session_id: UUID) -> None:
+        self.data[(owner_kind, owner_id)] = session_id
+
+    async def clear(self, *, owner_kind: str, owner_id: str) -> None:
+        self.data.pop((owner_kind, owner_id), None)
+
+
 @dataclass
 class FakeUpdate:
     effective_message: FakeMessage | None
@@ -274,6 +330,7 @@ def _make_adapter(
     beta_registry: TelegramBetaRegistry | None = None,
     narrator_store: FakeNarratorStore | None = None,
     session_directive_service: FakeSessionDirectiveService | None = None,
+    pending_persona_store: FakePendingPersonaStore | None = None,
 ) -> TelegramAdapter:
     return TelegramAdapter(
         chat_service=chat_service,
@@ -288,6 +345,7 @@ def _make_adapter(
         admin_telegram_user_id=admin_telegram_user_id,
         beta_registry=beta_registry,
         narrator_store=cast(Any, narrator_store or FakeNarratorStore()),
+        pending_persona_store=cast(Any, pending_persona_store or FakePendingPersonaStore()),
     )
 
 
@@ -491,7 +549,56 @@ async def test_scenarios_lists_catalog() -> None:
 
 
 @pytest.mark.asyncio
-async def test_play_starts_scenario_and_sends_opening() -> None:
+async def test_play_on_a_new_session_asks_for_a_persona_before_the_opening() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="You face the door.")
+    playthrough = FakePlaythroughService(known={"vault": scenario})
+    pending = FakePendingPersonaStore()
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization({"42"}),
+        pending_persona_store=pending,
+    )
+    update = _private_update("/play vault")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+    assert playthrough.started == [("user", FIXED_USER_ID, "vault")]
+    assert update.effective_message is not None
+    text = update.effective_message.responses[0]
+    assert text == PERSONA_PROMPT_MESSAGE
+    # The intro is withheld until the player has answered.
+    assert "You face the door." not in text
+    assert pending.data == {("user", str(FIXED_USER_ID)): FIXED_SESSION_ID}
+
+
+@pytest.mark.asyncio
+async def test_persona_reply_sets_name_and_description_then_sends_the_opening() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="You face the door.")
+    playthrough = FakePlaythroughService(known={"vault": scenario})
+    pending = FakePendingPersonaStore()
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization({"42"}),
+        pending_persona_store=pending,
+    )
+    await adapter.handle_message(cast(Update, _private_update("/play vault")), cast(Any, None))
+
+    reply = _private_update("Sera Vane\nA wary courier.\nLoves rain, hates crowds.")
+    await adapter.handle_message(cast(Update, reply), cast(Any, None))
+
+    assert playthrough.personas == [
+        (FIXED_SESSION_ID, "Sera Vane", "A wary courier.\nLoves rain, hates crowds.")
+    ]
+    assert reply.effective_message is not None
+    text = reply.effective_message.responses[0]
+    assert "You are playing Sera Vane." in text
+    assert "The Vault" in text and "You face the door." in text
+    # The pending state is consumed, so the next message is ordinary play.
+    assert pending.data == {}
+
+
+@pytest.mark.asyncio
+async def test_skip_uses_the_telegram_name_and_no_description() -> None:
     scenario = _scenario("vault", name="The Vault", opening="You face the door.")
     playthrough = FakePlaythroughService(known={"vault": scenario})
     adapter = _make_adapter(
@@ -499,12 +606,96 @@ async def test_play_starts_scenario_and_sends_opening() -> None:
         playthrough_service=playthrough,
         authorization=TelegramAuthorization({"42"}),
     )
+    await adapter.handle_message(cast(Update, _private_update("/play vault")), cast(Any, None))
+    await adapter.handle_message(cast(Update, _private_update("/skip")), cast(Any, None))
+
+    assert playthrough.personas == [(FIXED_SESSION_ID, "Test", "")]
+
+
+@pytest.mark.asyncio
+async def test_blank_persona_reply_asks_again_and_keeps_waiting() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="You face the door.")
+    playthrough = FakePlaythroughService(known={"vault": scenario})
+    pending = FakePendingPersonaStore()
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization({"42"}),
+        pending_persona_store=pending,
+    )
+    await adapter.handle_message(cast(Update, _private_update("/play vault")), cast(Any, None))
+
+    blank = _private_update("   ")
+    await adapter.handle_message(cast(Update, blank), cast(Any, None))
+
+    assert playthrough.personas == []
+    assert blank.effective_message is not None
+    assert blank.effective_message.responses == [PERSONA_NAME_REQUIRED_MESSAGE]
+    # Still waiting: a blank reply is not silently taken as a skip.
+    assert pending.data == {("user", str(FIXED_USER_ID)): FIXED_SESSION_ID}
+
+
+@pytest.mark.asyncio
+async def test_a_pending_persona_prompt_does_not_block_other_commands() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="You face the door.")
+    playthrough = FakePlaythroughService(known={"vault": scenario})
+    pending = FakePendingPersonaStore()
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization({"42"}),
+        pending_persona_store=pending,
+    )
+    await adapter.handle_message(cast(Update, _private_update("/play vault")), cast(Any, None))
+
+    scenarios = _private_update("/scenarios")
+    await adapter.handle_message(cast(Update, scenarios), cast(Any, None))
+
+    assert playthrough.personas == []
+    assert pending.data == {("user", str(FIXED_USER_ID)): FIXED_SESSION_ID}
+
+
+@pytest.mark.asyncio
+async def test_play_on_an_existing_session_does_not_ask_for_a_persona() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="You face the door.")
+    playthrough = FakePlaythroughService(known={"vault": scenario})
+    pending = FakePendingPersonaStore()
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization({"42"}),
+        pending_persona_store=pending,
+    )
+    # `resumed=True` is what `PlaythroughService.start` returns for an existing session.
+    playthrough.resume_started = True
     update = _private_update("/play vault")
     await adapter.handle_message(cast(Update, update), cast(Any, None))
-    assert playthrough.started == [("user", FIXED_USER_ID, "vault")]
+
     assert update.effective_message is not None
     text = update.effective_message.responses[0]
-    assert "The Vault" in text and "You face the door." in text
+    assert "Resuming: The Vault" in text
+    assert pending.data == {}
+
+
+@pytest.mark.asyncio
+async def test_group_play_never_asks_for_a_persona() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="You face the door.")
+    playthrough = FakePlaythroughService(known={"vault": scenario})
+    pending = FakePendingPersonaStore()
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization(set(), {"-555"}),
+        pending_persona_store=pending,
+    )
+    update = _group_update("/play vault")
+    await adapter.handle_message(
+        cast(Update, update), cast(Any, FakeContext(bot=FakeBot(member_status="administrator")))
+    )
+
+    assert update.effective_message is not None
+    assert "You face the door." in update.effective_message.responses[0]
+    assert pending.data == {}
 
 
 def test_format_start_labels_resumed_session_as_resuming() -> None:
@@ -513,8 +704,27 @@ def test_format_start_labels_resumed_session_as_resuming() -> None:
     start = PlaythroughStart(
         session=session, scenario=scenario, opening="The door creaks open.", resumed=True
     )
-    text = TelegramAdapter._format_start(start)
+    text = TelegramAdapter._format_start(start, user=User(id=FIXED_USER_ID, display_name="alice"))
     assert text == "Resuming: The Vault\n\nThe door creaks open."
+
+
+def test_format_start_resolves_the_persona_name_in_the_opening() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="x")
+    session = _session(user_persona_name="Sera Vane")
+    start = PlaythroughStart(
+        session=session, scenario=scenario, opening="The guard eyes {{user}} warily."
+    )
+    text = TelegramAdapter._format_start(start, user=User(id=FIXED_USER_ID, display_name="alice"))
+    assert text == "Starting: The Vault\n\nThe guard eyes Sera Vane warily."
+
+
+def test_format_start_falls_back_to_the_display_name_without_a_persona() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="x")
+    start = PlaythroughStart(
+        session=_session(), scenario=scenario, opening="The guard eyes {{user}} warily."
+    )
+    text = TelegramAdapter._format_start(start, user=User(id=FIXED_USER_ID, display_name="alice"))
+    assert text == "Starting: The Vault\n\nThe guard eyes alice warily."
 
 
 @pytest.mark.asyncio
@@ -596,6 +806,90 @@ async def test_restart_requires_active_and_restarts() -> None:
     assert restart_update.effective_message is not None
     assert "Restarted" in restart_update.effective_message.responses[0]
     assert "Fresh start." in restart_update.effective_message.responses[0]
+
+
+@pytest.mark.asyncio
+async def test_restart_does_not_re_prompt_for_a_persona() -> None:
+    """ADR-025: a restart carries the player's character forward, so it shows the intro
+    straight away — /clear is the tier that asks again."""
+    scenario = _scenario("vault", name="The Vault", opening="Fresh start.")
+    playthrough = FakePlaythroughService(
+        active=_session(user_persona_name="Sera Vane"), known={"vault": scenario}
+    )
+    pending = FakePendingPersonaStore()
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization({"42"}),
+        pending_persona_store=pending,
+    )
+    update = _private_update("/restart")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    assert update.effective_message is not None
+    assert "Restarted" in update.effective_message.responses[0]
+    assert pending.data == {}
+
+
+@pytest.mark.asyncio
+async def test_clear_confirms_before_resetting_anything() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="Fresh start.")
+    playthrough = FakePlaythroughService(active=_session(), known={"vault": scenario})
+    pending = FakePendingPersonaStore()
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization({"42"}),
+        pending_persona_store=pending,
+    )
+    update = _private_update("/clear")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    assert playthrough.cleared == []
+    assert pending.data == {}
+    assert update.effective_message is not None
+    assert update.effective_message.responses == [CLEAR_CONFIRM_MESSAGE]
+
+
+@pytest.mark.asyncio
+async def test_clear_confirm_resets_and_asks_for_a_new_persona() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="Fresh start.")
+    playthrough = FakePlaythroughService(
+        active=_session(user_persona_name="Sera Vane"), known={"vault": scenario}
+    )
+    pending = FakePendingPersonaStore()
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization({"42"}),
+        pending_persona_store=pending,
+    )
+    update = _private_update("/clear confirm")
+    await adapter.handle_message(cast(Update, update), cast(Any, None))
+
+    assert playthrough.cleared == [("user", FIXED_USER_ID)]
+    assert update.effective_message is not None
+    assert update.effective_message.responses == [PERSONA_PROMPT_MESSAGE]
+    assert pending.data == {("user", str(FIXED_USER_ID)): FIXED_SESSION_ID}
+
+
+@pytest.mark.asyncio
+async def test_clear_in_a_group_is_admin_only() -> None:
+    scenario = _scenario("vault", name="The Vault", opening="Fresh start.")
+    playthrough = FakePlaythroughService(active=_session(), known={"vault": scenario})
+    adapter = _make_adapter(
+        chat_service=AsyncMock(),
+        playthrough_service=playthrough,
+        authorization=TelegramAuthorization(set(), {"-555"}),
+    )
+    update = _group_update("/clear confirm")
+    await adapter.handle_message(
+        cast(Update, update), cast(Any, FakeContext(bot=FakeBot(member_status="member")))
+    )
+
+    assert playthrough.cleared == []
+    assert update.effective_message is not None
+    assert update.effective_message.responses == [GROUP_ADMIN_ONLY_MESSAGE]
 
 
 # --------------------------------------------------------------------------- #

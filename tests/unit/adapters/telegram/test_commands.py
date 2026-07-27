@@ -82,7 +82,7 @@ def test_parse_transport_message_for_scenarios_command() -> None:
 
 
 def test_removed_commands_are_unsupported() -> None:
-    for text in ("/character Belzebuth", "/regenerate", "/clear"):
+    for text in ("/character Belzebuth", "/regenerate", "/reset"):
         parsed = parse_transport_message(text)
         assert parsed.is_command is True
         assert parsed.command is None
@@ -103,8 +103,8 @@ def test_build_help_message_is_authorization_aware() -> None:
     assert "/continue" in authorized
     assert "/retry" in authorized
     assert "/restart" in authorized
+    assert "/clear" in authorized
     assert "/character" not in authorized
-    assert "/clear" not in authorized
     assert "/admin_beta_list" not in authorized
 
     unauthorized = build_help_message(authorized=False)

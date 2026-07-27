@@ -11,6 +11,8 @@ SUPPORTED_COMMANDS: dict[str, TelegramCommand] = {
     TelegramCommand.CONTINUE.value: TelegramCommand.CONTINUE,
     TelegramCommand.RETRY.value: TelegramCommand.RETRY,
     TelegramCommand.RESTART.value: TelegramCommand.RESTART,
+    TelegramCommand.CLEAR.value: TelegramCommand.CLEAR,
+    TelegramCommand.SKIP.value: TelegramCommand.SKIP,
     TelegramCommand.DIRECTOR.value: TelegramCommand.DIRECTOR,
     TelegramCommand.RULE.value: TelegramCommand.RULE,
     TelegramCommand.RULES.value: TelegramCommand.RULES,
@@ -27,7 +29,8 @@ TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
     ("play", "Start a scenario: /play <id>"),
     ("continue", "Let the story advance"),
     ("retry", "Regenerate the last narrator reply"),
-    ("restart", "Restart the current adventure"),
+    ("restart", "Restart the story, keeping your character and settings"),
+    ("clear", "Start over from scratch: new character, default settings"),
     ("director", "Steer the next reply: /director <instruction>"),
     ("rules", "List the rules you set for this adventure"),
     ("rule", "Manage rules: /rule add|remove"),
@@ -52,7 +55,10 @@ AUTHORIZED_HELP_MESSAGE = (
     "/play <id> - Start a scenario\n"
     "/continue - Let the story advance without input\n"
     "/retry - Regenerate the last narrator reply\n"
-    "/restart - Restart the current adventure from the beginning\n"
+    "/restart - Restart the story from the beginning, keeping your character, language "
+    "and rules\n"
+    "/clear - Start the same adventure completely over: pick a new character and reset "
+    "your language and rules to defaults\n"
     "/director <instruction> - Steer the next reply only (the story never mentions it)\n"
     "/rule add <rule> - Add a rule that applies for the rest of this adventure\n"
     "/rules - List your rules\n"
