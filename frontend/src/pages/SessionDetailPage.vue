@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import * as api from "@/api";
-import type { AdminTrace } from "@/api";
+import type { AdminMessage, AdminTrace } from "@/api";
 import { useAdminStore } from "@/stores/admin";
 
 const props = defineProps<{ sessionId: string }>();
@@ -62,6 +62,30 @@ async function onExport(): Promise<void> {
   link.download = `session-${props.sessionId}.json`;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+// Last-only deletion. A conversation is an ordered narrative: removing from the middle would
+// leave replies answering messages that no longer exist, so undoing a bad stretch means
+// peeling from the end. Turn 10 before turn 9.
+function isLastMessage(index: number): boolean {
+  return index === store.transcript.length - 1;
+}
+
+function messageLabel(message: AdminMessage): string {
+  const turn = message.metadata.turn;
+  return turn ? `turn ${turn}` : message.role;
+}
+
+async function onDeleteLastMessage(message: AdminMessage): Promise<void> {
+  if (
+    !confirm(
+      `Delete the last message (${messageLabel(message)}) and its generation traces? ` +
+        "This cannot be undone.",
+    )
+  ) {
+    return;
+  }
+  await store.deleteLastMessage(props.sessionId);
 }
 
 function tracesForTurn(turn: string | undefined): AdminTrace[] {
@@ -184,6 +208,16 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           >
             <span>{{ message.role }}</span>
             <span v-if="message.metadata.turn">&middot; Turn {{ message.metadata.turn }}</span>
+            <!-- Only the final message is deletable, which is what enforces the ordering. -->
+            <button
+              v-if="isLastMessage(index)"
+              type="button"
+              class="ml-auto rounded border border-red-600/40 px-2 py-0.5 text-[11px] font-medium normal-case text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+              title="Delete this message. Only the last message can be deleted."
+              @click="onDeleteLastMessage(message)"
+            >
+              Delete last
+            </button>
           </div>
           <div class="whitespace-pre-wrap">{{ message.content }}</div>
 

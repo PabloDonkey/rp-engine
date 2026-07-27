@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.app.main import create_app
-from rp_engine.application.services.admin_service import AdminUserSummary
+from rp_engine.application.services.admin_service import AdminDeletedMessage, AdminUserSummary
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
@@ -381,3 +381,51 @@ def test_import_session_succeeds(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()["id"] == str(SESSION_ID)
+
+
+def test_delete_last_message_returns_the_removed_message(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.delete_last_message = AsyncMock(
+        return_value=AdminDeletedMessage(
+            message=ConversationMessage(
+                role=ConversationRole.CHARACTER, content="bad turn", metadata={"turn": "10"}
+            ),
+            deleted_traces=2,
+        )
+    )
+
+    response = client.delete(f"/admin/sessions/{SESSION_ID}/messages/last")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "message": {
+            "role": "character",
+            "content": "bad turn",
+            "metadata": {"turn": "10"},
+        },
+        # A retried turn has more than one trace; all of them describe a turn that no
+        # longer exists.
+        "deleted_traces": 2,
+    }
+
+
+def test_delete_last_message_404_when_session_missing(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=None)
+    container.admin_service.delete_last_message = AsyncMock()
+
+    response = client.delete(f"/admin/sessions/{SESSION_ID}/messages/last")
+
+    assert response.status_code == 404
+    container.admin_service.delete_last_message.assert_not_awaited()
+
+
+def test_delete_last_message_404_when_conversation_is_empty(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.delete_last_message = AsyncMock(return_value=None)
+
+    response = client.delete(f"/admin/sessions/{SESSION_ID}/messages/last")
+
+    assert response.status_code == 404

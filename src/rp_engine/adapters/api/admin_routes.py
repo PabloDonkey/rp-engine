@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 
 from rp_engine.adapters.api.admin_models import (
+    AdminDeletedMessageResponse,
     AdminMessageResponse,
     AdminSessionResponse,
     AdminTraceResponse,
@@ -77,6 +78,20 @@ def create_admin_router(
             raise HTTPException(status_code=404, detail="Session not found")
         traces = await admin_service.get_session_traces(session_id)
         return [AdminTraceResponse(record=record) for record in traces]
+
+    @router.delete("/sessions/{session_id}/messages/last")
+    async def delete_last_message(session_id: UUID) -> AdminDeletedMessageResponse:
+        """Remove the newest message only, together with its generation traces.
+
+        Deleting turn N requires deleting N+1 first.
+        """
+        session = await admin_service.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        deleted = await admin_service.delete_last_message(session_id)
+        if deleted is None:
+            raise HTTPException(status_code=404, detail="Conversation is already empty")
+        return AdminDeletedMessageResponse.from_deleted(deleted)
 
     @router.delete("/sessions/{session_id}")
     async def delete_session(session_id: UUID) -> dict[str, str]:

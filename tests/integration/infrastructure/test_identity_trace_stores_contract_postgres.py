@@ -14,6 +14,7 @@ from rp_engine.infrastructure.postgres import (
     create_session_factory,
 )
 from tests.unit.infrastructure.contracts.generation_trace_store_contract import (
+    assert_generation_trace_delete_for_turn_contract,
     assert_generation_trace_store_contract,
 )
 from tests.unit.infrastructure.contracts.group_identity_store_contract import (
@@ -88,3 +89,4 @@ async def test_postgres_generation_trace_store_contract(
     postgres_generation_trace_store: PostgresGenerationTraceStore,
 ) -> None:
     await assert_generation_trace_store_contract(postgres_generation_trace_store)
+    await assert_generation_trace_delete_for_turn_contract(postgres_generation_trace_store)

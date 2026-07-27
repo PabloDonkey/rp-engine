@@ -30,6 +30,11 @@ const AdminMessageSchema = z.object({
   metadata: z.record(z.string(), z.string()),
 });
 
+const DeletedMessageSchema = z.object({
+  message: AdminMessageSchema,
+  deleted_traces: z.number(),
+});
+
 const AdminTraceSchema = z.object({
   record: z.record(z.string(), z.unknown()),
 });
@@ -56,6 +61,7 @@ export type AdminUser = z.infer<typeof AdminUserSchema>;
 export type AdminSession = z.infer<typeof AdminSessionSchema>;
 export type AdminMessage = z.infer<typeof AdminMessageSchema>;
 export type AdminTrace = z.infer<typeof AdminTraceSchema>;
+export type DeletedMessage = z.infer<typeof DeletedMessageSchema>;
 export type ScenarioSummary = z.infer<typeof ScenarioSummarySchema>;
 export type ScenarioPayload = z.infer<typeof ScenarioPayloadSchema>;
 export type SessionExport = z.infer<typeof SessionExportSchema>;
@@ -114,6 +120,14 @@ export function deleteSession(sessionId: string): Promise<void> {
   return request(`/sessions/${sessionId}`, z.object({ status: z.string() }), {
     method: "DELETE",
   }).then(() => undefined);
+}
+
+// Last-only: deleting turn N requires deleting N+1 first. The server enforces it; the UI
+// only offers the button on the final message.
+export function deleteLastMessage(sessionId: string): Promise<DeletedMessage> {
+  return request(`/sessions/${sessionId}/messages/last`, DeletedMessageSchema, {
+    method: "DELETE",
+  });
 }
 
 export function blockUser(userId: string): Promise<AdminUser> {

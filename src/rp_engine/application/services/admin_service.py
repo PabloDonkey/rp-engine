@@ -1,7 +1,8 @@
+import logging
 from dataclasses import dataclass
 from uuid import UUID
 
-from rp_engine.core.conversation.message import ConversationMessage
+from rp_engine.core.conversation.message import TURN_METADATA_KEY, ConversationMessage
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.ports.conversation_store import ConversationStore
 from rp_engine.core.ports.generation_trace_store import GenerationTraceStore
@@ -12,11 +13,21 @@ from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.user import User
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class AdminUserSummary:
     user: User
     session_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class AdminDeletedMessage:
+    """What a delete removed: the message, and how many of its traces went with it."""
+
+    message: ConversationMessage
+    deleted_traces: int
 
 
 class AdminService:
@@ -64,6 +75,39 @@ class AdminService:
 
     async def get_session_traces(self, session_id: UUID) -> list[dict[str, object]]:
         return await self._generation_trace_store.list_for_session(session_id)
+
+    async def delete_last_message(self, session_id: UUID) -> AdminDeletedMessage | None:
+        """Peel the newest message off a session's transcript, with its generation traces.
+
+        Last-only by design: a conversation is an ordered narrative, so removing from the
+        middle would leave replies answering messages that no longer exist. Undoing a bad
+        stretch means deleting repeatedly from the end.
+
+        Traces go with the message. They describe how a turn was produced, so once that turn
+        is gone they describe nothing — and leaving them would let the admin panel attach a
+        stale trace to whatever message inherits the turn number. Only narrator replies carry
+        a turn, so a deleted player message removes no traces.
+        """
+        memory_key = ConversationIdentity.for_session(str(session_id)).to_memory_key()
+        deleted = await self._conversation_store.delete_last_message(memory_key)
+        if deleted is None:
+            return None
+
+        deleted_traces = 0
+        raw_turn = deleted.metadata.get(TURN_METADATA_KEY)
+        if raw_turn is not None:
+            try:
+                turn = int(raw_turn)
+            except ValueError:
+                logger.warning(
+                    "Deleted message has a non-numeric turn; leaving its traces in place",
+                    extra={"session_id": str(session_id), "turn": raw_turn},
+                )
+            else:
+                deleted_traces = await self._generation_trace_store.delete_for_turn(
+                    session_id=session_id, turn=turn
+                )
+        return AdminDeletedMessage(message=deleted, deleted_traces=deleted_traces)
 
     async def delete_session(self, session_id: UUID) -> None:
         memory_key = ConversationIdentity.for_session(str(session_id)).to_memory_key()

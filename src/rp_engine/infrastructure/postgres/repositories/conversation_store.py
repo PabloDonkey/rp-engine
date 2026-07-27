@@ -41,21 +41,47 @@ class PostgresConversationStore(ConversationStore):
 
         messages: list[ConversationMessage] = []
         for row in rows:
-            metadata: dict[str, str] = {}
-            if isinstance(row.payload_metadata, dict):
-                metadata = {
-                    key: value
-                    for key, value in row.payload_metadata.items()
-                    if isinstance(key, str) and isinstance(value, str)
-                }
-            converted = ConversationBuilder.message_from_storage(
-                role=row.role,
-                content=row.content,
-                metadata=metadata,
-            )
+            converted = self._to_domain(row)
             if converted is not None:
                 messages.append(converted)
         return messages
+
+    @staticmethod
+    def _to_domain(record: ConversationMessageRecord) -> ConversationMessage | None:
+        metadata: dict[str, str] = {}
+        if isinstance(record.payload_metadata, dict):
+            metadata = {
+                key: value
+                for key, value in record.payload_metadata.items()
+                if isinstance(key, str) and isinstance(value, str)
+            }
+        return ConversationBuilder.message_from_storage(
+            role=record.role,
+            content=record.content,
+            metadata=metadata,
+        )
+
+    async def delete_last_message(
+        self, memory_key: MemoryKey
+    ) -> ConversationMessage | None:
+        statement = (
+            select(ConversationMessageRecord)
+            .where(ConversationMessageRecord.memory_key == memory_key.value)
+            # Mirrors `load_messages`' ordering exactly, so "the last message" means the same
+            # row the transcript shows last.
+            .order_by(
+                ConversationMessageRecord.created_at.desc(),
+                ConversationMessageRecord.id.desc(),
+            )
+            .limit(1)
+        )
+        async with session_scope(self._session_factory) as db_session:
+            record = await db_session.scalar(statement)
+            if record is None:
+                return None
+            message = self._to_domain(record)
+            await db_session.delete(record)
+        return message
 
     async def clear(self, memory_key: MemoryKey) -> None:
         statement = delete(ConversationMessageRecord).where(

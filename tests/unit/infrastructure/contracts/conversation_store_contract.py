@@ -43,3 +43,27 @@ async def assert_conversation_store_contract(store: ConversationStore) -> None:
     assert await store.load_messages(other_key) == [
         ConversationMessage(role=ConversationRole.CHARACTER, content="untouched", metadata={})
     ]
+
+    # delete_last_message() peels exactly one message off the end, newest first, and hands it
+    # back so a caller can act on what was removed (e.g. re-arm a director note).
+    peel_key = MemoryKey("session_peel")
+    first = ConversationMessage(role=ConversationRole.USER, content="one", metadata={})
+    second = ConversationMessage(role=ConversationRole.CHARACTER, content="two", metadata={})
+    third = ConversationMessage(
+        role=ConversationRole.CHARACTER, content="three", metadata={"turn": "2"}
+    )
+    for message in (first, second, third):
+        await store.save_message(peel_key, message)
+
+    assert await store.delete_last_message(peel_key) == third
+    assert await store.load_messages(peel_key) == [first, second]
+    assert await store.delete_last_message(peel_key) == second
+    assert await store.delete_last_message(peel_key) == first
+    # Empty is not an error — it reports that there was nothing left to remove.
+    assert await store.delete_last_message(peel_key) is None
+    assert await store.load_messages(peel_key) == []
+
+    # It is scoped to its own key, like clear().
+    assert await store.load_messages(other_key) == [
+        ConversationMessage(role=ConversationRole.CHARACTER, content="untouched", metadata={})
+    ]

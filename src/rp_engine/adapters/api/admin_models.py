@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from rp_engine.application.services.admin_service import AdminUserSummary
+from rp_engine.application.services.admin_service import AdminDeletedMessage, AdminUserSummary
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
@@ -92,6 +92,20 @@ class AdminMessageResponse(BaseModel):
     @classmethod
     def from_message(cls, message: ConversationMessage) -> "AdminMessageResponse":
         return cls(role=message.role.value, content=message.content, metadata=message.metadata)
+
+
+class AdminDeletedMessageResponse(BaseModel):
+    """A delete reports what it removed — traces go with the message they describe."""
+
+    message: AdminMessageResponse
+    deleted_traces: int
+
+    @classmethod
+    def from_deleted(cls, deleted: AdminDeletedMessage) -> "AdminDeletedMessageResponse":
+        return cls(
+            message=AdminMessageResponse.from_message(deleted.message),
+            deleted_traces=deleted.deleted_traces,
+        )
 
 
 class AdminTraceResponse(BaseModel):

@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import * as api from "@/api";
 import type {
   AdminMessage,
+  DeletedMessage,
   AdminSession,
   AdminTrace,
   AdminUser,
@@ -90,6 +91,15 @@ export const useAdminStore = defineStore("admin", {
     async deleteSession(sessionId: string): Promise<void> {
       await api.deleteSession(sessionId);
       this.sessions = this.sessions.filter((s) => s.id !== sessionId);
+    },
+
+    async deleteLastMessage(sessionId: string): Promise<DeletedMessage> {
+      const deleted = await api.deleteLastMessage(sessionId);
+      this.transcript = this.transcript.slice(0, -1);
+      // The turn's traces were deleted server-side with it; refetch so the per-message debug
+      // filters cannot attach a stale trace to whatever is now last.
+      this.traces = await api.getSessionTraces(sessionId);
+      return deleted;
     },
 
     async toggleBlock(user: AdminUser): Promise<void> {
