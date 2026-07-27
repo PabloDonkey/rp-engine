@@ -85,6 +85,9 @@ async function onDeleteLastMessage(message: AdminMessage): Promise<void> {
   ) {
     return;
   }
+  // Indices shift when a message goes, so open debug filters would otherwise follow the
+  // index onto a different message.
+  for (const key of Object.keys(filterState)) delete filterState[Number(key)];
   await store.deleteLastMessage(props.sessionId);
 }
 
@@ -187,6 +190,13 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           </dd>
         </div>
       </dl>
+
+      <p
+        v-if="store.actionError"
+        class="mb-3 rounded-md border border-red-600/40 bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-400"
+      >
+        {{ store.actionError }}
+      </p>
 
       <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
         Transcript

@@ -32,6 +32,10 @@ export const useAdminStore = defineStore("admin", {
 
     session: null as AdminSession | null,
     transcript: [] as AdminMessage[],
+    // Errors from an action (delete, block…) rather than from loading the page. Kept apart
+    // from sessionError because that one *replaces* the view: a failed delete must leave the
+    // transcript on screen, not blank it.
+    actionError: null as string | null,
     traces: [] as AdminTrace[],
     sessionLoading: false,
     sessionError: null as string | null,
@@ -72,6 +76,9 @@ export const useAdminStore = defineStore("admin", {
     async fetchSessionDetail(sessionId: string): Promise<void> {
       this.sessionLoading = true;
       this.sessionError = null;
+      // Loading a session clears any stale action error, so one failed delete does not
+      // follow the user onto a different session.
+      this.actionError = null;
       try {
         const [session, transcript, traces] = await Promise.all([
           api.getSession(sessionId),
@@ -93,13 +100,20 @@ export const useAdminStore = defineStore("admin", {
       this.sessions = this.sessions.filter((s) => s.id !== sessionId);
     },
 
-    async deleteLastMessage(sessionId: string): Promise<DeletedMessage> {
-      const deleted = await api.deleteLastMessage(sessionId);
-      this.transcript = this.transcript.slice(0, -1);
-      // The turn's traces were deleted server-side with it; refetch so the per-message debug
-      // filters cannot attach a stale trace to whatever is now last.
-      this.traces = await api.getSessionTraces(sessionId);
-      return deleted;
+    async deleteLastMessage(sessionId: string): Promise<DeletedMessage | null> {
+      this.actionError = null;
+      try {
+        const deleted = await api.deleteLastMessage(sessionId);
+        // Re-read rather than splicing locally: the server is the authority on what is left,
+        // and this also refreshes message_count and the traces that were deleted with the
+        // turn. A silently-diverging local copy is what makes a failed delete look like a
+        // delete that "did not refresh".
+        await this.fetchSessionDetail(sessionId);
+        return deleted;
+      } catch (error) {
+        this.actionError = error instanceof Error ? error.message : String(error);
+        return null;
+      }
     },
 
     async toggleBlock(user: AdminUser): Promise<void> {
