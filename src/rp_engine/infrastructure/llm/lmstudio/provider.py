@@ -152,29 +152,43 @@ class LMStudioProvider(LLMProvider):
 
     @staticmethod
     def _extract_finish_reason(result: Any) -> FinishReason:
-        finish_reason = getattr(result, "finish_reason", None)
-        if isinstance(finish_reason, str):
-            return _normalize_finish_reason(finish_reason)
+        """Read why generation stopped.
 
-        stop_reason = getattr(result, "stop_reason", None)
-        if isinstance(stop_reason, str):
-            return _normalize_finish_reason(stop_reason)
-
+        The LM Studio SDK carries this as `result.stats.stop_reason` — `PredictionResult`
+        itself has no finish/stop attribute. The other probes are tolerated fallbacks for
+        shape drift, not the expected path.
+        """
         stats = getattr(result, "stats", None)
         if stats is not None:
+            stats_stop = getattr(stats, "stop_reason", None)
+            if isinstance(stats_stop, str):
+                return _normalize_finish_reason(stats_stop)
             stats_finish = getattr(stats, "finish_reason", None)
             if isinstance(stats_finish, str):
                 return _normalize_finish_reason(stats_finish)
+
+        for attribute in ("finish_reason", "stop_reason"):
+            candidate = getattr(result, attribute, None)
+            if isinstance(candidate, str):
+                return _normalize_finish_reason(candidate)
 
         return "unknown"
 
     @staticmethod
     def _extract_usage_metadata(stats: Any) -> dict[str, str]:
+        """Token counts from `LlmPredictionStats`.
+
+        The `*_count` names are the SDK's; the bare names are tolerated fallbacks.
+        """
         usage: dict[str, str] = {}
         candidates = {
-            "usage_prompt_tokens": ("prompt_tokens", "input_tokens"),
-            "usage_completion_tokens": ("completion_tokens", "output_tokens"),
-            "usage_total_tokens": ("total_tokens",),
+            "usage_prompt_tokens": ("prompt_tokens_count", "prompt_tokens", "input_tokens"),
+            "usage_completion_tokens": (
+                "predicted_tokens_count",
+                "completion_tokens",
+                "output_tokens",
+            ),
+            "usage_total_tokens": ("total_tokens_count", "total_tokens"),
         }
         for metadata_key, attrs in candidates.items():
             value: object | None = None
@@ -211,12 +225,42 @@ def _normalize_api_host(api_host: str) -> str:
     return api_host
 
 
+# LM Studio's own stop-reason vocabulary (`LlmPredictionStopReason`), lowercased, plus the
+# OpenAI-style aliases other backends use. `modelUnloaded` and `failed` are deliberately
+# absent: they are anomalies, and reporting them as a clean stop would be a lie.
+_STOP_REASONS = frozenset(
+    {
+        "eosfound",
+        "stopstringfound",
+        "userstopped",
+        "toolcalls",
+        # Non-LM-Studio aliases.
+        "stop",
+        "eos",
+        "completed",
+        "end_turn",
+    }
+)
+_LENGTH_REASONS = frozenset(
+    {
+        "maxpredictedtokensreached",
+        # Non-LM-Studio aliases.
+        "length",
+        "max_tokens",
+        "token_limit",
+    }
+)
+_CONTEXT_LENGTH_REASONS = frozenset({"contextlengthreached"})
+
+
 def _normalize_finish_reason(reason: str) -> FinishReason:
     normalized = reason.strip().lower()
-    if normalized in {"stop", "eos", "completed", "end_turn"}:
+    if normalized in _STOP_REASONS:
         return "stop"
-    if normalized in {"length", "max_tokens", "token_limit"}:
+    if normalized in _LENGTH_REASONS:
         return "length"
+    if normalized in _CONTEXT_LENGTH_REASONS:
+        return "context_length"
     return "unknown"
 
 

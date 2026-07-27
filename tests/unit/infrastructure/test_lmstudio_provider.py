@@ -360,3 +360,157 @@ async def test_lmstudio_provider_maps_connectivity_errors_to_connection_error(
             Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="hi")]),
             GenerationSettings(max_tokens=128, temperature=0.3),
         )
+
+
+class FakeStats:
+    """Mirrors the shape the LM Studio SDK actually returns.
+
+    `PredictionResult` has no finish/stop attribute of its own — the reason lives on
+    `result.stats.stop_reason`, and token counts on `*_count` fields. The older `FakeResult`
+    above encodes the OpenAI-ish shape the provider used to (wrongly) assume, so it is kept
+    only to prove those fallbacks still work.
+    """
+
+    def __init__(
+        self,
+        *,
+        stop_reason: str,
+        prompt_tokens_count: int | None = None,
+        predicted_tokens_count: int | None = None,
+        total_tokens_count: int | None = None,
+    ) -> None:
+        self.stop_reason = stop_reason
+        self.prompt_tokens_count = prompt_tokens_count
+        self.predicted_tokens_count = predicted_tokens_count
+        self.total_tokens_count = total_tokens_count
+
+
+class FakeSdkResult:
+    """A result with no finish_reason/stop_reason of its own, exactly like the real SDK."""
+
+    def __init__(self, content: str, stats: FakeStats) -> None:
+        self.content = content
+        self.stats = stats
+
+    def __str__(self) -> str:
+        return self.content
+
+
+async def _generate_with(monkeypatch: pytest.MonkeyPatch, result: object) -> Any:
+    monkeypatch.setattr(
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.configure_default_client",
+        lambda _: None,
+    )
+    monkeypatch.setattr(
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.llm",
+        lambda _: FakeModel(lambda _chat: result),
+    )
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.Chat", FakeChat)
+    monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
+
+    provider = LMStudioProvider(
+        model_name="model-a",
+        api_host="127.0.0.1:1234",
+        max_tokens=600,
+        temperature=0.7,
+    )
+    return await provider.generate(
+        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="hi")]),
+        GenerationSettings(max_tokens=128),
+    )
+
+
+@pytest.mark.parametrize(
+    ("stop_reason", "expected"),
+    [
+        ("eosFound", "stop"),
+        ("stopStringFound", "stop"),
+        ("userStopped", "stop"),
+        ("toolCalls", "stop"),
+        ("maxPredictedTokensReached", "length"),
+        ("contextLengthReached", "context_length"),
+        ("modelUnloaded", "unknown"),
+        ("failed", "unknown"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_finish_reason_is_read_from_stats_stop_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    stop_reason: str,
+    expected: str,
+) -> None:
+    result = await _generate_with(
+        monkeypatch, FakeSdkResult("partial", FakeStats(stop_reason=stop_reason))
+    )
+
+    assert result.finish_reason == expected
+
+
+@pytest.mark.asyncio
+async def test_truncated_reply_reports_length_so_continue_can_resume_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The regression that mattered: `ChatService._should_resume` gates on `length`, so a
+    missed `maxPredictedTokensReached` silently disables truncation recovery in `/continue`."""
+    result = await _generate_with(
+        monkeypatch,
+        FakeSdkResult("cut off mid-sen", FakeStats(stop_reason="maxPredictedTokensReached")),
+    )
+
+    assert result.finish_reason == "length"
+
+
+@pytest.mark.asyncio
+async def test_usage_is_read_from_the_sdk_count_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = await _generate_with(
+        monkeypatch,
+        FakeSdkResult(
+            "done",
+            FakeStats(
+                stop_reason="eosFound",
+                prompt_tokens_count=1200,
+                predicted_tokens_count=340,
+                total_tokens_count=1540,
+            ),
+        ),
+    )
+
+    assert result.metadata["usage_prompt_tokens"] == "1200"
+    assert result.metadata["usage_completion_tokens"] == "340"
+    assert result.metadata["usage_total_tokens"] == "1540"
+
+
+@pytest.mark.asyncio
+async def test_absent_token_counts_are_omitted_rather_than_zeroed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = await _generate_with(
+        monkeypatch, FakeSdkResult("done", FakeStats(stop_reason="eosFound"))
+    )
+
+    assert "usage_prompt_tokens" not in result.metadata
+    assert "usage_total_tokens" not in result.metadata
+
+
+def test_every_sdk_stop_reason_is_classified() -> None:
+    """Drift guard. The provider's alias tables were originally written against an
+    OpenAI-shaped API and silently matched nothing, which is what made every turn report
+    `unknown`. If LM Studio adds or renames a stop reason, fail here rather than in prod.
+    """
+    import typing
+
+    import lmstudio._sdk_models as sdk_models
+
+    from rp_engine.infrastructure.llm.lmstudio.provider import _normalize_finish_reason
+
+    sdk_reasons = set(typing.get_args(sdk_models.LlmPredictionStopReason))
+    assert sdk_reasons, "could not read LlmPredictionStopReason from the SDK"
+
+    # `modelUnloaded`/`failed` are intentionally unclassified — they are anomalies.
+    expected_unknown = {"modelUnloaded", "failed"}
+    for reason in sdk_reasons - expected_unknown:
+        assert _normalize_finish_reason(reason) != "unknown", (
+            f"LM Studio stop reason {reason!r} is not classified by the provider"
+        )
