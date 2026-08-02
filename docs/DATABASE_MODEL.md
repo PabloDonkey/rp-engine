@@ -159,8 +159,15 @@ Columns:
 
 Composite index on (owner_kind, owner_id, scenario_definition_id) backs session reuse
 lookup on character selection. Since migration `20260727_0009` it is **partial**
-(`WHERE deleted_at IS NULL`): every hot lookup asks for the owner's live session, so
-superseded rows are dead weight in the index.
+(`WHERE deleted_at IS NULL`) — every hot lookup asks for the owner's live session — and
+since `20260727_0010` it is also **unique**. "One live session per owner per scenario" is
+the invariant `find_by_definition` has always assumed; with duplicates it is a coin flip
+between the current story and a retired one, which is what made `/play <id>` resurrect
+pre-restart transcripts. `PlaythroughService` cannot legitimately create a second live row
+(`_begin` runs only when none exists, or after `_reset` has stamped the outgoing session),
+so the constraint costs nothing and converts a silent wrong answer into a loud failure.
+`ScenarioTransferService.import_session` is the one caller that can hit it in normal use;
+the admin route turns that into a 409.
 
 `directives` is one JSONB document rather than three columns: the three controls are read
 and written as a unit (the `SessionDirectives` value object), never queried individually,
@@ -179,6 +186,15 @@ name means "no persona", i.e. today's transport-display-name behavior.
 `UPDATE` statements. `save()` therefore returns the *stamped* session, not its argument.
 Migration `20260727_0009` backfilled existing rows from `created_at`, not `now()`, so the
 column never claims a historical session was touched on migration day.
+
+**`20260727_0010` backfilled `deleted_at`.** 0009 left it NULL everywhere, which was right
+for the column and wrong for the data: every session orphaned by a pre-S016 `/restart` was
+still "live", so the resurrection bug survived in the rows even though the code was fixed.
+0010 keeps exactly one session live per (owner, scenario) — chosen by the owner's active
+pointer, then the most recent conversation message, then creation time — and stamps the rest
+with their own last sign of life rather than `now()`. Its `downgrade` restores the
+non-unique index but deliberately leaves the backfill in place: un-stamping would have to
+un-stamp genuinely superseded sessions too.
 
 ### active_scenario_sessions
 

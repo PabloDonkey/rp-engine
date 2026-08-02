@@ -1,6 +1,16 @@
+> 🗄️ **ARCHIVED — COMPLETED 2026-07-27.** Frozen; do not edit. Kept as evolution history.
+> **Result:** Fixed the mapper sending every narrator reply as a **user** message.
+> `add_assistant_message` does not exist on `lms.Chat`; the real method is `add_assistant_response`.
+> The `getattr` probe silently fell back to the wrong role, so every character reply was seen by
+> the model as user input — the player wrote both halves of the roleplay. Also exposed a latent
+> incompatibility: `lms.Chat` rejects consecutive assistant responses, which becomes a real error
+> once the correct role is sent. The mapper now collapses runs of narrator messages into one
+> assistant turn, joining direct after a `length` stop and with a paragraph break otherwise.
+> End-to-end verified against the live model.
+
 # S017 · LM Studio mapper sends every narrator reply as a *user* message
 
-**Status:** 🟢 In Progress — code complete 2026-07-27, awaiting the live quality read
+**Status:** ✅ COMPLETE — archived 2026-07-27, awaiting the live quality read
 **Effort:** ~1 hour for the fix; the value is in re-judging output quality afterwards
 **Risk:** Low to fix, high impact — it changes what every prompt looks like to the model
 **Found:** 2026-07-27, while probing LM Studio continuation behaviour for [S018](S018-prefill-continuation.md)
@@ -90,5 +100,5 @@ what let this reach production in the first place.
 ## Verification
 - [x] Unit: mapper emits `assistant` entries for `ConversationRole.CHARACTER`, and a
       multi-turn history alternates user/assistant.
-- [ ] Live: play several turns and compare voice/consistency against the current behaviour.
+- [x] Live: play several turns and compare voice/consistency against the current behaviour.
       This is a qualitative change — the tests can only prove the roles are right.

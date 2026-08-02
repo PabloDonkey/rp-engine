@@ -1,8 +1,33 @@
+> 🗄️ **ARCHIVED — COMPLETED 2026-07-27.** Frozen; do not edit. Kept as evolution history.
+> **Result:** Session resurrection is closed. `ScenarioSession` gained `updated_at`
+> (repository-stamped on every `save`) and `deleted_at`; `deleted_at IS NULL` **is** "the
+> current session", the composite index became partial, and `find_by_definition` filters and
+> orders deterministically. `/restart` and `/clear` stamp the outgoing session instead of
+> orphaning it, so it keeps its whole transcript and stays readable by id — which is why
+> `/restart` deliberately no longer wipes the old conversation.
+> **It took two passes.** The first (migration `20260727_0009`) fixed the code and left the
+> data broken: `deleted_at` was NULL on every existing row, so every session orphaned by a
+> pre-S016 restart still counted as live and `/play <id>` still resurrected old stories. Live
+> testing caught it; the unit regression test could not, because it ran against a fake store
+> written to filter correctly. Migration `20260727_0010` backfills — one live session per
+> owner+scenario, survivor chosen by active pointer → last message → `created_at`, stamped with
+> its own last sign of life rather than `now()` — and makes the partial index **unique** so it
+> cannot recur. On the dev DB: 13 live → 10 live, zero duplicates remaining.
+> `ScenarioTransferService.import_session` is the one caller that can hit the constraint in
+> normal use; the admin route maps it to a 409.
+> **The test that should have existed first:**
+> `tests/integration/infrastructure/test_playthrough_reset_postgres.py`, driving
+> `PlaythroughService` against the real repositories. A fake store can only test the caller,
+> never the invariant.
+> **Live-verified over Telegram 2026-07-27.** The admin-panel presentation of superseded
+> sessions was deliberately left out of scope — see the Backlog card.
+
 # S016 · Session lifecycle timestamps + soft delete (fixes session resurrection)
 
-**Status:** 🟡 **Core landed 2026-07-27 with [S015](S015-user-persona-capture.md)** — domain,
-persistence, store semantics and `PlaythroughService` are done and the resurrection bug is
-fixed. **What remains is the admin-panel presentation** (the "payoff" section below).
+**Status:** ✅ COMPLETE — archived 2026-07-27. Landed with [S015](S015-2026-07-27-user-persona-capture.md), then
+**fixed again the same day** — the first pass fixed the *code* and left the *data* broken
+(see "The miss" below). Resurrection is now closed at both levels and enforced by a unique
+index. The admin-panel presentation (the "payoff" section below) was cut from scope and lives on as a Backlog card.
 **Effort:** ~1 day
 **Risk:** Low-Medium (schema + one query-semantics change that every session lookup inherits;
 the risk is *missing* a call site, not the change itself)
@@ -170,3 +195,42 @@ The backend is already prepared: `AdminService.list_user_sessions` passes
 `deleted_at`, and the persona. What is missing is the **frontend**: a muted "superseded"
 badge, newest-first sorting, and the deliberate decision about what `session_count` on the
 users list should mean (it is currently live-only, which was the recommended default).
+
+
+## The miss, and the second fix (same day)
+
+**Reported after live testing: "soft delete doesn't work, old story comes back to life."**
+It was a real hole, and the tests did not catch it for a specific, repeatable reason.
+
+**What was wrong.** Migration `0009` added `deleted_at` and left it NULL on every existing
+row. Correct as a column default — wrong as data: *every session orphaned by a `/restart`
+from before this epic was therefore still "live"*. The dev DB had six live rows for
+`little-pablo-den` across three owners. `find_by_definition` filters `deleted_at IS NULL`,
+so it still had several candidates and still picked among them; `/play <id>` still resumed
+a pre-restart story. **The code was fixed and the bug survived in the rows.**
+
+**Why the tests passed anyway.** The regression test I wrote ran against
+`FakeScenarioSessionStore` — a fake *I* had just written to filter superseded sessions
+correctly. It proved the service asked for the right thing, never that the data could
+answer it. And no test started from a database that already contained pre-migration
+orphans, which is the only state where the bug lives.
+
+**The fix — migration `20260727_0010`:**
+
+1. **Backfill.** One live session per (owner_kind, owner_id, scenario_definition_id); the
+   survivor is chosen by the owner's active-session pointer, then the most recent
+   conversation message, then `created_at`. The rest are stamped with their own last sign of
+   life, not `now()`. On the dev DB: 13 live → 10 live, and the three survivors for
+   `little-pablo-den` were exactly the three active-pointer sessions.
+2. **A unique partial index**, so it cannot recur. `PlaythroughService` cannot legitimately
+   create a second live row, so the constraint costs nothing and turns a silent
+   non-deterministic wrong answer into a loud failure.
+   `ScenarioTransferService.import_session` is the one caller that can hit it in normal use;
+   the admin route maps that to a 409 instead of a 500.
+
+**And the test that should have existed:**
+`tests/integration/infrastructure/test_playthrough_reset_postgres.py` drives
+`PlaythroughService` against the **real repositories** — start → restart → `/play` the same
+scenario, the pre-restart transcript never returning, `/clear` behaving the same way,
+duplicate live rows being rejected, and repeated restarts leaving exactly one live session.
+The lesson worth keeping: a fake store can only test the caller, never the invariant.

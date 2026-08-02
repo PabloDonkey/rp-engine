@@ -1,12 +1,31 @@
+> 🗄️ **ARCHIVED — COMPLETED 2026-07-27.** Frozen; do not edit. Kept as evolution history.
+> **Result:** `/play` on a genuinely new user session asks who the player is before showing the
+> story intro — first line of the reply is the name, the rest is the description, `/skip` falls
+> back to the Telegram name — and the persona is immutable for that session's life. `{{user}}`
+> resolves to it everywhere, including the opening line the player reads: template resolution
+> moved to `core/prompts/templates.py` and is now shared by `ConversationBuilder` and the
+> Telegram adapter, with storage staying raw so one stored opening renders correctly before and
+> after the persona is set. New `[User Persona]` prompt section (rendered only with a
+> description), a `TelegramPendingPersonaStore` mirroring the narrator store, and two new
+> `scenario_sessions` columns (migration `20260727_0009`).
+> **Implements ADR-025's reset tiers:** `/restart` carries persona + language + rules forward
+> and no longer re-prompts; new `/clear confirm` resets them and asks again — one shared
+> `_reset(carry_player_state=...)` path. Groups keep today's behavior for the persona; `/clear`
+> is group-admin-only like `/restart`.
+> **Amended ADR-025** with the operator exception: the admin panel can set *and* edit a
+> session's persona (`PUT /admin/sessions/{id}/persona`, `ScenarioSession.override_persona`),
+> while `with_persona`'s set-once guard keeps protecting every path a player can reach.
+> **Live-verified over Telegram 2026-07-27**, together with S016's second fix.
+
 # S015 · User persona capture on new session start (+ `/clear`)
 
-**Status:** 🟢 **Code complete 2026-07-27** — 410 passed (1 pre-existing unrelated
+**Status:** ✅ COMPLETE — archived 2026-07-27. Code complete 2026-07-27 — 410 passed (1 pre-existing unrelated
 failure: `test_scenario_catalog_dirs_defaults_to_data_catalog`, an env leak), `mypy src/`
 clean, `ruff check` clean. Migration `20260727_0009` verified reversible against the real
 dev Postgres with 13 live sessions (all 13 backfilled `updated_at = created_at`; partial
 index created; downgrade restores the plain index and the data). **Landed together with the
 core of [S016](S016-session-soft-delete-lifecycle.md)** — see the note under *Reset tiers*.
-**Remaining: the live Telegram read.**
+**Live-verified over Telegram 2026-07-27.**
 **Effort:** ~2 days (was ~1-2; `/clear` adds roughly half a day)
 **Risk:** Medium — new pending-input mechanism in the Telegram adapter (nothing like it exists
 today), a new immutable persisted field + Alembic migration, and a `{{user}}` resolution change.

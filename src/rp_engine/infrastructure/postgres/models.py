@@ -97,13 +97,17 @@ class ScenarioSessionRecord(Base):
     user_persona_description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
-        # Partial: every hot lookup asks for the owner's *live* session, so superseded
-        # rows are dead weight in the index.
+        # Partial *and unique*: every hot lookup asks for the owner's live session, so
+        # superseded rows are dead weight in the index — and "one live session per owner
+        # per scenario" is the invariant the engine has always assumed. Enforcing it here
+        # is what stops a duplicate from silently turning `find_by_definition` into a
+        # coin flip between the current story and a retired one.
         Index(
             "ix_scenario_sessions_owner_definition",
             "owner_kind",
             "owner_id",
             "scenario_definition_id",
+            unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
     )

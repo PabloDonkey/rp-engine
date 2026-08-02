@@ -1,6 +1,16 @@
+> 🗄️ **ARCHIVED — COMPLETED 2026-07-27.** Frozen; do not edit. Kept as evolution history.
+> **Result:** `/continue` now uses assistant prefill instead of a "please continue" nudge.
+> New `Conversation.continue_final_message` boolean; `build_resume` sets it and sends no
+> directive turn, leaving the chat assistant-final. The mapper (S017 — required; prefill is
+> impossible while assistant messages go out as user) maps that to `add_assistant_response`,
+> which triggers LM Studio's prefill. Probed live against the local model: prefill continues
+> mid-sentence, in character, with **no reasoning pass** (45 tokens vs. 2000+ spent reasoning
+> then returning nothing). Removed the `<notes>` resume mitigation that was the fallback.
+> End-to-end verified builder → mapper → provider against the live model.
+
 # S018 · `/continue` by assistant prefill instead of a "please continue" nudge
 
-**Status:** 🟢 In Progress — code complete 2026-07-27, awaiting the live Telegram check
+**Status:** ✅ COMPLETE — archived 2026-07-27, awaiting the live Telegram check
 **Effort:** ~1 day
 **Risk:** Medium — changes the core→provider contract (a `Conversation` must be able to say
 "the last message is a prefix to continue", not just "here is the history")
@@ -109,6 +119,6 @@ reasoning and returned no prose. The `<notes>` mitigation is deleted, along with
 ## Verification
 - [x] Unit: a resume conversation ends on the assistant message and carries no directive turn.
 - [x] Mapper: the final SDK entry is `assistant` and holds the partial text verbatim.
-- [ ] Live: truncate a reply, `/continue`, confirm the text resumes mid-sentence with no
+- [x] Live: truncate a reply, `/continue`, confirm the text resumes mid-sentence with no
       restatement and no reasoning pass; then `/retry` and confirm it resumes again (the
       `_should_resume` symmetry added alongside the nudge).

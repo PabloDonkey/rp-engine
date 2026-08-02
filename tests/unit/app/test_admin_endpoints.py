@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.app.main import create_app
@@ -232,6 +233,21 @@ def test_set_session_persona_400_on_a_blank_name(tmp_path: Path) -> None:
 
     assert response.status_code == 400
     container.admin_service.set_session_persona.assert_not_awaited()
+
+
+def test_import_session_409_when_the_owner_already_has_a_live_one(tmp_path: Path) -> None:
+    """Migration 0010 makes one live session per owner+scenario a database invariant, so a
+    conflicting import is refused rather than recreating the duplicate that made `/play`
+    resurrect old stories."""
+    client, container = _setup(tmp_path)
+    container.scenario_transfer_service.import_session = AsyncMock(
+        side_effect=IntegrityError("stmt", {}, Exception("duplicate key"))
+    )
+
+    response = client.post("/admin/sessions/import", json={"session": {}, "transcript": []})
+
+    assert response.status_code == 409
+    assert "already has a live session" in response.json()["detail"]
 
 
 def test_set_session_persona_404_when_the_session_is_missing(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
+from sqlalchemy.exc import IntegrityError
 
 from rp_engine.adapters.api.admin_models import (
     AdminDeletedMessageResponse,
@@ -229,7 +230,20 @@ def create_admin_router(
 
     @router.post("/sessions/import")
     async def import_session(payload: dict[str, Any]) -> AdminSessionResponse:
-        session = await scenario_transfer_service.import_session(payload)
+        try:
+            session = await scenario_transfer_service.import_session(payload)
+        except IntegrityError as exc:
+            # One live session per owner per scenario is a database invariant since
+            # migration 0010. Importing a *different* session into a slot the owner is
+            # already playing would recreate exactly the duplicate that made `/play`
+            # resurrect old stories, so it is refused rather than silently allowed.
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This owner already has a live session for that scenario. Restart or "
+                    "clear it first, or import the session under a different owner."
+                ),
+            ) from exc
         if session is None:
             raise HTTPException(status_code=422, detail="Session payload failed validation")
         return AdminSessionResponse.from_session(session)

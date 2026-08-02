@@ -1,7 +1,15 @@
+> 🗄️ **ARCHIVED — COMPLETED 2026-07-27.** Frozen; do not edit. Kept as evolution history.
+> **Result:** Backend admin API for session/conversation debugging and limited write actions:
+> `GET /admin/users`, `/users/{id}/sessions`, `/sessions/{id}`, `/sessions/{id}/transcript`,
+> `/sessions/{id}/traces`, `DELETE /admin/sessions/{id}`, `POST /admin/users/{id}/block|unblock`.
+> Frontend Vue SPA (Vite + Pinia + vue-router) with users → sessions → transcript + traces,
+> mobile-first, live-verified end-to-end against real Postgres. No auth (Tailscale trust).
+> Deferred: static-file serving from FastAPI (dev-server only), browser eyeball check.
+
 # S009 · Admin panel — session/conversation debugging (MVP)
 
-**Status:** 🟢 In Progress — backend + core frontend flow built and live-verified against real
-Postgres data (2026-07-24); remaining work is polish/hardening, see notes below.
+**Status:** ✅ COMPLETE — archived 2026-07-27. Backend + core frontend built and live-verified against real
+Postgres data (2026-07-24); live-verified 2026-07-24, see notes below.
 **Effort:** ~2-3 days
 **Risk:** Medium (new adapter surface + first frontend in the repo; write actions touch live user state)
 
