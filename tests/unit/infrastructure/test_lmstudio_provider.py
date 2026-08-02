@@ -6,7 +6,7 @@ import pytest
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
-from rp_engine.core.llm.errors import LLMConnectionError
+from rp_engine.core.llm.errors import LLMConnectionError, LLMGenerationError
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.infrastructure.llm.lmstudio.provider import LMStudioProvider
 
@@ -24,26 +24,55 @@ class FakeChat:
     # `add_assistant_message` is what let the role bug hide in production.
     def add_assistant_response(self, message: str) -> None:
         if self.assistant_messages and not self.user_messages:
-            raise RuntimeError(
-                "Multi-part or consecutive assistant responses are not supported."
-            )
+            raise RuntimeError("Multi-part or consecutive assistant responses are not supported.")
         self.assistant_messages.append(message)
 
 
+class FakeFragment:
+    """Mirrors `LlmPredictionFragment` — LM Studio classifies each streamed piece itself."""
+
+    def __init__(self, content: str, reasoning_type: str = "none") -> None:
+        self.content = content
+        self.reasoning_type = reasoning_type
+
+
 class FakeModel:
-    def __init__(self, responder: Callable[[FakeChat], Any]) -> None:
+    def __init__(
+        self,
+        responder: Callable[[FakeChat], Any],
+        *,
+        fragments: list[FakeFragment] | None = None,
+    ) -> None:
         self._responder = responder
+        self._fragments = fragments or []
         self.last_config: Any = None
 
-    def respond(self, chat: FakeChat, *, config: Any = None) -> Any:
+    def respond(
+        self,
+        chat: FakeChat,
+        *,
+        config: Any = None,
+        on_prediction_fragment: Callable[[FakeFragment], Any] | None = None,
+    ) -> Any:
         self.last_config = config
+        if on_prediction_fragment is not None:
+            for fragment in self._fragments:
+                on_prediction_fragment(fragment)
         return self._responder(chat)
 
 
 class FakeResult:
-    def __init__(self, content: str, *, finish_reason: str = "stop") -> None:
+    def __init__(
+        self,
+        content: str,
+        *,
+        finish_reason: str = "stop",
+        structured: bool = False,
+    ) -> None:
         self.content = content
         self.finish_reason = finish_reason
+        # `PredictionResult.structured` — set when the value the caller wants is `parsed`.
+        self.structured = structured
 
     def __str__(self) -> str:
         return self.content
@@ -258,9 +287,11 @@ async def test_lmstudio_provider_maps_length_finish_reason(
 
 
 @pytest.mark.asyncio
-async def test_lmstudio_provider_captures_thinking_when_reasoning_marker_present(
+async def test_lmstudio_provider_falls_back_to_marker_split_without_fragments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """No fragment classification arrived, so the internal marker is all there is to go on."""
+
     def fake_configure_default_client(_: str) -> None:
         return None
 
@@ -328,6 +359,177 @@ async def test_lmstudio_provider_thinking_is_none_without_reasoning_marker(
 
     assert result.content == "plain reply, no reasoning marker"
     assert result.thinking is None
+
+
+def _install_fake_sdk(monkeypatch: pytest.MonkeyPatch, model: FakeModel) -> None:
+    monkeypatch.setattr(
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.configure_default_client",
+        lambda _host: None,
+    )
+    monkeypatch.setattr(
+        "rp_engine.infrastructure.llm.lmstudio.provider.lms.llm", lambda _name: model
+    )
+    monkeypatch.setattr("rp_engine.infrastructure.llm.lmstudio.provider.lms.Chat", FakeChat)
+    monkeypatch.setattr(LMStudioProvider, "_configured_api_host", None)
+
+
+def _provider(**overrides: Any) -> LMStudioProvider:
+    kwargs: dict[str, Any] = {
+        "model_name": "model-a",
+        "api_host": "127.0.0.1:1234",
+        "max_tokens": 600,
+        "temperature": 0.7,
+    }
+    kwargs.update(overrides)
+    return LMStudioProvider(**kwargs)
+
+
+async def _generate(provider: LMStudioProvider) -> Any:
+    return await provider.generate(
+        Conversation(messages=[ConversationMessage(role=ConversationRole.USER, content="hi")]),
+        GenerationSettings(max_tokens=128, temperature=0.3),
+    )
+
+
+@pytest.mark.asyncio
+async def test_reasoning_is_separated_by_fragment_classification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The supported signal, and the only one that survives the internal marker changing."""
+    model = FakeModel(
+        lambda _chat: FakeResult("whatever the assembled result says"),
+        fragments=[
+            FakeFragment("<think>", reasoning_type="reasoningStartTag"),
+            FakeFragment("The user seems to want ", reasoning_type="reasoning"),
+            FakeFragment("a dramatic reveal.", reasoning_type="reasoning"),
+            FakeFragment("</think>", reasoning_type="reasoningEndTag"),
+            FakeFragment("Final reply "),
+            FakeFragment("text."),
+        ],
+    )
+    _install_fake_sdk(monkeypatch, model)
+
+    result = await _generate(_provider())
+
+    assert result.content == "Final reply text."
+    assert result.thinking == "The user seems to want a dramatic reveal."
+
+
+@pytest.mark.asyncio
+async def test_fragments_without_reasoning_leave_thinking_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = FakeModel(
+        lambda _chat: FakeResult("ignored"),
+        fragments=[FakeFragment("A plain "), FakeFragment("reply.")],
+    )
+    _install_fake_sdk(monkeypatch, model)
+
+    result = await _generate(_provider())
+
+    assert result.content == "A plain reply."
+    assert result.thinking is None
+
+
+@pytest.mark.asyncio
+async def test_reasoning_only_output_is_not_delivered_as_prose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model that thinks until its cap yields no prose — never reasoning-as-story.
+
+    Empty content is what `ChatService._require_content` turns into an
+    `EmptyGenerationError`, leaving the conversation untouched for a retry.
+    """
+    model = FakeModel(
+        lambda _chat: FakeResult("Thinking about how to open the scene."),
+        fragments=[FakeFragment("Thinking about how to open the scene.", "reasoning")],
+    )
+    _install_fake_sdk(monkeypatch, model)
+
+    result = await _generate(_provider())
+
+    assert result.content == ""
+    assert result.thinking == "Thinking about how to open the scene."
+
+
+@pytest.mark.asyncio
+async def test_marker_inside_prose_fragments_falls_back_to_marker_split(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LM Studio did not recognize this model's delimiters and called it all prose."""
+    unparsed = (
+        "She hesitates, then decides.__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_"
+        "REASONING_END_c0ffee__She steps into the light."
+    )
+    model = FakeModel(
+        lambda _chat: FakeResult(unparsed),
+        fragments=[FakeFragment(unparsed)],
+    )
+    _install_fake_sdk(monkeypatch, model)
+
+    result = await _generate(_provider())
+
+    assert result.content == "She steps into the light."
+    assert result.thinking == "She hesitates, then decides."
+
+
+@pytest.mark.asyncio
+async def test_unsplittable_reasoning_marker_is_refused_rather_than_delivered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The marker drifted out of the shape the fallback knows — fail loudly, not silently."""
+    model = FakeModel(
+        lambda _chat: FakeResult(
+            "Plotting the reveal.__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_V2__"
+            "She steps into the light."
+        )
+    )
+    _install_fake_sdk(monkeypatch, model)
+
+    with pytest.raises(LLMGenerationError, match="could not be separated"):
+        await _generate(_provider())
+
+
+@pytest.mark.asyncio
+async def test_structured_results_keep_their_assembled_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fragments do not reassemble a structured prediction's value."""
+    result_obj = FakeResult('{"beat": "reveal"}', structured=True)
+    model = FakeModel(lambda _chat: result_obj, fragments=[FakeFragment("partial fragment")])
+    _install_fake_sdk(monkeypatch, model)
+
+    result = await _generate(_provider())
+
+    assert result.content == '{"beat": "reveal"}'
+
+
+@pytest.mark.asyncio
+async def test_reasoning_delimiters_are_declared_only_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = FakeModel(lambda _chat: FakeResult("ok"))
+    _install_fake_sdk(monkeypatch, model)
+
+    await _generate(_provider())
+    assert model.last_config.reasoning_parsing is None
+
+    await _generate(_provider(reasoning_start_tag="<think>", reasoning_end_tag="</think>"))
+    declared = model.last_config.reasoning_parsing
+    assert declared is not None
+    assert declared.enabled is True
+    assert declared.start_string == "<think>"
+    assert declared.end_string == "</think>"
+
+
+def test_half_configured_reasoning_delimiters_are_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A start with no end would parse reasoning that never terminates."""
+    _install_fake_sdk(monkeypatch, FakeModel(lambda _chat: FakeResult("ok")))
+
+    with pytest.raises(ValueError, match="pair"):
+        _provider(reasoning_start_tag="<think>")
 
 
 @pytest.mark.asyncio

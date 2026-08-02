@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     lmstudio_repeat_penalty: float = Field(default=1.1, ge=0.0)
     lmstudio_top_p_sampling: float = Field(default=0.95, ge=0.0, le=1.0)
     lmstudio_min_p_sampling: float = Field(default=0.05, ge=0.0, le=1.0)
+    # Reasoning delimiters, declared only for models LM Studio does not already parse
+    # reasoning for. Empty (the default) keeps its per-model defaults; both must be set
+    # together. See infrastructure/llm/lmstudio/provider.py.
+    lmstudio_reasoning_start_tag: str = ""
+    lmstudio_reasoning_end_tag: str = ""
 
     debug_status_enabled: bool = False
     debug_generation_trace: Literal["off", "errors", "all"] = "off"

@@ -7,8 +7,18 @@ from urllib.parse import urlparse
 
 import lmstudio as lms
 
+# Neither name is re-exported from the `lmstudio` package root in SDK 1.5.0, but both are
+# part of the documented wire schema (`llm.prediction.reasoning.parsing` and the
+# `reasoningType` fragment field) — the generated model module is where they live.
+from lmstudio._sdk_models import LlmPredictionFragment, LlmReasoningParsing
+
 from rp_engine.core.conversation.conversation import Conversation
-from rp_engine.core.llm.errors import LLMConnectionError, LLMGenerationError, LLMTimeoutError
+from rp_engine.core.llm.errors import (
+    LLMConnectionError,
+    LLMError,
+    LLMGenerationError,
+    LLMTimeoutError,
+)
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import FinishReason, LLMResponse
 from rp_engine.core.ports import LLMProvider
@@ -32,6 +42,8 @@ class LMStudioProvider(LLMProvider):
         repeat_penalty: float = 1.1,
         top_p_sampling: float = 0.95,
         min_p_sampling: float = 0.05,
+        reasoning_start_tag: str = "",
+        reasoning_end_tag: str = "",
         conversation_mapper: LMStudioConversationMapper | None = None,
     ) -> None:
         self._model_name = model_name
@@ -42,6 +54,7 @@ class LMStudioProvider(LLMProvider):
         self._repeat_penalty = repeat_penalty
         self._top_p_sampling = top_p_sampling
         self._min_p_sampling = min_p_sampling
+        self._reasoning_parsing = _build_reasoning_parsing(reasoning_start_tag, reasoning_end_tag)
         self._conversation_mapper = (
             conversation_mapper if conversation_mapper is not None else LMStudioConversationMapper()
         )
@@ -55,6 +68,10 @@ class LMStudioProvider(LLMProvider):
         logger.info("LLM request sent", extra={"model_name": self._model_name})
         try:
             return await asyncio.to_thread(self._generate_sync, conversation, settings)
+        except LLMError:
+            # Already diagnosed (e.g. reasoning that could not be separated). Re-raise as-is
+            # so the catch-all below does not flatten it into a generic failure.
+            raise
         except TimeoutError as exc:
             logger.exception("LLM timeout", extra={"model_name": self._model_name})
             raise LLMTimeoutError("Timed out waiting for LM Studio response.") from exc
@@ -90,22 +107,16 @@ class LMStudioProvider(LLMProvider):
                 extra={"model_name": self._model_name},
             )
         config = self._get_config(settings)
-        logger.info(
-            f"LmStudio.generate with config {config}"
-        )
+        logger.info(f"LmStudio.generate with config {config}")
 
-        result = model.respond(chat, config=config)
+        # LM Studio classifies every fragment it streams as reasoning or not; collecting
+        # them is how thinking gets separated from prose. `respond` still returns the whole
+        # result — the callback runs alongside it, so this is not a streaming API change.
+        collector = _ReasoningFragmentCollector()
+        result = model.respond(chat, config=config, on_prediction_fragment=collector)
 
-        content = self._extract_content(result)
-        logger.info(f"LLM response content: {content}")
-
-        # Split the LM Studio internal reasoning string out of the final text; the
-        # portion(s) before the marker are the model's thinking, kept for debugging.
-        parts = re.split(
-            r"__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[a-f0-9]+__", content
-        )
-        clean_text = parts[-1].strip()
-        thinking = "\n".join(part.strip() for part in parts[:-1] if part.strip()) or None
+        clean_text, thinking = self._separate_reasoning(result, collector)
+        logger.info(f"LLM response content: {clean_text}")
 
         stats = getattr(result, "stats", None)
         metadata = {
@@ -122,6 +133,66 @@ class LMStudioProvider(LLMProvider):
             metadata=metadata,
             thinking=thinking,
         )
+
+    def _separate_reasoning(
+        self,
+        result: Any,
+        collector: "_ReasoningFragmentCollector",
+    ) -> tuple[str, str | None]:
+        """Split the model's thinking from the prose the player will read.
+
+        The fragment classification LM Studio streams (`reasoningType`) is the supported
+        signal and the only one that survives a change in how reasoning is delimited. This
+        used to split `result.content` on
+        `__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_<hex>__` — an internal, synthetic
+        marker with no compatibility promise. Had it changed shape the split would have
+        silently no-opped and delivered the model's entire reasoning to the player as the
+        story, so the marker survives only as a fallback that says so when it fires.
+
+        Empty prose with reasoning captured is left to `ChatService._require_content`, which
+        rejects the turn as an `EmptyGenerationError` — that is the reasoning-only case, and
+        it must never reach the player, but it is also not this layer's decision to make.
+        """
+        # A structured prediction's user-facing value is `result.parsed`, which fragments do
+        # not reassemble into; leave those to `_extract_content`.
+        if collector.saw_fragments and not getattr(result, "structured", False):
+            prose = collector.prose.strip()
+            if not _INTERNAL_MARKER_HINT.search(prose):
+                return prose, collector.reasoning.strip() or None
+            # LM Studio handed back a marker inside text it classified as prose, i.e. it did
+            # not recognize this model's reasoning delimiters. Fall through to the split.
+            logger.warning(
+                "Reasoning marker found in text LM Studio classified as prose; "
+                "falling back to marker splitting.",
+                extra={"model_name": self._model_name},
+            )
+            content = prose
+        else:
+            content = self._extract_content(result)
+
+        parts = _REASONING_END_MARKER.split(content)
+        if len(parts) > 1:
+            logger.warning(
+                "Separated reasoning by internal LM Studio marker; the supported "
+                "fragment classification did not report any reasoning.",
+                extra={"model_name": self._model_name},
+            )
+        clean_text = parts[-1].strip()
+        # Anything the classification did catch is still the model's thinking, even when the
+        # rest had to be recovered from the marker — keep both rather than pick one.
+        reasoning_parts = [collector.reasoning, *parts[:-1]]
+        thinking = "\n".join(part.strip() for part in reasoning_parts if part.strip()) or None
+
+        # Both paths failed if a marker is still in there: the text is an unsplit blob of
+        # reasoning, and handing it to the player as the story is worse than no reply.
+        if _INTERNAL_MARKER_HINT.search(clean_text):
+            msg = (
+                "LM Studio returned reasoning that could not be separated from the reply; "
+                "refusing to deliver it as prose."
+            )
+            raise LLMGenerationError(msg)
+
+        return clean_text, thinking
 
     def _get_config(self, settings: GenerationSettings) -> lms.LlmPredictionConfig:
         # A positive per-request cap wins; otherwise fall back to the configured default.
@@ -140,6 +211,10 @@ class LMStudioProvider(LLMProvider):
             top_p_sampling=settings.top_p if settings.top_p is not None else self._top_p_sampling,
             min_p_sampling=self._min_p_sampling,
             stop_strings=list(settings.stop_sequences) if settings.stop_sequences else None,
+            # None leaves LM Studio's per-model reasoning delimiters in place, which is what
+            # the fragment classification is derived from. Only set the tags when a model
+            # LM Studio does not know about needs them declared.
+            reasoning_parsing=self._reasoning_parsing,
         )
 
     @staticmethod
@@ -229,11 +304,69 @@ class LMStudioProvider(LLMProvider):
                 raise ValueError(msg)
 
 
+class _ReasoningFragmentCollector:
+    """Sorts streamed prediction fragments into prose and reasoning.
+
+    LM Studio tags every fragment with a `reasoningType`, so the split comes from the
+    server's own parse rather than from string-matching the assembled reply. The two tag
+    types carry the delimiters themselves (`<think>` and friends) and belong in neither
+    bucket.
+    """
+
+    def __init__(self) -> None:
+        self._prose: list[str] = []
+        self._reasoning: list[str] = []
+        self.saw_fragments = False
+
+    def __call__(self, fragment: LlmPredictionFragment) -> None:
+        self.saw_fragments = True
+        reasoning_type = getattr(fragment, "reasoning_type", "none")
+        if reasoning_type == "reasoning":
+            self._reasoning.append(fragment.content)
+        elif reasoning_type == "none":
+            self._prose.append(fragment.content)
+
+    @property
+    def prose(self) -> str:
+        return "".join(self._prose)
+
+    @property
+    def reasoning(self) -> str:
+        return "".join(self._reasoning)
+
+
+def _build_reasoning_parsing(start_tag: str, end_tag: str) -> LlmReasoningParsing | None:
+    """Declare the reasoning delimiters, or leave LM Studio's per-model defaults alone.
+
+    Forcing tags on every prediction would break any model whose reasoning is delimited
+    differently, so this is opt-in. Half a pair is always a misconfiguration — parsing
+    would key off a start with no end, or the reverse — so say so at startup rather than
+    at the first generation.
+    """
+    if not start_tag and not end_tag:
+        return None
+    if not start_tag or not end_tag:
+        msg = (
+            "LM Studio reasoning tags must be configured as a pair: "
+            "RP_ENGINE_LMSTUDIO_REASONING_START_TAG and RP_ENGINE_LMSTUDIO_REASONING_END_TAG."
+        )
+        raise ValueError(msg)
+    return LlmReasoningParsing(enabled=True, start_string=start_tag, end_string=end_tag)
+
+
 def _normalize_api_host(api_host: str) -> str:
     parsed = urlparse(api_host)
     if parsed.scheme and parsed.netloc:
         return parsed.netloc
     return api_host
+
+
+# The exact internal marker LM Studio has been observed to synthesize, used only to split a
+# reply the supported fragment classification did not separate. `_INTERNAL_MARKER_HINT` is
+# deliberately looser: it recognizes a marker whose shape drifted well enough to refuse the
+# text, which is the whole failure this fallback exists to make loud.
+_REASONING_END_MARKER = re.compile(r"__LM_STUDIO_INTERNAL_LSEP_SYNTHETIC_REASONING_END_[a-f0-9]+__")
+_INTERNAL_MARKER_HINT = re.compile(r"__LM_STUDIO_INTERNAL_[A-Za-z0-9_]*__")
 
 
 # LM Studio's own stop-reason vocabulary (`LlmPredictionStopReason`), lowercased, plus the
@@ -278,14 +411,9 @@ def _normalize_finish_reason(reason: str) -> FinishReason:
 def _is_lmstudio_connection_error(exc: Exception) -> bool:
     class_name = exc.__class__.__name__.lower()
     message = str(exc).lower()
-    return (
-        "lmstudio" in class_name
-        and (
-            "clienterror" in class_name
-            or "websocketerror" in class_name
-            or "not reachable" in message
-            or "connection attempts failed" in message
-        )
+    return "lmstudio" in class_name and (
+        "clienterror" in class_name
+        or "websocketerror" in class_name
+        or "not reachable" in message
+        or "connection attempts failed" in message
     )
-
-

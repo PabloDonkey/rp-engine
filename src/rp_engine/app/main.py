@@ -94,6 +94,8 @@ def build_container(settings: Settings) -> AppContainer:
         api_host=settings.lmstudio_api_host,
         max_tokens=settings.lmstudio_max_tokens,
         temperature=settings.lmstudio_temperature,
+        reasoning_start_tag=settings.lmstudio_reasoning_start_tag,
+        reasoning_end_tag=settings.lmstudio_reasoning_end_tag,
     )
     postgres_config = PostgresConfig.from_settings(settings)
     postgres_engine = create_engine(postgres_config)
