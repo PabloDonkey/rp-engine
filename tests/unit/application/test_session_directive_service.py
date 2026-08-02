@@ -156,11 +156,11 @@ async def test_director_instruction_round_trip(
 ) -> None:
     session = _session()
 
-    await service.set_director_instruction(session=session, instruction="Raise the stakes.")
-    assert store.sessions[session.id].directives.director_instruction == "Raise the stakes."
+    await service.add_director_instruction(session=session, instruction="Raise the stakes.")
+    assert store.sessions[session.id].directives.director_instructions == ("Raise the stakes.",)
 
-    await service.clear_director_instruction(session=store.sessions[session.id])
-    assert store.sessions[session.id].directives.director_instruction == ""
+    await service.clear_director_instructions(session=store.sessions[session.id])
+    assert store.sessions[session.id].directives.director_instructions == ()
 
 
 @pytest.mark.asyncio

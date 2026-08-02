@@ -47,7 +47,8 @@ class AdminSessionDirectivesResponse(BaseModel):
 
     language: str
     rules: list[AdminScenarioRuleResponse]
-    director_instruction: str
+    # Plural since S020: `/director` notes stack until a reply consumes them.
+    director_instructions: list[str]
 
     @classmethod
     def from_directives(cls, directives: SessionDirectives) -> "AdminSessionDirectivesResponse":
@@ -56,7 +57,7 @@ class AdminSessionDirectivesResponse(BaseModel):
             rules=[
                 AdminScenarioRuleResponse(id=rule.id, text=rule.text) for rule in directives.rules
             ],
-            director_instruction=directives.director_instruction,
+            director_instructions=list(directives.director_instructions),
         )
 
 

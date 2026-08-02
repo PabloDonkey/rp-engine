@@ -11,7 +11,7 @@ const AdminUserSchema = z.object({
 const SessionDirectivesSchema = z.object({
   language: z.string(),
   rules: z.array(z.object({ id: z.string(), text: z.string() })),
-  director_instruction: z.string(),
+  director_instructions: z.array(z.string()),
 });
 
 const AdminSessionSchema = z.object({

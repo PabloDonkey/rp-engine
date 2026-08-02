@@ -153,7 +153,7 @@ Columns:
 - updated_at (timestamptz, NOT NULL — stamped by the repository on every `save`)
 - deleted_at (timestamptz, NULL — **null = the live session**; set when a reset supersedes it)
 - metadata (JSONB)
-- directives (JSONB — player directives: `{language, rules: [{id, text}], director_instruction}`)
+- directives (JSONB — player directives: `{language, rules: [{id, text}], director_instructions: [str]}`)
 - user_persona_name (VARCHAR(128), NULL — the player's character; what `{{user}}` resolves to)
 - user_persona_description (TEXT, NULL — rendered as the prompt's `[User Persona]` section)
 
@@ -173,7 +173,14 @@ the admin route turns that into a 409.
 and written as a unit (the `SessionDirectives` value object), never queried individually,
 and the shape is expected to grow. Rows written before migration `20260726_0008` hold
 `{}`, which deserializes to the neutral defaults (`language: auto`, no rules, no pending
-director instruction).
+director notes).
+
+The shape growing is not free: migration `20260802_0011` converted the single
+`director_instruction` string into a `director_instructions` array when `/director` notes
+started stacking. JSONB needs no DDL for that, but it does need the **data** converted — a
+row left in the old shape reads back as an empty queue and the player's armed note vanishes
+on the next load. Changing a key inside this document is a migration, not just a serializer
+edit.
 
 The persona is **two real columns**, not a JSONB bag: it is schema-visible identity with an
 "immutable once set" contract, and one of the two fields is what every `{{user}}` in every

@@ -797,7 +797,7 @@ async def test_director_instruction_is_cleared_after_a_successful_turn() -> None
 
     session_store.save.assert_awaited_once()
     saved = session_store.save.await_args.args[0]
-    assert saved.directives.director_instruction == ""
+    assert saved.directives.director_instructions == ()
 
 
 @pytest.mark.asyncio
@@ -857,7 +857,7 @@ async def test_continue_clears_the_director_instruction() -> None:
     )
 
     session_store.save.assert_awaited_once()
-    assert session_store.save.await_args.args[0].directives.director_instruction == ""
+    assert session_store.save.await_args.args[0].directives.director_instructions == ()
 
 
 @pytest.mark.asyncio

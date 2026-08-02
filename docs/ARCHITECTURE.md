@@ -154,7 +154,7 @@ Current use-case API:
 * `PlaythroughService.start(...)` / `PlaythroughService.restart(...)`
 * `PlaythroughService.get_active(...)` / `PlaythroughService.resume_text(...)`
 * `SessionDirectiveService.set_language(...)` / `add_rule(...)` / `remove_rule(...)`
-* `SessionDirectiveService.set_director_instruction(...)` / `clear_director_instruction(...)` / `get(...)`
+* `SessionDirectiveService.add_director_instruction(...)` / `clear_director_instructions(...)` / `get(...)`
 
 Adapters call these use cases directly. Scenario selection is driven by the curated
 catalog and `PlaythroughService`; there is no user-facing character creation/selection.
@@ -496,10 +496,11 @@ PlaythroughService.restart(...)
 Telegram Adapter                   Telegram Adapter
     ↓                                  ↓
 SessionDirectiveService            SessionDirectiveService
-.set_director_instruction(...)     .add_rule/.remove_rule/.set_language(...)
+.add_director_instruction(...)     .add_rule/.remove_rule/.set_language(...)
     ↓                                  ↓
-consumed + cleared by the next     applied to every following turn until changed
-successful generation
+queued; the next successful         applied to every following turn until changed
+generation consumes and clears
+the whole queue
 ```
 
 ```text

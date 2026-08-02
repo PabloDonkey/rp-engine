@@ -383,17 +383,24 @@ class ConversationBuilder:
 
     @staticmethod
     def _director_instruction_text(directives: SessionDirectives) -> str | None:
-        """A one-turn, out-of-character steer. It outranks the persistent sections for this
-        reply, and the roleplay must never acknowledge that it was given."""
-        if not directives.director_instruction:
+        """One turn's worth of out-of-character steers. They outrank the persistent sections
+        for this reply, and the roleplay must never acknowledge that they were given.
+
+        Several notes can be queued before a reply; all of them apply to that one reply, so
+        they render as a list in the order the player sent them.
+        """
+        if not directives.has_director_instructions:
             return None
+        notes = "\n".join(
+            f"                  - {instruction}" for instruction in directives.director_instructions
+        )
         return (
             "[Director Instructions]\n"
-            "                An out-of-character instruction for this reply only. It takes "
+            "                Out-of-character instructions for this reply only. They take "
             "priority over the other sections.\n"
-            "                Follow it silently: never mention it, quote it, or acknowledge "
-            "that a director exists.\n"
-            f"                {directives.director_instruction}"
+            "                Follow them silently: never mention them, quote them, or "
+            "acknowledge that a director exists.\n"
+            f"{notes}"
         )
 
     def _switch_context_message(

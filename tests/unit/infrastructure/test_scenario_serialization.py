@@ -1,5 +1,7 @@
 from uuid import UUID
 
+import pytest
+
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import ScenarioRule, SessionDirectives
 from rp_engine.infrastructure.scenario_serialization import (
@@ -19,6 +21,38 @@ def test_session_directives_round_trip() -> None:
     restored = session_directives_from_payload(session_directives_to_payload(directives))
 
     assert restored == directives
+
+
+@pytest.mark.parametrize("note_count", [0, 1, 3])
+def test_director_instruction_queue_round_trips_at_any_length(note_count: int) -> None:
+    directives = SessionDirectives()
+    for index in range(note_count):
+        directives = directives.with_director_instruction(f"Note {index}.")
+
+    restored = session_directives_from_payload(session_directives_to_payload(directives))
+
+    assert restored.director_instructions == directives.director_instructions
+
+
+def test_pre_s020_single_note_payload_loads_as_a_one_element_queue() -> None:
+    """A session *export file* written before the notes could stack still imports.
+
+    Stored sessions were converted by migration `20260802_0011`; this covers the JSON
+    transfer format, which outlives the schema it was dumped from.
+    """
+    directives = session_directives_from_payload(
+        {"language": "fr", "rules": [], "director_instruction": "Raise the stakes."}
+    )
+
+    assert directives.director_instructions == ("Raise the stakes.",)
+
+
+def test_pre_s020_empty_note_payload_loads_as_an_empty_queue() -> None:
+    directives = session_directives_from_payload(
+        {"language": "fr", "rules": [], "director_instruction": ""}
+    )
+
+    assert directives.director_instructions == ()
 
 
 def test_scenario_session_round_trip_carries_directives() -> None:
@@ -49,7 +83,7 @@ def test_malformed_rules_are_skipped_rather_than_failing_the_load() -> None:
 
     assert directives.language == "fr"
     assert directives.rules == (ScenarioRule(id="1", text="keep"),)
-    assert directives.director_instruction == ""
+    assert directives.director_instructions == ()
 
 
 def test_scenario_session_round_trip_carries_the_persona_and_lifecycle() -> None:

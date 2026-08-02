@@ -83,7 +83,8 @@ DIRECTIVE_COMMANDS: frozenset[TelegramCommand] = frozenset(
 DIRECTOR_USAGE_MESSAGE = (
     "Usage: /director <instruction>\n\n"
     "Example: /director have someone interrupt the conversation.\n"
-    "It shapes the next reply only, and the story never mentions it."
+    "It shapes the next reply only, and the story never mentions it.\n"
+    "Send it again to queue more notes for that same reply."
 )
 
 RULE_USAGE_MESSAGE = (
@@ -228,7 +229,7 @@ class SessionDirectiveServicePort(Protocol):
 
     async def remove_rule(self, *, session: ScenarioSession, rule_id: str) -> bool: ...
 
-    async def set_director_instruction(
+    async def add_director_instruction(
         self, *, session: ScenarioSession, instruction: str
     ) -> SessionDirectives: ...
 
@@ -670,19 +671,26 @@ class TelegramAdapter:
     ) -> str:
         instruction = (argument or "").strip()
         if not instruction:
-            pending = session.directives.director_instruction
+            pending = session.directives.director_instructions
             if pending:
+                queued = "\n".join(f"- {note}" for note in pending)
                 return (
-                    f"A director note is already queued for the next reply:\n\n{pending}\n\n"
-                    "Send /director <instruction> to replace it."
+                    f"{len(pending)} director note{'s' if len(pending) > 1 else ''} queued "
+                    f"for the next reply:\n\n{queued}\n\n"
+                    "Send /director <instruction> to add another."
                 )
             return DIRECTOR_USAGE_MESSAGE
 
-        await self._session_directive_service.set_director_instruction(
+        directives = await self._session_directive_service.add_director_instruction(
             session=session,
             instruction=instruction,
         )
-        return "Director note set. It shapes the next reply only."
+        # The count is the point: notes stack, so the player needs to see that the earlier
+        # ones are still armed rather than assume this one replaced them.
+        total = len(directives.director_instructions)
+        if total == 1:
+            return "Director note set. It shapes the next reply only."
+        return f"Director note added — {total} queued. They shape the next reply only."
 
     async def _handle_language(
         self,

@@ -352,8 +352,29 @@ def test_builder_renders_director_instruction_section() -> None:
         message for message in system_messages if "[Director Instructions]" in message
     )
     assert "Introduce a stranger." in director_section
-    # The instruction is out-of-character: the model is told never to surface it.
-    assert "never mention it" in director_section
+    # The instructions are out-of-character: the model is told never to surface them.
+    assert "never mention them" in director_section
+
+
+def test_builder_renders_every_queued_director_note() -> None:
+    """All notes queued before a reply steer that one reply, so all of them render."""
+    directives = (
+        SessionDirectives()
+        .with_director_instruction("Introduce a stranger.")
+        .with_director_instruction("Keep the tavern loud.")
+    )
+
+    system_messages = _built_with(directives)
+
+    director_section = next(
+        message for message in system_messages if "[Director Instructions]" in message
+    )
+    assert "Introduce a stranger." in director_section
+    assert "Keep the tavern loud." in director_section
+    # Sent order is preserved — a later note reads as refining the earlier one.
+    assert director_section.index("Introduce a stranger.") < director_section.index(
+        "Keep the tavern loud."
+    )
 
 
 def test_builder_orders_directive_sections_language_rules_then_director() -> None:

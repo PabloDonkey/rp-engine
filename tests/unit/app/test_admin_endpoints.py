@@ -128,7 +128,9 @@ def test_get_session_exposes_directives(tmp_path: Path) -> None:
     directives, _ = SessionDirectives().with_language("fr").with_rule("No time skips.")
     container.admin_service.get_session = AsyncMock(
         return_value=_session().with_directives(
-            directives.with_director_instruction("Raise the stakes.")
+            directives.with_director_instruction("Raise the stakes.").with_director_instruction(
+                "Bring back the courier."
+            )
         )
     )
     container.admin_service.get_session_transcript = AsyncMock(return_value=[])
@@ -139,7 +141,8 @@ def test_get_session_exposes_directives(tmp_path: Path) -> None:
     assert response.json()["directives"] == {
         "language": "fr",
         "rules": [{"id": "1", "text": "No time skips."}],
-        "director_instruction": "Raise the stakes.",
+        # Every queued note is exposed, in the order the player sent them.
+        "director_instructions": ["Raise the stakes.", "Bring back the courier."],
     }
 
 
@@ -153,7 +156,7 @@ def test_get_session_reports_default_directives(tmp_path: Path) -> None:
     assert response.json()["directives"] == {
         "language": "auto",
         "rules": [],
-        "director_instruction": "",
+        "director_instructions": [],
     }
 
 

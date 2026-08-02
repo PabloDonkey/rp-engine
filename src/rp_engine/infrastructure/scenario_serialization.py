@@ -154,7 +154,7 @@ def session_directives_to_payload(directives: SessionDirectives) -> dict[str, An
     return {
         "language": directives.language,
         "rules": [{"id": rule.id, "text": rule.text} for rule in directives.rules],
-        "director_instruction": directives.director_instruction,
+        "director_instructions": list(directives.director_instructions),
     }
 
 
@@ -171,8 +171,22 @@ def session_directives_from_payload(data: dict[str, Any] | None) -> SessionDirec
     return SessionDirectives(
         language=str(data.get("language", LANGUAGE_AUTO)),
         rules=rules,
-        director_instruction=str(data.get("director_instruction", "")),
+        director_instructions=_director_instructions_from_payload(data),
     )
+
+
+def _director_instructions_from_payload(data: dict[str, Any]) -> tuple[str, ...]:
+    """Read the queued director notes, tolerating the pre-S020 single-string key.
+
+    Stored sessions were converted by migration `20260802_0011`, so the legacy key is only
+    expected from a session *export file* written before the notes could stack — a transfer
+    format outlives the schema it was dumped from, and one archived note is worth keeping.
+    """
+    queued = data.get("director_instructions")
+    if isinstance(queued, list):
+        return tuple(str(note).strip() for note in queued if str(note).strip())
+    legacy = str(data.get("director_instruction", "")).strip()
+    return (legacy,) if legacy else ()
 
 
 def scenario_session_to_payload(session: ScenarioSession) -> dict[str, Any]:

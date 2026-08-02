@@ -7,7 +7,7 @@ Three controls share one value object because they share one lifecycle question 
 |---|---|
 | `language` | persistent, until changed |
 | `rules` | persistent, until removed |
-| `director_instruction` | one turn — cleared by the generation that consumes it |
+| `director_instructions` | one turn — the whole stack is cleared by the consuming generation |
 
 The object is immutable like the rest of the domain; every mutator returns a new
 instance. It is stored alongside its `ScenarioSession`, so directives never leak
@@ -59,7 +59,9 @@ class ScenarioRule:
 class SessionDirectives:
     language: str = LANGUAGE_AUTO
     rules: tuple[ScenarioRule, ...] = ()
-    director_instruction: str = ""
+    # A stack, not a slot: several `/director` notes can be queued before the next reply,
+    # and they are consumed together by the generation that reads them.
+    director_instructions: tuple[str, ...] = ()
 
     @property
     def has_language_preference(self) -> bool:
@@ -87,14 +89,25 @@ class SessionDirectives:
             return None
         return replace(self, rules=remaining)
 
+    @property
+    def has_director_instructions(self) -> bool:
+        return bool(self.director_instructions)
+
     def with_director_instruction(self, instruction: str) -> "SessionDirectives":
+        """Queue another note for the next reply.
+
+        Appends rather than replaces: a player sending two `/director` notes before the
+        next turn means both, and the old single-slot version dropped all but the last
+        without saying so.
+        """
         cleaned = instruction.strip()
         if not cleaned:
             raise ValueError("Director instruction must not be empty.")
-        return replace(self, director_instruction=cleaned)
+        return replace(self, director_instructions=(*self.director_instructions, cleaned))
 
-    def without_director_instruction(self) -> "SessionDirectives":
-        return replace(self, director_instruction="")
+    def without_director_instructions(self) -> "SessionDirectives":
+        """Clear the whole queue — the notes share one turn, so they expire together."""
+        return replace(self, director_instructions=())
 
     def _next_rule_id(self) -> str:
         """Ids are monotonic within a session and never reused, so a rule id a player

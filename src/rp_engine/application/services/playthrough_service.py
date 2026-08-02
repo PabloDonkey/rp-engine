@@ -183,7 +183,7 @@ class PlaythroughService:
             owner_id=owner_id,
             scenario=scenario,
             directives=(
-                active.directives.without_director_instruction() if carry_player_state else None
+                active.directives.without_director_instructions() if carry_player_state else None
             ),
             user_persona_name=active.user_persona_name if carry_player_state else None,
             user_persona_description=(

@@ -14,7 +14,7 @@ def test_defaults_are_neutral() -> None:
 
     assert directives.language == LANGUAGE_AUTO
     assert directives.rules == ()
-    assert directives.director_instruction == ""
+    assert directives.director_instructions == ()
     assert directives.has_language_preference is False
 
 
@@ -87,9 +87,40 @@ def test_without_rule_returns_none_for_unknown_id() -> None:
 
 def test_director_instruction_is_set_and_cleared() -> None:
     directives = SessionDirectives().with_director_instruction("  raise the stakes  ")
-    assert directives.director_instruction == "raise the stakes"
+    assert directives.director_instructions == ("raise the stakes",)
 
-    assert directives.without_director_instruction().director_instruction == ""
+    assert directives.without_director_instructions().director_instructions == ()
+
+
+def test_director_instructions_stack_instead_of_replacing() -> None:
+    """Several notes before one reply used to keep only the last, silently."""
+    directives = (
+        SessionDirectives()
+        .with_director_instruction("Raise the stakes.")
+        .with_director_instruction("Bring back the courier.")
+        .with_director_instruction("End on a cliffhanger.")
+    )
+
+    assert directives.director_instructions == (
+        "Raise the stakes.",
+        "Bring back the courier.",
+        "End on a cliffhanger.",
+    )
+    assert directives.has_director_instructions
+
+
+def test_clearing_director_instructions_drops_the_whole_queue() -> None:
+    """They all steered the same reply, so none of them outlives it."""
+    directives = (
+        SessionDirectives()
+        .with_director_instruction("Raise the stakes.")
+        .with_director_instruction("Bring back the courier.")
+    )
+
+    cleared = directives.without_director_instructions()
+
+    assert cleared.director_instructions == ()
+    assert not cleared.has_director_instructions
 
 
 def test_director_instruction_rejects_blank_text() -> None:

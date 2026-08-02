@@ -309,14 +309,24 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           </dd>
         </div>
         <div class="flex gap-2">
-          <dt class="w-32 shrink-0 text-neutral-500">Director note</dt>
+          <dt class="w-32 shrink-0 text-neutral-500">Director notes</dt>
           <dd>
-            <span v-if="!store.session.directives.director_instruction" class="text-neutral-500">
+            <span
+              v-if="store.session.directives.director_instructions.length === 0"
+              class="text-neutral-500"
+            >
               None pending
             </span>
-            <span v-else class="whitespace-pre-wrap">
-              {{ store.session.directives.director_instruction }}
-            </span>
+            <!-- Notes stack until a reply consumes them, so all queued ones show. -->
+            <ul v-else class="flex flex-col gap-1">
+              <li
+                v-for="(note, index) in store.session.directives.director_instructions"
+                :key="index"
+                class="whitespace-pre-wrap"
+              >
+                <span class="text-neutral-500">{{ index + 1 }}.</span> {{ note }}
+              </li>
+            </ul>
           </dd>
         </div>
       </dl>

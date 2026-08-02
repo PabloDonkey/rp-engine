@@ -223,7 +223,7 @@ class FakeSessionDirectiveService:
         self.directives = updated
         return True
 
-    async def set_director_instruction(
+    async def add_director_instruction(
         self, *, session: ScenarioSession, instruction: str
     ) -> SessionDirectives:
         self.calls.append(("director", instruction))
@@ -1371,6 +1371,40 @@ async def test_director_without_argument_reports_a_queued_note() -> None:
 
     assert service.calls == []
     assert "raise the stakes" in responses[0]
+
+
+@pytest.mark.asyncio
+async def test_director_confirmation_reports_the_queued_count() -> None:
+    """A second note adds to the first, and the player is told so — the old message said
+    "Director note set." either way, hiding that the earlier note had been dropped."""
+    adapter, service = _directive_adapter(
+        directives=SessionDirectives().with_director_instruction("raise the stakes")
+    )
+
+    responses = await _send(adapter, "/director introduce a stranger")
+
+    assert service.calls == [("director", "introduce a stranger")]
+    assert service.directives.director_instructions == (
+        "raise the stakes",
+        "introduce a stranger",
+    )
+    assert responses == ["Director note added — 2 queued. They shape the next reply only."]
+
+
+@pytest.mark.asyncio
+async def test_director_without_argument_lists_every_queued_note() -> None:
+    adapter, service = _directive_adapter(
+        directives=SessionDirectives()
+        .with_director_instruction("raise the stakes")
+        .with_director_instruction("introduce a stranger")
+    )
+
+    responses = await _send(adapter, "/director")
+
+    assert service.calls == []
+    assert "2 director notes queued" in responses[0]
+    assert "raise the stakes" in responses[0]
+    assert "introduce a stranger" in responses[0]
 
 
 @pytest.mark.asyncio

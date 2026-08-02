@@ -65,15 +65,15 @@ async def assert_scenario_session_store_contract(store: ScenarioSessionStore) ->
     assert reloaded is not None
     assert reloaded.directives.language == "fr"
     assert reloaded.directives.rules == (first_rule,)
-    assert reloaded.directives.director_instruction == "Raise the stakes."
+    assert reloaded.directives.director_instructions == ("Raise the stakes.",)
     # Everything else is untouched by a directive write.
     assert reloaded.metadata == {"difficulty": "hard"}
     assert reloaded.world_state == {"location": "vault"}
 
-    await store.save(reloaded.with_directives(reloaded.directives.without_director_instruction()))
+    await store.save(reloaded.with_directives(reloaded.directives.without_director_instructions()))
     consumed = await store.get_by_id(session.id)
     assert consumed is not None
-    assert consumed.directives.director_instruction == ""
+    assert consumed.directives.director_instructions == ()
     assert consumed.directives.rules == (first_rule,)
 
     # The persona round-trips, including "no description" staying absent rather than "".

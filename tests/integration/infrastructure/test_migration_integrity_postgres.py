@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
@@ -144,6 +145,89 @@ async def test_migrate_then_contract_all_stores(migrated_engine: AsyncEngine) ->
     await assert_user_identity_store_contract(PostgresUserIdentityStore(session_factory))
     await assert_group_identity_store_contract(PostgresGroupIdentityStore(session_factory))
     await assert_generation_trace_store_contract(PostgresGenerationTraceStore(session_factory))
+
+
+_PRE_S020_REVISION = "20260727_0010"
+
+_INSERT_PRE_S020_SESSION = """
+INSERT INTO scenario_sessions (
+    id, scenario_definition_id, owner_kind, owner_id,
+    active_participants, world_state, story_progress,
+    created_at, updated_at, metadata, directives
+) VALUES (
+    :id, 'vault', 'user', :owner_id,
+    '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+    now(), now(), '{}'::jsonb, CAST(:directives AS jsonb)
+)
+"""
+
+
+@pytest.mark.asyncio
+async def test_pre_s020_director_notes_are_converted_to_a_queue(
+    migration_postgres_config: PostgresConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Migration `20260802_0011` has to move the *data*, not just the code.
+
+    A row left in the pre-S020 single-string shape reads back as an empty queue, so the
+    player's armed note would vanish on the next load — the same "code fixed, data not"
+    failure `20260727_0010` existed to clean up after.
+    """
+    _point_alembic_env_at(monkeypatch, migration_postgres_config)
+    engine = create_engine(migration_postgres_config)
+    await _reset_schema(engine)
+    alembic_config = _alembic_config()
+
+    await asyncio.to_thread(command.upgrade, alembic_config, _PRE_S020_REVISION)
+
+    armed = UUID("00000000-0000-0000-0000-0000000000a1")
+    empty = UUID("00000000-0000-0000-0000-0000000000a2")
+    async with engine.begin() as connection:
+        for session_id, directives in (
+            (armed, '{"language": "fr", "rules": [], "director_instruction": "Raise the stakes."}'),
+            (empty, '{"language": "auto", "rules": [], "director_instruction": ""}'),
+        ):
+            await connection.execute(
+                text(_INSERT_PRE_S020_SESSION),
+                {"id": session_id, "owner_id": session_id, "directives": directives},
+            )
+
+    await asyncio.to_thread(command.upgrade, alembic_config, "head")
+
+    async with engine.connect() as connection:
+        converted = dict(
+            (row.id, row.directives)
+            for row in (
+                await connection.execute(text("SELECT id, directives FROM scenario_sessions"))
+            ).all()
+        )
+
+    assert converted[armed]["director_instructions"] == ["Raise the stakes."]
+    assert converted[empty]["director_instructions"] == []
+    # The old key is gone, not merely shadowed — a stale copy would be read by nothing and
+    # quietly diverge from the queue.
+    assert "director_instruction" not in converted[armed]
+    assert "director_instruction" not in converted[empty]
+    # Untouched keys survive the rewrite.
+    assert converted[armed]["language"] == "fr"
+
+    await asyncio.to_thread(command.downgrade, alembic_config, _PRE_S020_REVISION)
+
+    async with engine.connect() as connection:
+        reverted = dict(
+            (row.id, row.directives)
+            for row in (
+                await connection.execute(text("SELECT id, directives FROM scenario_sessions"))
+            ).all()
+        )
+
+    assert reverted[armed]["director_instruction"] == "Raise the stakes."
+    assert reverted[empty]["director_instruction"] == ""
+    assert "director_instructions" not in reverted[armed]
+
+    async with engine.begin() as connection:
+        await connection.execute(text("DROP SCHEMA public CASCADE"))
+        await connection.execute(text("CREATE SCHEMA public"))
+    await engine.dispose()
 
 
 @pytest.mark.asyncio

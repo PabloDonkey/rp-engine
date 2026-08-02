@@ -392,16 +392,17 @@ class ChatService:
         )
 
     async def _consume_director_instruction(self, session: ScenarioSession) -> None:
-        """Clear the one-turn director instruction that the generation just consumed.
+        """Clear the one-turn director notes that the generation just consumed.
 
-        Called only after a *successful* generation, so a failed turn keeps the
-        instruction alive for the retry the player is about to make.
+        Called only after a *successful* generation, so a failed turn keeps the queue
+        alive for the retry the player is about to make. The notes are cleared as a unit:
+        they all applied to the same reply, so none of them outlives it.
         """
         directives = session.directives
-        if not directives.director_instruction:
+        if not directives.has_director_instructions:
             return
         await self._scenario_session_store.save(
-            session.with_directives(directives.without_director_instruction())
+            session.with_directives(directives.without_director_instructions())
         )
 
     async def clear_conversation(

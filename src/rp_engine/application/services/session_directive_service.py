@@ -65,25 +65,31 @@ class SessionDirectiveService:
         )
         return True
 
-    async def set_director_instruction(
+    async def add_director_instruction(
         self,
         *,
         session: ScenarioSession,
         instruction: str,
     ) -> SessionDirectives:
-        """Arm a one-turn director instruction. The next successful generation consumes
-        and clears it (see `ChatService`). Raises ValueError on empty text."""
+        """Queue another one-turn director note. The next successful generation consumes
+        and clears the whole queue (see `ChatService`). Raises ValueError on empty text."""
         updated = session.directives.with_director_instruction(instruction)
         await self._save(session, updated)
-        logger.info("Director instruction set", extra={"session_id": str(session.id)})
+        logger.info(
+            "Director instruction queued",
+            extra={
+                "session_id": str(session.id),
+                "queued_count": len(updated.director_instructions),
+            },
+        )
         return updated
 
-    async def clear_director_instruction(
+    async def clear_director_instructions(
         self,
         *,
         session: ScenarioSession,
     ) -> SessionDirectives:
-        updated = session.directives.without_director_instruction()
+        updated = session.directives.without_director_instructions()
         await self._save(session, updated)
         return updated
 

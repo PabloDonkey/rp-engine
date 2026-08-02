@@ -324,7 +324,7 @@ async def test_restart_carries_persistent_directives_but_drops_the_director_note
     assert second is not None
     assert second.session.directives.language == "fr"
     assert [rule.text for rule in second.session.directives.rules] == ["No time skips."]
-    assert second.session.directives.director_instruction == ""
+    assert second.session.directives.director_instructions == ()
 
 
 @pytest.mark.asyncio

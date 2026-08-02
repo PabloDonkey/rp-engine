@@ -299,7 +299,7 @@ only in lifetime:
 |---|---|---|
 | `language` (`str`) | `/language <code>` | persistent, until changed (`auto` = no instruction) |
 | `rules` (`tuple[ScenarioRule, ...]`) | `/rule add`, `/rule remove` | persistent, until removed |
-| `director_instruction` (`str`) | `/director <instruction>` | one turn — cleared by the generation that consumes it |
+| `director_instructions` (`tuple[str, ...]`) | `/director <instruction>` | one turn — each command appends; the whole queue is cleared by the generation that consumes it |
 
 `ScenarioRule` is `(id, text)`. Rule ids are monotonic within a session and never reused,
 so an id a player read from `/rules` keeps pointing at the same rule after other rules are
@@ -322,11 +322,16 @@ every `{{user}}`.
 
 Empty sections are omitted entirely — never rendered as a bare header. Director
 instructions are out-of-character: the model is told to follow them silently and never
-acknowledge them. `ChatService` clears the instruction after a *successful* generation, so
-a failed turn keeps it alive for the retry.
+acknowledge them. `ChatService` clears the notes after a *successful* generation, so a
+failed turn keeps them alive for the retry.
+
+Director notes **stack**: sending `/director` twice before the next reply queues both, and
+both render in the `[Director Instructions]` section in the order they were sent. The single
+slot they replaced dropped everything but the last note with no warning. They still share
+one turn, so the consuming generation clears the whole queue at once.
 
 Reset semantics follow **ADR-025**: `/restart` carries `language`, `rules` and the user
-persona into the fresh session (dropping only the pending director instruction, which was
+persona into the fresh session (dropping only the pending director notes, which were
 aimed at a reply that will never happen), while `/clear` resets them to defaults and asks for
 a new persona. The rule for any future per-session field: player-owned settings survive
 `/restart` and are reset by `/clear`; story-produced state is reset by both. Both tiers share
