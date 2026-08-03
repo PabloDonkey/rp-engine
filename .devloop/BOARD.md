@@ -4,16 +4,35 @@
 
 ### Admin panel — show superseded sessions — S016 left the *presentation* out of scope: the session list should render a muted "superseded" badge with `deleted_at`, sort newest-first, and `session_count` on the users list needs a deliberate call (live-only today, vs "3 live / 7 total" which is the more useful number for analysis). Backend is already done — `AdminService.list_user_sessions` passes `include_deleted=True` and the API returns `created_at`/`updated_at`/`deleted_at`. _(bare card — gets an S### if it grows)_ → see [S016](archive/S016-2026-07-27-session-soft-delete-lifecycle.md)
 
+### Memory layers 02–04 — ids reserved by the ADR-026 design, deliberately not epics yet: **S024** lorebook (SillyTavern-style trigger keys, Postgres `tsvector` for stemmed matching, admin CRUD), **S025** fact & state store (extraction, bi-temporal validity, deterministic conflict resolution, first background worker), **S026** vector recall (**only if a concrete failure demands it** — pgvector means swapping both the compose and testcontainers images, plus a second resident embedding model). Design the `EmbeddingProvider` port in S021, ship full-text first. → [design](https://claude.ai/code/artifact/c77560f4-99c2-4566-8b1c-9687d3893ac5)
+
+### Background worker runtime — the repo has **no job runner**. Anything that must run off the write path (summarizing, fact extraction, consolidation, re-embedding) needs either an `asyncio.create_task` in the calling service or a real runtime component owned by `app/lifespan.py`. Decide once, not per epic.
+⛔ **Blocked by:** nothing — but the *shape* should be settled in **S021** so S023 and S025 do not each invent one.
+🔗 **Needed by:** **S023** (optional — the alternative is a visible pause every N turns), **S025** (required — extraction + consolidation cannot sit on the turn path), **S026** (re-embedding backfill).
+_(bare card — gets an S### when promoted to an epic)_
+
 ### Activate StoryGraph / scenario branching — `StoryGraph`+`StoryBeat` exist as inert data; nothing drives beats yet. _(bare card — gets an S### when promoted to an epic)_ → see `../docs/DOMAIN_MODEL.md`
 
 
 ## 🟡 Up Next
 
-_(nothing queued — see Backlog)_
+### **S022** · Memory layer 00 — token budget + windowed recall + pipeline skeleton — replaces `DumpEverythingStrategy` (which returns every message ever stored) with a budgeted window, and lands the composite the other four layers plug into. Blocked on a real token counter: nothing in the repo counts tokens, and `RP_ENGINE_LMSTUDIO_MAX_TOKENS` caps *output*, not context. Fix the positional system-message slicing in `_build_debug_prompts` first — those indices are already wrong and a memory section shifts them again.
+⛔ **Blocked by:** **S021** — do **not** start before the `MemorySource` port and the `MemoryFragment` contract are written down. This epic implements them; it does not decide them.
+⛔ **Also blocked on:** a real token counter (nothing in the repo counts tokens — new port + implementation + settings), and the `_build_debug_prompts` slicing fix, which lands *before* the builder change.
+🔗 **Blocks:** S023, S024, S025, S026 — every layer plugs into the pipeline this epic builds.
+→ [epic](epics/S022-memory-layer-00-window-and-pipeline.md)
+
+### **S023** · Memory layer 01 — rolling summary — condense what falls out of the window into a running "story so far", re-condensing the recap when it outgrows its budget. Best value in the whole memory stack: `LMStudioConversationSummarizer` is **already implemented and never wired into the composition root**, so this is mostly an integration job plus one table. First entry in the per-session `/memory` toggle.
+⛔ **Blocked by:** **S022** (pipeline, token counter, `MemorySource` port) → which is blocked by **S021**.
+⚠️ **Open dependency — background worker.** Summarizing off the write path needs the job runner the repo does not have (see the Backlog card). The alternative is inline summarization and a visible pause every N turns. Pick one in S021, not here.
+→ [epic](epics/S023-memory-layer-01-rolling-summary.md)
 
 ## 🟢 In Progress
 
-_(nothing in flight)_
+### **S021** · Memory architecture — ADR-026 + design docs — write the architecture down, no code. **ADR-026 is written** (2026-08-02): the `MemorySource` port and `MemoryFragment` contract, `MemoryPipeline`, per-session `MemorySettings`, the five layers, the build order S022→S026, embeddings deferred behind a designed port, and the partial supersession of ADR-013 (rules 1 and 5, plus the "no summarization/retrieval/embeddings" clause — ADR-013's storage-vs-strategy split stands). **Left:** `ARCHITECTURE.md` (it still says "Memory Manager", which ADR-013 forbade), `DOMAIN_MODEL.md`, `DATABASE_MODEL.md`, `ROADMAP.md`, the per-source specs, and the four open decisions the ADR delegates here — background-worker mechanism, token counter, overflow handling when layer 01 is off, and what `recall` receives.
+🔗 **Blocks:** S022, S023, and the reserved S024–S026.
+📄 **Design source, cited by ADR-026:** [Five ways to remember a story](https://claude.ai/code/artifact/c77560f4-99c2-4566-8b1c-9687d3893ac5) — Pablo's chosen architecture.
+→ [epic](epics/S021-memory-architecture-adr-and-design.md) · [ADR-026](../docs/DECISIONS.md)
 
 ## ✅ Done (recent)
 

@@ -114,7 +114,8 @@ Substantial design docs live in `docs/` — read the relevant one before large c
 
 ## Dev-loop tracking (`.devloop/`)
 
-Local, **gitignored** execution tracking (not the committed `docs/`):
+Tactical execution tracking, **committed to git** like `docs/`, but answering a different
+question: `docs/` holds strategy and rationale, `.devloop/` holds what is in flight right now.
 
 - `.devloop/BOARD.md` — kanban (VSCode "Markdown Kanban" extension), the glance view.
 - `.devloop/epics/S###-<slug>.md` — one checklist per active epic. Each epic has a stable,

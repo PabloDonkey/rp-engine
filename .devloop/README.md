@@ -9,9 +9,9 @@ and does not duplicate, the strategic docs in `../docs/`:
 | Rationale — decisions | `../docs/DECISIONS.md` (ADRs) | *Why did we choose this?* |
 | **Execution — this folder** | `.devloop/` | *What am I doing right now, and what did I already finish?* |
 
-> **Note:** `.devloop/` is **gitignored** — it lives only on this machine, not in the repo
-> or on any remote. History is preserved by the dated files in `archive/`, not by git.
-> If you want git-level history + off-machine backup, un-ignore this folder (see bottom).
+> **Note:** `.devloop/` is **committed to git**, so the board and the epics get per-commit
+> history and off-machine backup. The dated files in `archive/` remain the readable record of
+> what was finished and when — git history is the audit trail, not the index.
 
 ## Layout
 
@@ -72,8 +72,7 @@ Columns: **Backlog** → **Up Next** → **In Progress** → **Done (recent)**.
 - Small throwaway tasks can be a bare Backlog card with no epic file. Promote to an epic
   file the moment it grows phases or spans sessions.
 
-## Optional: version this folder in git
+## This folder is versioned in git
 
-If you'd rather have git history + backup for your dev loop, remove the `.devloop` line
-from `../.gitignore` and commit the folder. The workflow above is unchanged; you just
-additionally get a per-commit diff of the board and epics.
+Commit board and epic changes with the work they track, so a commit shows both what changed
+and why it was in flight. Anything you would not push to a remote does not belong here.
