@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -137,6 +137,11 @@ def build_container(settings: Settings) -> AppContainer:
         max_tokens=settings.lmstudio_max_tokens,
         top_p=settings.lmstudio_top_p_sampling,
     )
+    # Same sampling, bigger budget: the retry only exists because the cap was the constraint.
+    length_retry_settings = replace(
+        generation_settings,
+        max_tokens=settings.lmstudio_length_retry_max_tokens,
+    )
     admin_service = AdminService(
         user_identity_store=user_identity_store,
         scenario_session_store=scenario_session_store,
@@ -162,6 +167,7 @@ def build_container(settings: Settings) -> AppContainer:
         generation_settings=generation_settings,
         generation_trace_store=generation_trace_store,
         generation_trace_mode=settings.debug_generation_trace,
+        length_retry_settings=length_retry_settings,
     )
 
     telegram_runtime: TelegramRuntime | None = None

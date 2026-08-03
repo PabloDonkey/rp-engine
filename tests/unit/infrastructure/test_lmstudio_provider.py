@@ -722,3 +722,82 @@ def test_every_sdk_stop_reason_is_classified() -> None:
         assert _normalize_finish_reason(reason) != "unknown", (
             f"LM Studio stop reason {reason!r} is not classified by the provider"
         )
+
+
+async def _resume(provider: LMStudioProvider) -> Any:
+    """Generate from an assistant prefill, the shape `/continue` and the automatic
+    length recovery both use."""
+    return await provider.generate(
+        Conversation(
+            messages=[
+                ConversationMessage(role=ConversationRole.USER, content="hi"),
+                ConversationMessage(role=ConversationRole.CHARACTER, content="She reached for"),
+            ],
+            continue_final_message=True,
+        ),
+        GenerationSettings(max_tokens=128, temperature=0.3),
+    )
+
+
+@pytest.mark.asyncio
+async def test_prefill_continuation_keeps_the_space_it_starts_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stripping it glues "She reached for" to "the door" as one word."""
+    model = FakeModel(
+        lambda _chat: FakeResult("ignored"),
+        fragments=[FakeFragment(" the door "), FakeFragment("and stepped out.  ")],
+    )
+    _install_fake_sdk(monkeypatch, model)
+
+    result = await _resume(_provider())
+
+    assert result.content == " the door and stepped out."
+
+
+@pytest.mark.asyncio
+async def test_prefill_continuation_keeps_only_one_leading_space(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """More than one is model padding, not sentence glue."""
+    model = FakeModel(
+        lambda _chat: FakeResult("ignored"),
+        fragments=[FakeFragment("\n\n\n the door.")],
+    )
+    _install_fake_sdk(monkeypatch, model)
+
+    result = await _resume(_provider())
+
+    assert result.content == "\nthe door."
+
+
+@pytest.mark.asyncio
+async def test_prefill_continuation_that_reasoned_is_stripped_as_usual(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With reasoning in front, leading whitespace is a boundary artefact rather than glue."""
+    model = FakeModel(
+        lambda _chat: FakeResult("ignored"),
+        fragments=[
+            FakeFragment("Re-planning the scene.", reasoning_type="reasoning"),
+            FakeFragment("\n\n The door opens."),
+        ],
+    )
+    _install_fake_sdk(monkeypatch, model)
+
+    result = await _resume(_provider())
+
+    assert result.content == "The door opens."
+
+
+@pytest.mark.asyncio
+async def test_a_normal_reply_is_still_stripped(monkeypatch: pytest.MonkeyPatch) -> None:
+    model = FakeModel(
+        lambda _chat: FakeResult("ignored"),
+        fragments=[FakeFragment("  A plain reply.  ")],
+    )
+    _install_fake_sdk(monkeypatch, model)
+
+    result = await _generate(_provider())
+
+    assert result.content == "A plain reply."

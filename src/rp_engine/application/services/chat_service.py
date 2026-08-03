@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Literal
@@ -76,6 +76,7 @@ class ChatService:
         generation_settings: GenerationSettings,
         generation_trace_store: GenerationTraceStore | None = None,
         generation_trace_mode: Literal["off", "errors", "all"] = "off",
+        length_retry_settings: GenerationSettings | None = None,
     ) -> None:
         self._orchestrator = orchestrator
         self._conversation_store = conversation_store
@@ -87,6 +88,9 @@ class ChatService:
         self._generation_settings = generation_settings
         self._generation_trace_store = generation_trace_store
         self._generation_trace_mode = generation_trace_mode
+        # Settings for the one automatic retry after a reply stops at the token cap. `None`
+        # turns the recovery off, which is what every caller that does not care about it gets.
+        self._length_retry_settings = length_retry_settings
         self._conversation_builder = ConversationBuilder()
 
     async def send_message(
@@ -115,47 +119,32 @@ class ChatService:
         async with processing_feedback_scope(feedback, context=self._feedback_context(context)):
             history = await self._conversation_store.load_messages(memory_key)
             context_messages = self._memory_strategy.build_context(history)
-            conversation = self._conversation_builder.build(
-                self._build_input(
-                    context,
-                    memory_messages=context_messages,
-                    user_message=cleaned_message,
-                )
+            builder_input = self._build_input(
+                context,
+                memory_messages=context_messages,
+                user_message=cleaned_message,
             )
+            conversation = self._conversation_builder.build(builder_input)
             request = GenerationRequest(
                 memory_key=memory_key,
                 conversation=conversation,
                 settings=self._generation_settings,
             )
-            request_id = str(uuid4())
             turn = self._resolve_turn(history)
-            started_at = perf_counter()
+            resume_prefix, prefill_text = self._resume_anchor(
+                conversation=conversation,
+                context_messages=context_messages,
+                resumed=False,
+            )
 
-            try:
-                llm_response = await self._orchestrator.generate_reply(request)
-            except Exception as exc:
-                await self._append_generation_trace(
-                    session_id=session.id,
-                    turn=turn,
-                    request_id=request_id,
-                    conversation=conversation,
-                    generation_settings=request.settings,
-                    memory_messages=context_messages,
-                    response=None,
-                    latency_ms=self._to_latency_ms(started_at),
-                    error=exc,
-                )
-                raise
-
-            await self._append_generation_trace(
+            llm_response = await self._generate_recovering_length(
+                request=request,
+                builder_input=builder_input,
+                resume_prefix=resume_prefix,
+                prefill_text=prefill_text,
                 session_id=session.id,
                 turn=turn,
-                request_id=request_id,
-                conversation=conversation,
-                generation_settings=request.settings,
-                memory_messages=context_messages,
-                response=llm_response,
-                latency_ms=self._to_latency_ms(started_at),
+                context_messages=context_messages,
             )
             # Guard before the trace-adjacent work below: the trace is already recorded (an
             # empty generation is exactly what you want a trace for), but nothing has been
@@ -210,7 +199,8 @@ class ChatService:
             )
             # If the last narrator reply was cut off at the token limit, resume it
             # in place; otherwise advance the story with no player input.
-            if self._should_resume(history):
+            resumed = self._should_resume(history)
+            if resumed:
                 conversation = self._conversation_builder.build_resume(builder_input)
             else:
                 conversation = self._conversation_builder.build_continue(builder_input)
@@ -219,35 +209,21 @@ class ChatService:
                 conversation=conversation,
                 settings=self._generation_settings,
             )
-            request_id = str(uuid4())
             turn = self._resolve_turn(history)
-            started_at = perf_counter()
+            resume_prefix, prefill_text = self._resume_anchor(
+                conversation=conversation,
+                context_messages=context_messages,
+                resumed=resumed,
+            )
 
-            try:
-                llm_response = await self._orchestrator.generate_reply(request)
-            except Exception as exc:
-                await self._append_generation_trace(
-                    session_id=session.id,
-                    turn=turn,
-                    request_id=request_id,
-                    conversation=conversation,
-                    generation_settings=request.settings,
-                    memory_messages=context_messages,
-                    response=None,
-                    latency_ms=self._to_latency_ms(started_at),
-                    error=exc,
-                )
-                raise
-
-            await self._append_generation_trace(
+            llm_response = await self._generate_recovering_length(
+                request=request,
+                builder_input=builder_input,
+                resume_prefix=resume_prefix,
+                prefill_text=prefill_text,
                 session_id=session.id,
                 turn=turn,
-                request_id=request_id,
-                conversation=conversation,
-                generation_settings=request.settings,
-                memory_messages=context_messages,
-                response=llm_response,
-                latency_ms=self._to_latency_ms(started_at),
+                context_messages=context_messages,
             )
             # Guard before the trace-adjacent work below: the trace is already recorded (an
             # empty generation is exactly what you want a trace for), but nothing has been
@@ -290,6 +266,7 @@ class ChatService:
                 raise ValueError("Conversation has no user message to regenerate from.")
 
             latest_context_message = trimmed_history[-1]
+            resumed = False
             if latest_context_message.role == ConversationRole.USER:
                 latest_user_index = self._find_latest_user_index(trimmed_history)
                 if latest_user_index is None:
@@ -298,13 +275,12 @@ class ChatService:
                 last_user = trimmed_history[latest_user_index]
                 prior_history = trimmed_history[:latest_user_index]
                 context_messages = self._memory_strategy.build_context(prior_history)
-                conversation = self._conversation_builder.build(
-                    self._build_input(
-                        context,
-                        memory_messages=context_messages,
-                        user_message=last_user.content,
-                    )
+                builder_input = self._build_input(
+                    context,
+                    memory_messages=context_messages,
+                    user_message=last_user.content,
                 )
+                conversation = self._conversation_builder.build(builder_input)
             elif latest_context_message.role == ConversationRole.CHARACTER:
                 context_messages = self._memory_strategy.build_context(trimmed_history)
                 builder_input = self._build_input(
@@ -316,7 +292,8 @@ class ChatService:
                 # last decides the mode. Retrying a resume must resume again — advancing
                 # instead would strand the cut-off sentence permanently, since the turn that
                 # would have finished it is the one being replaced.
-                if self._should_resume(trimmed_history):
+                resumed = self._should_resume(trimmed_history)
+                if resumed:
                     conversation = self._conversation_builder.build_resume(builder_input)
                 else:
                     conversation = self._conversation_builder.build_continue(builder_input)
@@ -327,35 +304,21 @@ class ChatService:
                 conversation=conversation,
                 settings=self._generation_settings,
             )
-            request_id = str(uuid4())
             turn = self._resolve_turn(trimmed_history)
-            started_at = perf_counter()
+            resume_prefix, prefill_text = self._resume_anchor(
+                conversation=conversation,
+                context_messages=context_messages,
+                resumed=resumed,
+            )
 
-            try:
-                llm_response = await self._orchestrator.generate_reply(request)
-            except Exception as exc:
-                await self._append_generation_trace(
-                    session_id=session.id,
-                    turn=turn,
-                    request_id=request_id,
-                    conversation=conversation,
-                    generation_settings=request.settings,
-                    memory_messages=context_messages,
-                    response=None,
-                    latency_ms=self._to_latency_ms(started_at),
-                    error=exc,
-                )
-                raise
-
-            await self._append_generation_trace(
+            llm_response = await self._generate_recovering_length(
+                request=request,
+                builder_input=builder_input,
+                resume_prefix=resume_prefix,
+                prefill_text=prefill_text,
                 session_id=session.id,
                 turn=turn,
-                request_id=request_id,
-                conversation=conversation,
-                generation_settings=request.settings,
-                memory_messages=context_messages,
-                response=llm_response,
-                latency_ms=self._to_latency_ms(started_at),
+                context_messages=context_messages,
             )
             # Must precede the `clear()` below — a retry that came back empty must not cost
             # the player the history it was regenerating from.
@@ -371,6 +334,154 @@ class ChatService:
             self._narrator_message(llm_response, turn),
         )
         return character_response
+
+    async def _generate_traced(
+        self,
+        *,
+        request: GenerationRequest,
+        session_id: UUID,
+        turn: int,
+        context_messages: list[ConversationMessage],
+    ) -> LLMResponse:
+        """Run one generation and record its trace, whether it succeeded or failed."""
+        request_id = str(uuid4())
+        started_at = perf_counter()
+        try:
+            llm_response = await self._orchestrator.generate_reply(request)
+        except Exception as exc:
+            await self._append_generation_trace(
+                session_id=session_id,
+                turn=turn,
+                request_id=request_id,
+                conversation=request.conversation,
+                generation_settings=request.settings,
+                memory_messages=context_messages,
+                response=None,
+                latency_ms=self._to_latency_ms(started_at),
+                error=exc,
+            )
+            raise
+
+        await self._append_generation_trace(
+            session_id=session_id,
+            turn=turn,
+            request_id=request_id,
+            conversation=request.conversation,
+            generation_settings=request.settings,
+            memory_messages=context_messages,
+            response=llm_response,
+            latency_ms=self._to_latency_ms(started_at),
+        )
+        return llm_response
+
+    async def _generate_recovering_length(
+        self,
+        *,
+        request: GenerationRequest,
+        builder_input: ScenarioConversationInput,
+        resume_prefix: list[ConversationMessage],
+        prefill_text: str,
+        session_id: UUID,
+        turn: int,
+        context_messages: list[ConversationMessage],
+    ) -> LLMResponse:
+        """Generate a reply, recovering once from the model's own token cap.
+
+        `finish_reason: length` means the model was cut off, and the player is left holding
+        half a turn — or, with a reasoning model, no turn at all. One extra attempt fixes
+        both cases, and the two need different shapes:
+
+        - Some prose was written. Resume it as an assistant prefill so the model continues
+          from those exact tokens, and hand back both halves as one reply.
+        - Nothing was written, because reasoning consumed the whole budget. There is nothing
+          to prefill, so re-run the original request. Only the larger retry cap makes the
+          second attempt different from the first.
+
+        `context_length` is deliberately not recovered: the context window is full, so a
+        second attempt would hit the same wall. Only one retry is made — if the cap is hit
+        again the reply is still stored as truncated, so `/continue` can carry on by hand.
+        """
+        response = await self._generate_traced(
+            request=request,
+            session_id=session_id,
+            turn=turn,
+            context_messages=context_messages,
+        )
+        retry_settings = self._length_retry_settings
+        if retry_settings is None or response.finish_reason != FINISH_REASON_LENGTH:
+            return response
+
+        # Everything written for this reply so far, including any earlier truncated text the
+        # request was already resuming — that is what the model must continue from.
+        carried = prefill_text + response.content
+        resumable = bool(carried.strip())
+        # Mode and cap go in the message, not only in `extra`: the default log format renders
+        # `%(message)s` and drops the extra fields.
+        logger.info(
+            "Reply stopped at the token cap; retrying once (mode=%s, max_tokens=%s)",
+            "resume" if resumable else "regenerate",
+            retry_settings.max_tokens,
+            extra={
+                "session_id": str(session_id),
+                "turn": turn,
+                "mode": "resume" if resumable else "regenerate",
+                "retry_max_tokens": retry_settings.max_tokens,
+            },
+        )
+        if resumable:
+            retry_conversation = self._conversation_builder.build_resume(
+                replace(
+                    builder_input,
+                    memory_messages=[
+                        *resume_prefix,
+                        ConversationMessage(role=ConversationRole.CHARACTER, content=carried),
+                    ],
+                )
+            )
+        else:
+            retry_conversation = request.conversation
+
+        retry_response = await self._generate_traced(
+            request=GenerationRequest(
+                memory_key=request.memory_key,
+                conversation=retry_conversation,
+                settings=retry_settings,
+            ),
+            session_id=session_id,
+            turn=turn,
+            context_messages=context_messages,
+        )
+        if not resumable:
+            return retry_response
+        # A prefill continuation normally emits no reasoning of its own, so keep the thinking
+        # from the attempt that did the planning rather than dropping it.
+        return replace(
+            retry_response,
+            content=response.content + retry_response.content,
+            thinking=retry_response.thinking or response.thinking,
+        )
+
+    @staticmethod
+    def _resume_anchor(
+        *,
+        conversation: Conversation,
+        context_messages: list[ConversationMessage],
+        resumed: bool,
+    ) -> tuple[list[ConversationMessage], str]:
+        """Where an automatic resume has to pick the reply up from.
+
+        A prefill conversation already ends with truncated text, so that text is the start
+        of the same reply and the messages before it are the prefix. Any other conversation
+        ends with the turn that asked for a reply, and the reply starts empty.
+
+        `resumed` is decided from the stored history, while the prefill itself comes from
+        what the memory strategy kept. A strategy that dropped the truncated turn would make
+        those two disagree — `build_resume` is already wrong in that case, and the provider
+        warns about it, so treat it as "nothing to carry" rather than crash the turn.
+        """
+        if resumed and context_messages:
+            return context_messages[:-1], context_messages[-1].content
+        return [*context_messages, conversation.messages[-1]], ""
 
     @staticmethod
     def _require_content(llm_response: LLMResponse) -> None:

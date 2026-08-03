@@ -578,9 +578,12 @@ class TelegramAdapter:
                     source_message=message,
                 ),
             )
+        # Every arm below names its reason in the *message*, not only in `extra`. The default
+        # logging format renders `%(message)s` and drops the extra fields, so a bare
+        # "Telegram failure" is six different faults that read identically in the log.
         except ValueError as exc:
             logger.warning(
-                "Telegram failure",
+                "Telegram failure: invalid_message",
                 extra={"reason": "invalid_message", "user_id": user_id},
             )
             error_text = str(exc).strip() or "Please send a non-empty message."
@@ -588,7 +591,7 @@ class TelegramAdapter:
             return
         except LLMConnectionError:
             logger.exception(
-                "Telegram failure",
+                "Telegram failure: llm_connection_error",
                 extra={"reason": "llm_connection_error", "user_id": user_id},
             )
             await self._reply_with_split(
@@ -598,7 +601,7 @@ class TelegramAdapter:
             return
         except LLMTimeoutError:
             logger.exception(
-                "Telegram failure",
+                "Telegram failure: llm_timeout_error",
                 extra={"reason": "llm_timeout_error", "user_id": user_id},
             )
             await self._reply_with_split(
@@ -608,8 +611,11 @@ class TelegramAdapter:
             return
         # Must precede the LLMGenerationError arm below — EmptyGenerationError subclasses it.
         except EmptyGenerationError as exc:
+            # The finish reason rides along in the message too: it is what tells an
+            # over-thinking model (`length`) from a full context window (`context_length`).
             logger.warning(
-                "Telegram failure",
+                "Telegram failure: llm_empty_generation (finish_reason=%s)",
+                exc.finish_reason,
                 extra={
                     "reason": "llm_empty_generation",
                     "user_id": user_id,
@@ -620,7 +626,7 @@ class TelegramAdapter:
             return
         except LLMGenerationError:
             logger.exception(
-                "Telegram failure",
+                "Telegram failure: llm_generation_error",
                 extra={"reason": "llm_generation_error", "user_id": user_id},
             )
             await self._reply_with_split(
@@ -630,7 +636,7 @@ class TelegramAdapter:
             return
         except Exception:
             logger.exception(
-                "Telegram failure",
+                "Telegram failure: unexpected_error",
                 extra={"reason": "unexpected_error", "user_id": user_id},
             )
             await self._reply_with_split(

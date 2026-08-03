@@ -1201,3 +1201,212 @@ async def test_retrying_after_a_naturally_ended_turn_still_advances() -> None:
     conversation = orchestrator.generate_reply.await_args.args[0].conversation
     assert conversation.continue_final_message is False
     assert "Continue the narration naturally" in conversation.messages[-1].content
+
+
+LENGTH_RETRY_SETTINGS = GenerationSettings(temperature=0.8, max_tokens=4000, top_p=0.95)
+
+
+def _length_retry_service(
+    *,
+    responses: list[LLMResponse],
+    history: list[ConversationMessage] | None = None,
+) -> tuple[ChatService, AsyncMock, AsyncMock]:
+    """A service that recovers once from the token cap, with a scripted model."""
+    stored = history if history is not None else []
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(side_effect=responses)
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(return_value=stored)
+    memory_strategy = Mock()
+    memory_strategy.build_context.side_effect = lambda messages: list(messages)
+
+    scenario_session_store = AsyncMock()
+    scenario_session_store.get_by_id = AsyncMock(return_value=_session())
+    scenario_definition_store = AsyncMock()
+    scenario_definition_store.get_by_id = AsyncMock(return_value=_definition())
+    user_store = AsyncMock()
+    user_store.get_by_id = AsyncMock(return_value=User(id=USER_ID, display_name="Pablo"))
+    group_store = AsyncMock()
+    group_store.get_by_id = AsyncMock(return_value=None)
+
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_strategy=memory_strategy,
+        user_identity_store=user_store,
+        group_identity_store=group_store,
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
+        generation_settings=GENERATION_SETTINGS,
+        length_retry_settings=LENGTH_RETRY_SETTINGS,
+    )
+    return service, orchestrator, conversation_store
+
+
+@pytest.mark.asyncio
+async def test_truncated_reply_is_resumed_automatically_and_delivered_as_one_turn() -> None:
+    """The player asked for one reply and gets one reply, even though the cap split it."""
+    service, orchestrator, conversation_store = _length_retry_service(
+        responses=[
+            LLMResponse(content="She reached for the door and", finish_reason="length"),
+            LLMResponse(content=" stepped into the rain.", finish_reason="stop"),
+        ]
+    )
+
+    response = await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="I follow her",
+    )
+
+    assert response == "She reached for the door and stepped into the rain."
+    # The second attempt is a prefill that carries the half-written reply.
+    retry = orchestrator.generate_reply.await_args_list[1].args[0]
+    assert retry.conversation.continue_final_message is True
+    assert retry.conversation.messages[-1].role == ConversationRole.CHARACTER
+    assert retry.conversation.messages[-1].content == "She reached for the door and"
+    # The player's own message is still in front of it, or the model would resume blind.
+    assert retry.conversation.messages[-2].content == "I follow her"
+    # One narrator turn is stored, holding both halves and the finish reason of the retry.
+    conversation_store.save_message.assert_awaited_with(
+        MemoryKey(f"session_{SESSION_ID}"),
+        ConversationMessage(
+            role=ConversationRole.CHARACTER,
+            content="She reached for the door and stepped into the rain.",
+            metadata={FINISH_REASON_METADATA_KEY: "stop", "turn": "1"},
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_reasoning_only_reply_is_retried_with_the_larger_budget() -> None:
+    """The turn-85 failure: the whole cap went on thinking, so there is nothing to resume
+    and the same request is re-run with more room."""
+    service, orchestrator, _ = _length_retry_service(
+        responses=[
+            LLMResponse(content="  \n ", finish_reason="length", thinking="planning at length"),
+            LLMResponse(content="She looks up.", finish_reason="stop"),
+        ]
+    )
+
+    response = await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="I wait",
+    )
+
+    assert response == "She looks up."
+    first, retry = (call.args[0] for call in orchestrator.generate_reply.await_args_list)
+    # Same prompt, bigger budget — nothing else would make the second attempt differ.
+    assert retry.conversation == first.conversation
+    assert retry.settings == LENGTH_RETRY_SETTINGS
+    assert first.settings == GENERATION_SETTINGS
+
+
+@pytest.mark.asyncio
+async def test_recovery_gives_up_after_one_retry() -> None:
+    """A second cap hit is stored as truncated, so `/continue` can carry on by hand."""
+    service, orchestrator, conversation_store = _length_retry_service(
+        responses=[
+            LLMResponse(content="She reached for", finish_reason="length"),
+            LLMResponse(content=" the door and", finish_reason="length"),
+        ]
+    )
+
+    response = await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="I follow her",
+    )
+
+    assert response == "She reached for the door and"
+    assert orchestrator.generate_reply.await_count == 2
+    conversation_store.save_message.assert_awaited_with(
+        MemoryKey(f"session_{SESSION_ID}"),
+        ConversationMessage(
+            role=ConversationRole.CHARACTER,
+            content="She reached for the door and",
+            metadata={FINISH_REASON_METADATA_KEY: FINISH_REASON_LENGTH, "turn": "1"},
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_full_context_window_is_not_retried() -> None:
+    """`context_length` means the window is full; a second attempt hits the same wall."""
+    service, orchestrator, _ = _length_retry_service(
+        responses=[LLMResponse(content="She reached for", finish_reason="context_length")]
+    )
+
+    response = await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="I follow her",
+    )
+
+    assert response == "She reached for"
+    assert orchestrator.generate_reply.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_recovery_is_off_when_no_retry_settings_are_wired() -> None:
+    service, orchestrator, _ = _build_service(
+        scenario_context=(_session(), _definition(), User(id=USER_ID, display_name="Pablo"))
+    )
+    orchestrator.generate_reply = AsyncMock(
+        return_value=LLMResponse(content="cut off mid-", finish_reason="length")
+    )
+
+    response = await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="I follow her",
+    )
+
+    assert response == "cut off mid-"
+    assert orchestrator.generate_reply.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_continue_that_is_cut_off_resumes_from_the_stored_text_too() -> None:
+    """A resumed turn that is itself cut off must continue the whole sentence, not just the
+    part this call produced."""
+    truncated = ConversationMessage(
+        role=ConversationRole.CHARACTER,
+        content="She reached for",
+        metadata={FINISH_REASON_METADATA_KEY: FINISH_REASON_LENGTH},
+    )
+    service, orchestrator, _ = _length_retry_service(
+        responses=[
+            LLMResponse(content=" the door and", finish_reason="length"),
+            LLMResponse(content=" stepped out.", finish_reason="stop"),
+        ],
+        history=[
+            ConversationMessage(role=ConversationRole.USER, content="I follow her"),
+            truncated,
+        ],
+    )
+
+    response = await service.continue_story(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+    )
+
+    # Only the new text is returned; the stored half is already on screen.
+    assert response == " the door and stepped out."
+    retry = orchestrator.generate_reply.await_args_list[1].args[0]
+    assert retry.conversation.messages[-1].content == "She reached for the door and"
+
+
+@pytest.mark.asyncio
+async def test_each_recovery_attempt_is_traced_separately() -> None:
+    service, _, _ = _length_retry_service(
+        responses=[
+            LLMResponse(content="She reached for", finish_reason="length"),
+            LLMResponse(content=" the door.", finish_reason="stop"),
+        ]
+    )
+    trace_store = AsyncMock()
+    service._generation_trace_store = trace_store  # type: ignore[attr-defined]
+    service._generation_trace_mode = "all"  # type: ignore[attr-defined]
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="I follow her",
+    )
+
+    assert trace_store.append.await_count == 2

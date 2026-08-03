@@ -115,7 +115,11 @@ class LMStudioProvider(LLMProvider):
         collector = _ReasoningFragmentCollector()
         result = model.respond(chat, config=config, on_prediction_fragment=collector)
 
-        clean_text, thinking = self._separate_reasoning(result, collector)
+        clean_text, thinking = self._separate_reasoning(
+            result,
+            collector,
+            keep_leading_space=conversation.continue_final_message,
+        )
         logger.info(f"LLM response content: {clean_text}")
 
         stats = getattr(result, "stats", None)
@@ -138,6 +142,8 @@ class LMStudioProvider(LLMProvider):
         self,
         result: Any,
         collector: "_ReasoningFragmentCollector",
+        *,
+        keep_leading_space: bool = False,
     ) -> tuple[str, str | None]:
         """Split the model's thinking from the prose the player will read.
 
@@ -152,13 +158,24 @@ class LMStudioProvider(LLMProvider):
         Empty prose with reasoning captured is left to `ChatService._require_content`, which
         rejects the turn as an `EmptyGenerationError` — that is the reasoning-only case, and
         it must never reach the player, but it is also not this layer's decision to make.
+
+        `keep_leading_space` is set for a prefill continuation, where the reply resumes
+        mid-sentence and the space in front of it is part of the text: stripping it glues
+        "he walked" to "to the door". It applies only when nothing was classified as
+        reasoning — which is the normal prefill case, per the docstring of
+        `ConversationBuilder.build_resume` — so no leftover newline from a reasoning
+        boundary can be mistaken for meaningful whitespace.
         """
         # A structured prediction's user-facing value is `result.parsed`, which fragments do
         # not reassemble into; leave those to `_extract_content`.
         if collector.saw_fragments and not getattr(result, "structured", False):
-            prose = collector.prose.strip()
+            reasoning = collector.reasoning.strip()
+            prose = self._trim_prose(
+                collector.prose,
+                keep_leading_space=keep_leading_space and not reasoning,
+            )
             if not _INTERNAL_MARKER_HINT.search(prose):
-                return prose, collector.reasoning.strip() or None
+                return prose, reasoning or None
             # LM Studio handed back a marker inside text it classified as prose, i.e. it did
             # not recognize this model's reasoning delimiters. Fall through to the split.
             logger.warning(
@@ -177,11 +194,14 @@ class LMStudioProvider(LLMProvider):
                 "fragment classification did not report any reasoning.",
                 extra={"model_name": self._model_name},
             )
-        clean_text = parts[-1].strip()
         # Anything the classification did catch is still the model's thinking, even when the
         # rest had to be recovered from the marker — keep both rather than pick one.
         reasoning_parts = [collector.reasoning, *parts[:-1]]
         thinking = "\n".join(part.strip() for part in reasoning_parts if part.strip()) or None
+        clean_text = self._trim_prose(
+            parts[-1],
+            keep_leading_space=keep_leading_space and thinking is None,
+        )
 
         # Both paths failed if a marker is still in there: the text is an unsplit blob of
         # reasoning, and handing it to the player as the story is worse than no reply.
@@ -193,6 +213,19 @@ class LMStudioProvider(LLMProvider):
             raise LLMGenerationError(msg)
 
         return clean_text, thinking
+
+    @staticmethod
+    def _trim_prose(text: str, *, keep_leading_space: bool) -> str:
+        """Trim generated prose, optionally keeping the space a continuation starts with.
+
+        Only a single leading space or newline survives. More than that is model padding,
+        not sentence glue.
+        """
+        trimmed = text.rstrip()
+        if not keep_leading_space:
+            return trimmed.strip()
+        leading = trimmed[: len(trimmed) - len(trimmed.lstrip())]
+        return leading[:1] + trimmed.lstrip()
 
     def _get_config(self, settings: GenerationSettings) -> lms.LlmPredictionConfig:
         # A positive per-request cap wins; otherwise fall back to the configured default.

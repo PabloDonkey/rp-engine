@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     # Maximum tokens per reply. 0 means "no limit" (generate until the model stops or the
     # context is full). Absent or empty in the environment is treated as 0.
     lmstudio_max_tokens: int = Field(default=0, ge=0)
+    # Maximum tokens for the one automatic retry made after a reply stops at the token cap
+    # (finish_reason `length`). It needs more room than the attempt that just ran out, so a
+    # reasoning model that spent the whole budget thinking gets a chance to write the reply.
+    # 0 means "no limit". Set it equal to lmstudio_max_tokens to retry with the same budget.
+    # See application/services/chat_service.py.
+    lmstudio_length_retry_max_tokens: int = Field(default=0, ge=0)
     lmstudio_temperature: float = Field(default=0.8, ge=0.0)
     lmstudio_top_k_sampling: int = Field(default=40, ge=1)
     lmstudio_repeat_penalty: float = Field(default=1.1, ge=0.0)
@@ -73,7 +79,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["data/catalog"]
     )
 
-    @field_validator("lmstudio_max_tokens", mode="before")
+    @field_validator("lmstudio_max_tokens", "lmstudio_length_retry_max_tokens", mode="before")
     @classmethod
     def _empty_max_tokens_means_unlimited(cls, value: object) -> object:
         # An absent variable already falls back to the default (0); this also maps an
