@@ -3,7 +3,7 @@
 RP Engine is scenario-driven: players pick an adventure from a **curated library** and
 play it. **Postgres (`ScenarioDefinitionStore`) is the live source scenarios are played
 from** — the admin panel is where scenarios are authored/edited (see ADR-024 in
-`docs/DECISIONS.md`). JSON is a transfer format: a starting/bulk-seed and backup/portability
+`docs/adr/`). JSON is a transfer format: a starting/bulk-seed and backup/portability
 mechanism, not something the running engine reads directly on every `/play`.
 
 This document describes the JSON format (for import/export and hand-authoring a starting

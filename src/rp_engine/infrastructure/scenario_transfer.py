@@ -1,7 +1,7 @@
 """Scenario transfer: JSON files <-> `ScenarioDefinitionStore`.
 
 Recycled from the old JSON-file `ScenarioCatalog` runtime loader (see ADR-024 in
-`docs/DECISIONS.md`): the directory-walk and per-file validation below used to be the
+`docs/adr/`): the directory-walk and per-file validation below used to be the
 live source `/play` read from directly. Now Postgres is the live source, and this module
 is only used to *import* curated scenarios into it — once at startup, and via the admin
 panel's import/export endpoints (see `application/services/scenario_transfer_service.py`).

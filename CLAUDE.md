@@ -80,7 +80,7 @@ The engine is **scenario-native**: `User → ScenarioDefinition → ScenarioSess
 Conversation`. A `ScenarioDefinition` is an immutable blueprint (world, characters, rules,
 opening); a `ScenarioSession` is a per-owner runtime instance. `Character` is an *optional*
 embedded asset, not a root entity. There is **no v1 backward compatibility** — the old
-character-centric `Session` model was fully removed (see `docs/DECISIONS.md` ADR-023).
+character-centric `Session` model was fully removed (see `docs/adr/` ADR-023).
 
 ### Persistence: Postgres-only, JSON is import/export (ADR-024)
 
@@ -108,7 +108,7 @@ Substantial design docs live in `docs/` — read the relevant one before large c
 | `docs/ARCHITECTURE.md` | layer responsibilities, dependency rules, command flows |
 | `docs/DOMAIN_MODEL.md` | domain entities and terminology |
 | `docs/DATABASE_MODEL.md` | PostgreSQL tables ↔ repository mapping |
-| `docs/DECISIONS.md` | ADRs (ADR-023 = the scenario pivot, ADR-024 = Postgres-only persistence) |
+| `docs/adr/` | ADRs, one per file (ADR-023 = the scenario pivot, ADR-024 = Postgres-only persistence); index + front matter rules in `docs/adr/README.md` |
 | `docs/SCENARIOS.md` | scenario authoring guide (JSON import/export + admin panel) |
 | `docs/ROADMAP.md` | milestones |
 

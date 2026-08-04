@@ -126,7 +126,7 @@ Optional application variables:
 * `RP_ENGINE_SCENARIO_CATALOG_DIRS` (comma-delimited list of directories with curated scenario
   JSON files, imported into Postgres on every boot; default `data/catalog`)
 
-Postgres is the sole persistence backend (see `docs/DECISIONS.md`, ADR-024) — these variables
+Postgres is the sole persistence backend (see `docs/adr/`, ADR-024) — these variables
 are always in effect:
 
 * `RP_ENGINE_POSTGRES_HOST`
@@ -253,7 +253,7 @@ uv run mypy .
 uv run pytest
 ```
 
-Postgres is the sole persistence backend (see `docs/DECISIONS.md`, ADR-024), so the suite
+Postgres is the sole persistence backend (see `docs/adr/`, ADR-024), so the suite
 spins up a throwaway Postgres via [testcontainers](https://testcontainers-python.readthedocs.io/)
 automatically (`tests/conftest.py`) — no manual `docker compose up` needed, just a running
 Docker daemon.
@@ -394,7 +394,7 @@ mapped into RP Engine's internal character domain model.
 | `DATABASE_MODEL.md` | PostgreSQL persistence mapping |
 | `ARCHITECTURE.md` | System architecture           |
 | `API.md`          | HTTP API specification        |
-| `DECISIONS.md`    | Architecture decision records |
+| `adr/`            | Architecture decision records, one per file |
 | `ROADMAP.md`      | Planned milestones            |
 | `TESTING.md`      | Testing strategy              |
 

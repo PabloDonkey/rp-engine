@@ -247,7 +247,7 @@ Columns:
   - get_active_for_owner
   - delete
 
-PostgreSQL is the sole persistence backend (see `docs/DECISIONS.md`, ADR-024) — the composition
+PostgreSQL is the sole persistence backend (see `docs/adr/`, ADR-024) — the composition
 root (`app/main.py::build_container`) wires these repositories unconditionally. One behavioral
 contract suite (`tests/unit/infrastructure/contracts/`) exercises each port against Postgres via
 the testcontainers fixture in `tests/conftest.py`.

@@ -238,7 +238,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title=resolved_settings.app_name, lifespan=create_lifespan(container))
     app.state.container = container
-    # Admin panel has no auth (trust the Tailscale network, see docs/DECISIONS.md); allow the
+    # Admin panel has no auth (trust the Tailscale network, see docs/adr/); allow the
     # Vue dev server / any tailnet origin to call it rather than fighting CORS in that model.
     app.add_middleware(
         CORSMiddleware,

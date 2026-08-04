@@ -14,7 +14,7 @@ and cheap to get right on paper.
 
 ## Tasks
 
-- [x] **ADR-026** in `docs/DECISIONS.md` — the `MemorySource` port, `MemoryFragment`,
+- [x] **ADR-026** in `docs/adr/0026-layered-memory.md` — the `MemorySource` port, `MemoryFragment`,
       `MemoryPipeline`, per-session `MemorySettings`, the five layers, the build order
       S022→S026, the deferred embedding decision, and the partial supersession of ADR-013.
 - [ ] **`ARCHITECTURE.md`** — it already describes a "Memory Manager" that ADR-013 forbade.

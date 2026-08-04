@@ -6,7 +6,7 @@ and does not duplicate, the strategic docs in `../docs/`:
 | Layer | Lives in | Answers |
 |---|---|---|
 | Strategy — milestones | `../docs/ROADMAP.md` | *What are we building next, and why?* |
-| Rationale — decisions | `../docs/DECISIONS.md` (ADRs) | *Why did we choose this?* |
+| Rationale — decisions | `../docs/adr/` (ADRs, one per file) | *Why did we choose this?* |
 | **Execution — this folder** | `.devloop/` | *What am I doing right now, and what did I already finish?* |
 
 > **Note:** `.devloop/` is **committed to git**, so the board and the epics get per-commit

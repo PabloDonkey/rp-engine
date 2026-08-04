@@ -631,8 +631,8 @@ The architecture follows these principles:
 
 # Architecture Decision Records
 
-Major architectural decisions are documented separately in `DECISIONS.md`.
+Major architectural decisions are documented separately in `docs/adr/`, one decision per file.
 
 This document describes the architecture.
 
-`DECISIONS.md` explains why specific architectural choices were made.
+The ADRs explain why specific architectural choices were made. `docs/adr/README.md` is the index.
