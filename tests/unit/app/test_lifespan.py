@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -43,6 +44,16 @@ class FakeScenarioTransferService:
         return ImportReport(imported=0, skipped=0)
 
 
+class FakeContextBudget:
+    def __init__(self, *, total: int = 5734) -> None:
+        self.total = total
+        self.calls = 0
+
+    async def total_tokens(self) -> int:
+        self.calls += 1
+        return self.total
+
+
 @dataclass(slots=True)
 class FakeContainer:
     telegram_runtime: FakeTelegramRuntime | None
@@ -53,6 +64,7 @@ class FakeContainer:
         default_factory=FakeScenarioTransferService
     )
     scenario_catalog_dirs: list[str] = field(default_factory=lambda: ["data/catalog"])
+    context_budget: FakeContextBudget = field(default_factory=FakeContextBudget)
 
 
 @pytest.mark.asyncio
@@ -104,6 +116,28 @@ async def test_lifespan_imports_curated_scenarios_when_db_reachable() -> None:
         pass
 
     assert transfer_service.imported_from == ["data/catalog", "data/catalog-local"]
+
+
+@pytest.mark.asyncio
+async def test_lifespan_resolves_the_context_token_budget(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Reading the budget at boot is what puts a wrong one in the log, instead of leaving it
+    # to silently drop story on the first turn.
+    budget = FakeContextBudget(total=5734)
+    container = FakeContainer(
+        telegram_runtime=None,
+        runtime_state=RuntimeState(),
+        context_budget=budget,
+    )
+
+    lifespan = create_lifespan(container)
+    with caplog.at_level(logging.INFO):
+        async with lifespan(FastAPI()):
+            pass
+
+    assert budget.calls == 1
+    assert "Context token budget resolved" in caplog.text
 
 
 @pytest.mark.asyncio

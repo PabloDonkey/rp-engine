@@ -26,6 +26,7 @@ from rp_engine.application.services.scenario_transfer_service import ScenarioTra
 from rp_engine.application.services.session_directive_service import SessionDirectiveService
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.llm.generation import GenerationSettings
+from rp_engine.core.memory.context_budget import ContextBudget
 from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
 from rp_engine.core.ports import (
     ConversationStore,
@@ -34,10 +35,11 @@ from rp_engine.core.ports import (
     LLMProvider,
     ScenarioDefinitionStore,
     ScenarioSessionStore,
+    TokenCounter,
     UserIdentityStore,
 )
 from rp_engine.infrastructure.config.settings import Settings, get_settings
-from rp_engine.infrastructure.llm.lmstudio import LMStudioProvider
+from rp_engine.infrastructure.llm.lmstudio import LMStudioProvider, LMStudioTokenCounter
 from rp_engine.infrastructure.postgres import (
     PostgresConfig,
     PostgresConversationStore,
@@ -70,6 +72,8 @@ def configure_logging(log_level: str) -> None:
 class AppContainer:
     settings: Settings
     llm_provider: LLMProvider
+    token_counter: TokenCounter
+    context_budget: ContextBudget
     orchestrator: RPOrchestrator
     chat_service: ChatService
     identity_resolver: IdentityResolver
@@ -96,6 +100,18 @@ def build_container(settings: Settings) -> AppContainer:
         temperature=settings.lmstudio_temperature,
         reasoning_start_tag=settings.lmstudio_reasoning_start_tag,
         reasoning_end_tag=settings.lmstudio_reasoning_end_tag,
+    )
+    # Counting and generating share one model, so they share one model name. The counter
+    # is built after the provider only because the provider is what configures the LM
+    # Studio default client for the process.
+    lmstudio_token_counter = LMStudioTokenCounter(
+        model_name=settings.lmstudio_model,
+        api_host=settings.lmstudio_api_host,
+        fallback_context_length=settings.memory_fallback_context_length,
+    )
+    context_budget = ContextBudget(
+        context_window=lmstudio_token_counter,
+        share=settings.memory_context_budget_share,
     )
     postgres_config = PostgresConfig.from_settings(settings)
     postgres_engine = create_engine(postgres_config)
@@ -213,6 +229,8 @@ def build_container(settings: Settings) -> AppContainer:
     return AppContainer(
         settings=settings,
         llm_provider=llm_provider,
+        token_counter=lmstudio_token_counter,
+        context_budget=context_budget,
         orchestrator=orchestrator,
         chat_service=chat_service,
         identity_resolver=identity_resolver,

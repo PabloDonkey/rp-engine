@@ -1,6 +1,6 @@
 # S022 · Memory layer 00 — token budget, windowed recall, pipeline skeleton
 
-**Status:** 🔵 Backlog (not started)
+**Status:** 🟢 In progress — scope item 1 (token counting) done 2026-08-03.
 **Depends on:** **S021** — ADR-026 + memory design docs. Do not start this before the ports and
 the fragment contract are written down; this epic implements them, it does not decide them.
 **Design source:** [Five ways to remember a story](https://claude.ai/code/artifact/c77560f4-99c2-4566-8b1c-9687d3893ac5)
@@ -31,20 +31,33 @@ plug into. After this epic, long sessions stop overflowing, and adding layer 01 
 
 **Settled in S021** (ADR-026 → "Decisions delegated to S021"): ask LM Studio, cache the answer.
 
-- [ ] `TokenCounter` port in `core/ports/`, one method.
-- [ ] `LMStudioTokenCounter` in `infrastructure/` — the software development kit (SDK) already
+- [x] `TokenCounter` port in `core/ports/`, one method (`core/ports/token_counter.py`).
+- [x] `LMStudioTokenCounter` in `infrastructure/` — the software development kit (SDK) already
       exposes `count_tokens(input) -> int` on the model handle
       (`.venv/lib/python3.12/site-packages/lmstudio/async_api.py:1130`), which counts with the
       loaded model's own tokenizer. **No new dependency.**
-- [ ] Cache the count per message, keyed by **model name** — a stored message never changes, but
+- [x] Cache the count per message, keyed by **model name** — a stored message never changes, but
       its token count changes when the model does. In-memory first; a `token_count` column is
-      deliberately deferred (see `docs/DATABASE_MODEL.md`).
-- [ ] Character-ratio fallback behind the same port, which logs when it fires. A hiccup talking to
-      localhost must never fail a turn.
-- [ ] Read the total budget from `get_context_length()` at boot (same file, line 1135) and take a
+      deliberately deferred (see `docs/DATABASE_MODEL.md`). Bounded least-recently-used cache,
+      4096 entries, keyed by model name and a digest of the text. A fallback estimate is never
+      cached, so the next call asks LM Studio again.
+- [x] Character-ratio fallback behind the same port, which logs when it fires. A hiccup talking to
+      localhost must never fail a turn. `core/memory/character_ratio_token_counter.py`, four
+      characters per token, rounding up.
+- [x] Read the total budget from `get_context_length()` at boot (same file, line 1135) and take a
       configured **share** of it. The share is the setting; the absolute token number is not.
       Follow the `RP_ENGINE_`-prefixed pydantic-settings pattern in
       `infrastructure/config/settings.py`.
+      Landed as a second one-method port, `ContextWindowProbe` (`LMStudioTokenCounter` implements
+      both), plus `ContextBudget` in `core/memory/`. Settings:
+      `RP_ENGINE_MEMORY_CONTEXT_BUDGET_SHARE` (0.7) and `RP_ENGINE_MEMORY_FALLBACK_CONTEXT_LENGTH`
+      (4096, used only when LM Studio cannot be asked at all). `app/lifespan.py` resolves and logs
+      the budget at boot, so a wrong one shows up there rather than in a silently trimmed prompt.
+
+**Also fixed here (test pollution, found on the way):** `alembic/env.py` called
+`fileConfig(...)` with the default `disable_existing_loggers=True`, which switched off the whole
+`rp_engine` logger tree for every test that ran after the migration tests. Any test asserting on
+a log line passed alone and failed in a full run. Now `disable_existing_loggers=False`.
 
 ### 2. The pipeline and its port
 

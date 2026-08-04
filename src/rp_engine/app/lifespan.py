@@ -26,6 +26,10 @@ class ScenarioTransferServiceProtocol(Protocol):
     async def import_directory(self, path: str) -> ImportReport: ...
 
 
+class ContextBudgetProtocol(Protocol):
+    async def total_tokens(self) -> int: ...
+
+
 class ContainerProtocol(Protocol):
     @property
     def telegram_runtime(self) -> TelegramRuntimeProtocol | None: ...
@@ -44,6 +48,9 @@ class ContainerProtocol(Protocol):
 
     @property
     def scenario_catalog_dirs(self) -> "list[str]": ...
+
+    @property
+    def context_budget(self) -> ContextBudgetProtocol: ...
 
 
 class RuntimeStateProtocol(Protocol):
@@ -84,6 +91,15 @@ def create_lifespan(
                         "skipped": report.skipped,
                     },
                 )
+
+        # Ask the model how much room it has once, here, so a wrong budget shows up in the
+        # boot log instead of in a prompt that silently dropped half the story. The call
+        # never raises: an unreachable LM Studio logs and returns the assumed window.
+        context_token_budget = await container.context_budget.total_tokens()
+        logger.info(
+            "Context token budget resolved",
+            extra={"context_token_budget": context_token_budget},
+        )
 
         if container.telegram_runtime is not None:
             await container.telegram_runtime.start()

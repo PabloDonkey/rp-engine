@@ -394,6 +394,17 @@ def _normalize_api_host(api_host: str) -> str:
     return api_host
 
 
+def ensure_default_client_configured(api_host: str) -> None:
+    """Point the LM Studio default client at `api_host`, once per process.
+
+    The SDK keeps one default client as module state, so every component that talks to LM
+    Studio shares it. `LMStudioProvider` owns the record of what it was set to; this
+    exists so the other components in this package do not have to reach for a classmethod
+    on the provider, or keep a second record that could disagree with it.
+    """
+    LMStudioProvider._ensure_default_client_configured(_normalize_api_host(api_host))
+
+
 # The exact internal marker LM Studio has been observed to synthesize, used only to split a
 # reply the supported fragment classification did not separate. `_INTERNAL_MARKER_HINT` is
 # deliberately looser: it recognizes a marker whose shape drifted well enough to refuse the

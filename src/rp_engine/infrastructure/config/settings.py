@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     lmstudio_reasoning_start_tag: str = ""
     lmstudio_reasoning_end_tag: str = ""
 
+    # Share of the model's context window the prompt may spend on context. The window
+    # itself is read from LM Studio at boot and is deliberately not a setting (ADR-026): a
+    # hand-set token number goes silently wrong the moment a model with a smaller window is
+    # loaded. What is left over is the room the reply is written into.
+    memory_context_budget_share: float = Field(default=0.7, gt=0.0, le=1.0)
+    # Context window assumed when LM Studio cannot be asked at all. Small on purpose —
+    # guessing too high overflows the real window and loses the turn.
+    memory_fallback_context_length: int = Field(default=4096, ge=1)
+
     debug_status_enabled: bool = False
     debug_generation_trace: Literal["off", "errors", "all"] = "off"
     default_world_id: str = "default"

@@ -11,12 +11,6 @@
 
 ## 🟡 Up Next
 
-### **S022** · Memory layer 00 — token budget + windowed recall + pipeline skeleton — replaces `DumpEverythingStrategy` (which returns every message ever stored) with a budgeted window, and lands the composite the other four layers plug into. Blocked on a real token counter: nothing in the repo counts tokens, and `RP_ENGINE_LMSTUDIO_MAX_TOKENS` caps *output*, not context. Fix the positional system-message slicing in `_build_debug_prompts` first — those indices are already wrong and a memory section shifts them again.
-✅ **Unblocked 2026-08-03.** S021 settled all four decisions. The token counter is **LM Studio's own `count_tokens`** — already in the installed software development kit (SDK), no new dependency — cached per message and keyed by model name, with the budget read from `get_context_length()` at boot instead of configured. `recall` takes a frozen `MemoryRecallContext`. Budget overflow goes into the generation trace, not a per-turn log line.
-⛔ **Still do first:** the `_build_debug_prompts` positional slicing fix, which lands *before* the builder change.
-🔗 **Blocks:** S023, S024, S025, S026 — every layer plugs into the pipeline this epic builds.
-→ [epic](epics/S022-memory-layer-00-window-and-pipeline.md) · [design](../docs/MEMORY.md)
-
 ### **S023** · Memory layer 01 — rolling summary — condense what falls out of the window into a running "story so far", re-condensing the recap when it outgrows its budget. Best value in the whole memory stack: `LMStudioConversationSummarizer` is **already implemented and never wired into the composition root**, so this is mostly an integration job plus one table. First entry in the per-session `/memory` toggle.
 ⛔ **Blocked by:** **S022** (pipeline, token counter, `MemorySource` port).
 ✅ **Background worker settled 2026-08-03, and this epic builds it.** An in-process `asyncio.Queue` owned by `app/lifespan.py`, wrapping `MemoryPipeline.observe` once in the application layer — not an `asyncio.create_task` in the chat service, and not a Postgres jobs table. The rule that makes an in-memory queue safe: **a job is a question about stored state, never a command carrying data**, so a job lost to a restart costs nothing and the next turn asks again. Summaries queue at a high-water mark below the budget (75%), not at it. S025 and S026 reuse the same worker.
@@ -24,7 +18,11 @@
 
 ## 🟢 In Progress
 
-_(nothing in flight)_
+### **S022** · Memory layer 00 — token budget + windowed recall + pipeline skeleton — replaces `DumpEverythingStrategy` (which returns every message ever stored) with a budgeted window, and lands the composite the other four layers plug into.
+✅ **Step 1 done 2026-08-03 — token counting.** `TokenCounter` and `ContextWindowProbe` ports (one method each), `LMStudioTokenCounter` behind both — LM Studio's own `count_tokens`, no new dependency — with a bounded per-model count cache and a character-ratio fallback that logs when it fires. The budget is a configured **share** (`RP_ENGINE_MEMORY_CONTEXT_BUDGET_SHARE`, 0.7) of the window read from `get_context_length()`, resolved and logged at boot. Also fixed a real test-pollution bug on the way: `alembic/env.py` disabled every existing logger, so any test asserting on a log line passed alone and failed in a full run.
+⏭️ **Next:** the `_build_debug_prompts` positional slicing fix (scope item 6), which lands *before* the builder change, then the `MemorySource` / `MemoryPipeline` skeleton.
+🔗 **Blocks:** S023, S024, S025, S026 — every layer plugs into the pipeline this epic builds.
+→ [epic](epics/S022-memory-layer-00-window-and-pipeline.md) · [design](../docs/MEMORY.md)
 
 ## ✅ Done (recent)
 

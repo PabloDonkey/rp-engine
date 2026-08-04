@@ -24,7 +24,11 @@ from rp_engine.infrastructure.postgres.models import Base  # noqa: E402
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers` defaults to True, which switches off every logger that
+    # already exists — including the whole `rp_engine` tree when the migration tests run
+    # this in-process. Alembic only needs to add its own logging, not silence everyone
+    # else's.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 settings = Settings()
 postgres_config = PostgresConfig.from_settings(settings)

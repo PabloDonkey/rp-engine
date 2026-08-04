@@ -1,3 +1,4 @@
+from rp_engine.core.ports.context_window import ContextWindowProbe
 from rp_engine.core.ports.conversation_store import ConversationStore
 from rp_engine.core.ports.conversation_summarizer import ConversationSummarizer
 from rp_engine.core.ports.generation_trace_store import GenerationTraceStore
@@ -13,10 +14,12 @@ from rp_engine.core.ports.processing_feedback import (
 )
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
+from rp_engine.core.ports.token_counter import TokenCounter
 from rp_engine.core.ports.user_identity_store import UserIdentityStore
 from rp_engine.core.ports.world_store import WorldStore
 
 __all__ = [
+    "ContextWindowProbe",
     "ConversationStore",
     "ConversationSummarizer",
     "GenerationTraceStore",
@@ -30,6 +33,7 @@ __all__ = [
     "processing_feedback_scope",
     "ScenarioDefinitionStore",
     "ScenarioSessionStore",
+    "TokenCounter",
     "UserIdentityStore",
     "WorldStore",
 ]
