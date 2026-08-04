@@ -110,6 +110,7 @@ Substantial design docs live in `docs/` — read the relevant one before large c
 | `docs/DATABASE_MODEL.md` | PostgreSQL tables ↔ repository mapping |
 | `docs/adr/` | ADRs, one per file (ADR-023 = the scenario pivot, ADR-024 = Postgres-only persistence); index + front matter rules in `docs/adr/README.md` |
 | `docs/SCENARIOS.md` | scenario authoring guide (JSON import/export + admin panel) |
+| `docs/MEMORY.md` | the five memory layers — what each stores, returns and costs (ADR-026; design, not built) |
 | `docs/ROADMAP.md` | milestones |
 
 ## Dev-loop tracking (`.devloop/`)

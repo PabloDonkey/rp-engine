@@ -99,18 +99,31 @@ Users can interact with the engine entirely through Telegram.
 
 ## Goal
 
-Introduce persistent long-term memory.
+Stop replaying the whole conversation into every prompt. Give the engine a budget, and layers
+that decide what fills it.
+
+Designed in ADR-026 and settled in S021. See `docs/MEMORY.md` for what each layer does.
 
 ### Deliverables
 
-* Conversation summaries
-* Memory retrieval
-* Context management
-* Memory persistence
+Five layers behind one port, built in this order. Each ships on its own and is judged on its own.
+
+| Story | Layer | What lands |
+|---|---|---|
+| S022 | 00 recent window | `TokenCounter`, the budget read from the model, `MemoryPipeline`, and a windowed history that replaces `DumpEverythingStrategy` |
+| S023 | 01 rolling summary | the background worker, and the running "story so far" |
+| S024 | 02 lorebook | authored facts with trigger keys, matched by Postgres full-text search, plus admin editing |
+| S025 | 03 fact and state store | extracted facts with validity windows, and deterministic conflict resolution |
+| S026 | 04 semantic recall | embeddings. Only if a concrete failure demands it. |
+
+Alongside them: `MemorySettings` on the session, a `/memory` command, and admin panel controls.
 
 ### Success Criteria
 
-The engine recalls relevant past information across long conversations.
+* A long session never overflows the context window.
+* A layer can be switched off per session without touching any other layer.
+* Adding a sixth layer changes one line in the composition root and nothing else.
+* What the budget dropped is visible in the generation trace, not silent.
 
 ---
 

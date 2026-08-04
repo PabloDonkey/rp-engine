@@ -184,7 +184,7 @@ The engine sub-layer contains RP-specific orchestration logic.
 Responsibilities include:
 
 * Conversation construction
-* Memory retrieval
+* Memory recall, through `MemoryPipeline`
 * Character loading
 * World loading
 * Response generation workflow
@@ -321,14 +321,73 @@ Responsible for:
 
 ---
 
-## Memory Manager
+## Memory Pipeline
+
+`MemoryPipeline` composes memory sources. It does not store conversations and it does not
+build prompts. ADR-013 forbids a memory manager that combines storage and strategy; this
+component composes strategies only, which is the part ADR-026 carved out.
 
 Responsible for:
 
-* Recent context
-* Long-term memory
-* Retrieval
-* Summarization
+* Running the enabled `MemorySource` implementations at the same time
+* Merging what they return into one ordered block of `MemoryFragment` values
+* Cutting that block to the token budget by fragment priority
+* Keeping a failing source from failing the turn
+
+Each source is one memory layer. All five implement the same port, so adding a layer adds
+a class and one line in the composition root.
+
+| Layer | Source | Holds |
+|---|---|---|
+| 00 | `RecentWindowSource` | the last N turns, word for word |
+| 01 | `RollingSummarySource` | what the window dropped, compressed |
+| 02 | `LorebookSource` | authored facts that do not change |
+| 03 | `FactStateSource` | extracted facts with validity windows |
+| 04 | `SemanticRecallSource` | any past message, addressed by meaning |
+
+The pipeline has a read half and a write half. `recall` runs before the prompt is built and
+returns fragments. `observe` runs after a successful turn and is submitted to the background
+worker, so it never adds to the turn's latency.
+
+Neither half receives the live `ScenarioSession`. `MemoryRecallContext` and
+`MemoryObserveContext` are frozen read models that state exactly what a source may depend on.
+
+See ADR-026 for the port definitions, the per-session toggles and the build order.
+
+---
+
+## Background Worker
+
+An in-process job queue. `app/lifespan.py` starts one worker loop at boot, next to the
+Telegram runtime, and cancels it on shutdown.
+
+Responsible for:
+
+* Running work that must stay off the turn path — summarization, fact extraction,
+  consolidation, re-embedding
+* Isolating that work, so a failed job is logged and never reaches the turn
+
+A job is a question about stored state, never a command carrying data. The worker re-reads
+Postgres and decides what to do. A job lost to a restart therefore costs nothing: the next
+turn asks the same question. This is why the queue needs no durable backing store.
+
+`BackgroundTaskScheduler` is the port in `core/ports/`. `AsyncioTaskScheduler` implements it
+in `infrastructure/`. Tests use an inline fake that runs the job at once.
+
+---
+
+## Token Counter
+
+`TokenCounter` is a port with one method. It exists because the memory budget is meaningless
+without it, and a wrong count silently drops story.
+
+The real implementation asks LM Studio, which counts with the loaded model's own tokenizer.
+Counts are cached per message and keyed by model name, because a stored message never changes
+but a model swap changes its token count. A character-ratio estimate takes over when the call
+fails, and logs that it did.
+
+The absolute context budget is read from the model at boot, not configured. The share of it
+the engine may use stays a setting.
 
 ---
 
@@ -341,8 +400,10 @@ Possible inputs include:
 * Recent messages
 * Character information
 * World information
-* Memory retrieval
+* Memory fragments, already selected and cut to budget by `MemoryPipeline`
 * System context messages
+
+The builder receives finished fragments as data. It never calls a memory source.
 
 Output:
 
@@ -566,8 +627,9 @@ per turn.
 ## Memory
 
 * Persisted conversation history
-* Strategy-built context window
-* Optional summarization/retrieval extensions
+* A context block built by `MemoryPipeline` from the sources a session has enabled
+* A token budget, derived from the loaded model's context length
+* Per-session toggles (`MemorySettings`), one per layer above 00
 
 ---
 

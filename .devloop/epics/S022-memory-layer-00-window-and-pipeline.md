@@ -29,21 +29,38 @@ plug into. After this epic, long sessions stop overflowing, and adding layer 01 
 
 ### 1. Token counting (the prerequisite for every layer)
 
-- [ ] Decide the counter: real tokenizer dependency vs. calibrated heuristic. **Note:** the only
-      token-ish measure in the repo today is `len(text.split())` in a debug trace — not usable as a
-      budget.
-- [ ] `TokenCounter` port in `core/ports/`, implementation in `infrastructure/`.
-- [ ] New settings: context budget (total) + per-source shares. Follow the `RP_ENGINE_`-prefixed
-      pydantic-settings pattern in `infrastructure/config/settings.py`.
+**Settled in S021** (ADR-026 → "Decisions delegated to S021"): ask LM Studio, cache the answer.
+
+- [ ] `TokenCounter` port in `core/ports/`, one method.
+- [ ] `LMStudioTokenCounter` in `infrastructure/` — the software development kit (SDK) already
+      exposes `count_tokens(input) -> int` on the model handle
+      (`.venv/lib/python3.12/site-packages/lmstudio/async_api.py:1130`), which counts with the
+      loaded model's own tokenizer. **No new dependency.**
+- [ ] Cache the count per message, keyed by **model name** — a stored message never changes, but
+      its token count changes when the model does. In-memory first; a `token_count` column is
+      deliberately deferred (see `docs/DATABASE_MODEL.md`).
+- [ ] Character-ratio fallback behind the same port, which logs when it fires. A hiccup talking to
+      localhost must never fail a turn.
+- [ ] Read the total budget from `get_context_length()` at boot (same file, line 1135) and take a
+      configured **share** of it. The share is the setting; the absolute token number is not.
+      Follow the `RP_ENGINE_`-prefixed pydantic-settings pattern in
+      `infrastructure/config/settings.py`.
 
 ### 2. The pipeline and its port
 
 - [ ] `MemorySource` protocol (`recall` read half / `observe` write half) + frozen `MemoryFragment`
       (`source`, `label`, `body`, `priority`, `tokens`) — exactly as ADR-026 fixes them.
+- [ ] Frozen `MemoryRecallContext` (session id, scenario id, recent messages, current user message,
+      remaining budget) and `MemoryObserveContext` (session id, scenario id, turn). **Settled in
+      S021:** a source never receives the live `ScenarioSession`, and `observe` carries identifiers
+      only — never message text, because it runs in the background worker.
 - [ ] `MemoryPipeline` composite: runs the enabled sources concurrently, merges fragments, applies
-      the budget by `priority`.
-- [ ] `WindowMemorySource` — the last N turns that fit the allowance; hands the overflow to
-      layer 01 (S023) via whatever handoff ADR-026 defines.
+      the budget by `priority`. A failing source is logged and dropped, never fatal to the turn.
+- [ ] `RecentWindowSource` — the last N turns that fit the allowance. Its floor is
+      `session_summaries.covers_through_turn` once S023 lands; until then there is no floor.
+- [ ] **Settled in S021:** what the budget cut — dropped message count and token total — goes into
+      the generation trace `record` dict (`GenerationTraceStore.append`), not into a per-turn log
+      line. A warning is reserved for the S023 case where layer 01 is on and its summary is behind.
 
 ### 3. Replace `MemoryStrategy`
 
@@ -89,7 +106,14 @@ plug into. After this epic, long sessions stop overflowing, and adding layer 01 
 - [ ] **Live over Telegram:** run a session past the budget and confirm the reply stays in
       character and no `context_length` finish reason appears.
 
-## Open questions for S021 to settle
+## Questions S021 settled (2026-08-03)
 
-- Where the window's overflow goes when layer 01 is disabled — dropped silently, or logged.
-- Whether `recall` gets the whole `ScenarioSession` or a narrow read-model.
+All four are answered in ADR-026, section "Decisions delegated to S021, now settled". Nothing in
+this epic is blocked on a decision any more.
+
+| Question | Answer |
+|---|---|
+| Token counter | LM Studio `count_tokens`, cached per message and keyed by model name. Budget read from `get_context_length()` at boot. |
+| Window overflow | Into the generation trace record. No per-turn log line. |
+| What `recall` receives | A frozen `MemoryRecallContext`, never the live session. `observe` gets identifiers only. |
+| Background worker | An in-process `asyncio.Queue` owned by `app/lifespan.py`. Not needed by this epic; S023 lands it. |

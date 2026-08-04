@@ -133,7 +133,130 @@ migration and an adapter, not a redesign.
 Layer 01 can summarize on the turn path and accept a visible pause. Layer 03 cannot. Extraction
 and consolidation must run off the write path. S021 picks one mechanism, either a task started by
 the calling service or a runtime component owned by `app/lifespan.py`. S023 and S025 then use it
-instead of each inventing one.
+instead of each inventing one. See "Decisions delegated to S021" below for the answer.
+
+## Decisions Delegated to S021, Now Settled
+
+This ADR left four decisions to S021. S021 settled them on 2026-08-03. They are recorded here,
+not in a separate document, because this is the file that asks the questions.
+
+### 1. Background worker: an in-process queue owned by `app/lifespan.py`
+
+Three pieces, all inside the single running process. An `asyncio.Queue` from the standard
+library. One worker loop that `app/lifespan.py` starts at boot, next to the Telegram runtime. A
+`submit` call that returns at once, so the turn pays nothing.
+
+**The rule that makes this safe: a job is a question about stored state, never a command carrying
+data.** Write it as "check whether this session's summary is behind", not "summarize these twelve
+messages". The worker re-reads the session from Postgres and decides what to do.
+
+That rule removes the need for a durable queue, a jobs table, a lease mechanism and a retry
+policy. A job lost to a restart costs nothing. The next turn asks the same question and the
+worker catches up. Every background job in layers 01, 03 and 04 must be written this way.
+
+The scheduler wraps `MemoryPipeline.observe` once, in the application layer. It is not injected
+into individual sources. Every source stays a plain asynchronous class that knows nothing about
+background execution, and stays testable with a plain `await`.
+
+| Piece | Layer |
+|---|---|
+| `BackgroundTaskScheduler`, one `submit` method | `core/ports/` |
+| `AsyncioTaskScheduler` | `infrastructure/` |
+| start and stop | `app/lifespan.py`, following `TelegramRuntime` |
+| an inline fake that runs the job at once | tests |
+
+Rules:
+
+1. Dedupe by session and source. A submit for a key that already has a job in flight is dropped.
+   This removes the double-write race between two fast turns.
+2. Bound the queue. On overflow, log and drop. Safe, because jobs are re-derivable.
+3. Cancel on shutdown. Do not drain. Draining blocks a restart on a model call that can take
+   thirty seconds, for work the next turn redoes anyway.
+4. Wrap every job. Log the failure and swallow it. This is implementation rule 4, applied to the
+   write half.
+5. Queue the summary at a high-water mark below the budget, not at the budget. Start at 75%. The
+   summary then lands while the window still has room, so the window never has to drop a message
+   the summary does not yet cover.
+
+Rejected: `asyncio.create_task` inside `ChatService`. A task nobody holds a reference to can be
+collected while it runs. There is no shutdown story. It makes the service untestable without a
+live event loop.
+
+Rejected: a jobs table in Postgres. It buys durability that re-derivation already provides, and
+costs a table, a migration, a claim mechanism and a retry policy.
+
+### 2. Token counter: ask LM Studio, cache the answer
+
+The LM Studio software development kit (SDK) already in the project counts tokens exactly, with
+the loaded model's own tokenizer. `count_tokens(input) -> int` and `get_context_length() -> int`
+sit on the model handle. Both are calls to the LM Studio server on localhost. No new dependency.
+The count stays right when the model changes, and every model tokenizes differently.
+
+Counting every message on every turn would be dozens of calls. A stored message never changes,
+so count it once and keep the number. A turn then pays one count for the new message. Key the
+cache by model name, so a model swap recounts instead of trusting a stale number.
+
+One port, `TokenCounter`, with one method. Two implementations. `LMStudioTokenCounter` is the
+real one. A character-ratio estimate takes over when the LM Studio call fails, and logs that it
+did, because a hiccup talking to localhost must never fail a turn.
+
+Rejected: a local tokenizer library. It needs the model's own tokenizer files. LM Studio ships
+GPT-Generated Unified Format (GGUF) files, so this means pulling tokenizer data out by hand,
+adding a dependency, and repeating the work for every model. The result is a worse version of
+what `count_tokens` already returns.
+
+**The budget comes from the model, not from configuration.** Read `get_context_length()` at boot
+and take a configured share of it. The Context section above notes that no context budget setting
+exists. None is needed. A hand-set token number goes silently wrong the moment a model with a
+smaller window is loaded. The percentage stays a setting. The absolute number does not.
+
+### 3. Window overflow goes into the generation trace
+
+This is two situations, not one.
+
+Layer 01 on with the summary behind is an alarm. With the high-water trigger above, it should
+never happen. It gets a warning log line naming the session and the amount dropped.
+
+Layer 01 off is routine. Every long session drops old messages by design, so a warning per turn
+becomes noise, and noise is how silent story loss returns. The dropped message count and their
+token total go into the generation trace record and nowhere else.
+`GenerationTraceStore.append` already takes a free-form dictionary, and the admin panel already
+renders traces per message, so this needs no new infrastructure.
+
+Accepted cost: the player is never told that older parts of the story left the prompt. The number
+exists, but only in the admin panel, and only when someone looks. A once-per-session player
+notice was considered and rejected as noise.
+
+### 4. `recall` and `observe` each take a narrow frozen read model
+
+A source never receives the live `ScenarioSession`. Whatever a source can read becomes a contract
+that cannot be changed later.
+
+Two types, not one. `recall` runs before generation. `observe` runs in the background, seconds
+after the turn, so it must carry nothing that can go stale. Carrying the reply text would make
+the job a command carrying data, which decision 1 forbids.
+
+| Type | Fields |
+|---|---|
+| `MemoryRecallContext` | session id, scenario id, recent messages, current user message, remaining budget |
+| `MemoryObserveContext` | session id, scenario id, turn |
+
+Both are frozen. Excluded from both: the session itself, `directives`, `world_state` and
+`story_progress`.
+
+No entity resolution yet. Layer 02 matches trigger keys against the recent messages with Postgres
+full-text search, and needs no entity list. Layer 03 is S025. Adding a field to a frozen
+dataclass then is a one-line change. Guessing its shape now is an abstraction to maintain for
+nothing.
+
+### A noted exception to ADR-013's split
+
+Layer 02 matches trigger keys inside `LorebookStore.find_matching(keywords)`. That puts ranking
+inside a Postgres repository, and ADR-013 says selection belongs to the strategy, not to storage.
+
+It is still the right trade. The alternative is loading a whole lorebook table into Python to
+rank it there. This is a deliberate exception, written down so the next reader does not read it
+as an accident.
 
 ## Alternatives
 
@@ -214,8 +337,8 @@ This ADR supersedes three milestone-scoped rules in ADR-013.
 ADR-013's core decision stands. Conversation storage and context building stay separate concerns
 behind separate ports. Rules 2, 3 and 4 stand unchanged.
 
-`ARCHITECTURE.md` describes a "Memory Manager" that ADR-013 forbade. S021 updates that document so
-the name matches `MemoryPipeline` and the description matches this ADR.
+`ARCHITECTURE.md` described a "Memory Manager" that ADR-013 forbade. S021 renamed it to
+`MemoryPipeline` and rewrote the description to match this ADR.
 
 ## Implementation Rules
 

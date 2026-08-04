@@ -213,6 +213,90 @@ Columns:
 - owner_id (PK part)
 - session_id (UUID, FK -> scenario_sessions.id ON DELETE CASCADE)
 
+## Planned: the memory tables (ADR-026)
+
+> Nothing in this section exists yet. It is the schema the memory layers will add, recorded in
+> S021 so each epic does not invent its own. See ADR-026 and `docs/MEMORY.md`.
+
+**`MemorySettings` adds no column.** It rides the existing `scenario_sessions` JSONB payload,
+the same way `directives` does, for the same reason: it is read and written as one value object
+and never queried field by field. The warning above still applies — changing a key inside that
+document is a migration, not just a serializer edit.
+
+### session_summaries — layer 01, S023
+
+One row per session. Holds the running "story so far" and the watermark that says how far it
+reaches.
+
+- session_id (UUID, PK, FK -> scenario_sessions.id ON DELETE CASCADE)
+- summary (TEXT)
+- covers_through_turn (INTEGER — the last turn folded into the summary)
+- tokens (INTEGER — the summary's own token cost)
+- model_name (TEXT — which model wrote it, so a model swap is visible)
+- created_at, updated_at (timestamptz)
+
+`covers_through_turn` is the load-bearing column. It is both the window's floor and the answer
+to the background worker's question "is this session's summary behind?". Without it the job
+would have to carry the message list, which ADR-026 forbids.
+
+### lorebook_entries — layer 02, S024
+
+Authored facts, matched by trigger key. Scoped to a scenario definition, so every session of a
+scenario shares one lorebook.
+
+- id (UUID, PK)
+- scenario_definition_id (TEXT, indexed, FK -> scenario_definitions.id)
+- keys (TEXT[] — the trigger keys)
+- content (TEXT)
+- priority (INTEGER — feeds `MemoryFragment.priority`)
+- enabled (BOOLEAN)
+- search_vector (TSVECTOR, GIN index — stemmed matching over `keys`)
+- created_at, updated_at (timestamptz)
+
+Ranking happens in the repository, through `LorebookStore.find_matching(keywords)`. That is a
+deliberate exception to ADR-013's storage-versus-selection split, recorded in ADR-026. The
+alternative is loading the whole table into Python to rank it there.
+
+### memory_facts and memory_fact_watermarks — layer 03, S025
+
+Extracted facts with validity windows. Append only.
+
+`memory_facts`:
+
+- id (UUID, PK)
+- session_id (UUID, indexed, FK -> scenario_sessions.id ON DELETE CASCADE)
+- subject, predicate, object (TEXT — the slot a conflict is resolved on)
+- source_turn (INTEGER — the turn it was extracted from)
+- valid_from (timestamptz)
+- invalid_at (timestamptz, NULL — null means "still true")
+- superseded_by (UUID, NULL, FK -> memory_facts.id)
+- created_at (timestamptz)
+
+A fact is never deleted and never updated in place. It is stamped `invalid_at` and pointed at
+whatever replaced it. This is ADR-026 implementation rule 6.
+
+`memory_fact_watermarks` records how far extraction has run per session, so the background
+worker can ask "which turns have no facts yet?" instead of being told which turns to process.
+
+- session_id (UUID, PK, FK -> scenario_sessions.id ON DELETE CASCADE)
+- extracted_through_turn (INTEGER)
+- updated_at (timestamptz)
+
+### Layer 04 — deferred
+
+Semantic recall needs pgvector, which means new Postgres images for both docker compose and the
+testcontainers fixture, plus a second resident embedding model. ADR-026 defers it to S026 and
+only if a concrete failure demands it. The `EmbeddingProvider` port is designed now so that
+arriving there is a migration and an adapter, not a redesign.
+
+### Considered and not needed yet: a token count column
+
+Decision 2 in ADR-026 caches token counts per message. The first implementation keeps that cache
+in memory, keyed by message id and model name, and recounts after a restart. A `token_count`
+column on `conversation_messages` would make it survive a restart, at the cost of a migration
+and a value that goes stale on every model swap. Add it only if the first turn after a restart
+measurably hurts.
+
 ## Repository Mapping
 
 - SessionStore -> PostgresSessionStore

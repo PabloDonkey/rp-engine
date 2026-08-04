@@ -249,6 +249,8 @@ holds all evolving state.
 * `directives` (`SessionDirectives`) - the player's directives for this session.
 * `user_persona_name` (`str | None`) - the player's own character; what `{{user}}` resolves to.
 * `user_persona_description` (`str | None`) - free text rendered as the `[User Persona]` section.
+* `memory_settings` (`MemorySettings`) - **planned, S022.** Which memory layers this session
+  runs, and their budgets. See MemorySettings below.
 
 Session-scoped conversation persistence and memory keys are derived from
 `ScenarioSession.id`.
@@ -315,6 +317,9 @@ Scenario → Character → World → User Persona → Rules → Response Format
   → Memory hint → Recent Conversation
 ```
 
+The `Memory hint` slot is one hardcoded sentence today. From S022 it becomes the memory block
+`MemoryPipeline` returns. See the memory types below.
+
 `User Persona` sits with the static context rather than the directive block: it is world
 state for the whole playthrough, not a preference the player revises turn by turn. It is
 rendered only when a description exists — the name alone already reaches the model through
@@ -336,6 +341,70 @@ aimed at a reply that will never happen), while `/clear` resets them to defaults
 a new persona. The rule for any future per-session field: player-owned settings survive
 `/restart` and are reset by `/clear`; story-produced state is reset by both. Both tiers share
 one code path (`PlaythroughService._reset`), differing only in a `carry_player_state` flag.
+
+## MemorySettings
+
+> **Planned.** Designed in ADR-026, built from S022. Nothing below exists in code yet.
+
+`MemorySettings` is a frozen value object on `ScenarioSession`. It mirrors `SessionDirectives`:
+same shape, same `with_*` methods returning new instances, same home in the session's existing
+JSONB payload with no new column.
+
+It holds which memory layers this session runs, and the token budget each one may use.
+
+| Layer | Toggle |
+|---|---|
+| 00 recent window | always on — the type makes "off" unrepresentable, not merely invalid |
+| 01 rolling summary | per session |
+| 02 lorebook | per session |
+| 03 fact and state store | per session |
+| 04 semantic recall | per session |
+
+Defaults come from settings. Players change them with `/memory`, next to `/rules` and
+`/director`. Operators change them from the admin panel.
+
+Under ADR-025, `MemorySettings` is player-owned state: `/restart` carries it forward, `/clear`
+resets it to defaults.
+
+## MemoryFragment
+
+> **Planned.** See ADR-026.
+
+What a memory source returns. The pipeline merges fragments from every enabled source into one
+ordered block, then cuts the block to the budget by priority.
+
+* `source` (`MemorySystemId`) - which layer produced it.
+* `label` (`str`) - the prompt heading, for example `[Story So Far]` or `[Lore]`.
+* `body` (`str`) - the text.
+* `priority` (`int`) - decides what survives when the block is over budget.
+* `tokens` (`int`) - what it costs. A source reports its cost. It never decides whether it fits.
+
+## MemoryRecallContext and MemoryObserveContext
+
+> **Planned.** See ADR-026.
+
+What a memory source receives. Frozen, and deliberately narrow: a source never gets the live
+`ScenarioSession`, because whatever a source can read becomes a contract nobody can change later.
+
+`MemoryRecallContext` runs before the prompt is built:
+
+* `session_id` (`UUID`)
+* `scenario_definition_id` (`str`)
+* `recent_messages` (`tuple[ConversationMessage, ...]`)
+* `current_user_message` (`str`)
+* `remaining_budget` (`int`) - tokens still free in the memory block.
+
+`MemoryObserveContext` runs after a successful turn, in the background worker:
+
+* `session_id` (`UUID`)
+* `scenario_definition_id` (`str`)
+* `turn` (`int`)
+
+It carries identifiers only. The source re-reads Postgres when the job runs. Carrying the reply
+text would make the job a command holding data, and a delayed or lost job would then be wrong
+instead of merely late.
+
+Excluded from both: `directives`, `world_state`, `story_progress`, and the session itself.
 
 ## Session (removed)
 

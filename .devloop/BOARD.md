@@ -6,35 +6,29 @@
 
 ### Memory layers 02–04 — ids reserved by the ADR-026 design, deliberately not epics yet: **S024** lorebook (SillyTavern-style trigger keys, Postgres `tsvector` for stemmed matching, admin CRUD), **S025** fact & state store (extraction, bi-temporal validity, deterministic conflict resolution, first background worker), **S026** vector recall (**only if a concrete failure demands it** — pgvector means swapping both the compose and testcontainers images, plus a second resident embedding model). Design the `EmbeddingProvider` port in S021, ship full-text first. → [design](https://claude.ai/code/artifact/c77560f4-99c2-4566-8b1c-9687d3893ac5)
 
-### Background worker runtime — the repo has **no job runner**. Anything that must run off the write path (summarizing, fact extraction, consolidation, re-embedding) needs either an `asyncio.create_task` in the calling service or a real runtime component owned by `app/lifespan.py`. Decide once, not per epic.
-⛔ **Blocked by:** nothing — but the *shape* should be settled in **S021** so S023 and S025 do not each invent one.
-🔗 **Needed by:** **S023** (optional — the alternative is a visible pause every N turns), **S025** (required — extraction + consolidation cannot sit on the turn path), **S026** (re-embedding backfill).
-_(bare card — gets an S### when promoted to an epic)_
-
 ### Activate StoryGraph / scenario branching — `StoryGraph`+`StoryBeat` exist as inert data; nothing drives beats yet. _(bare card — gets an S### when promoted to an epic)_ → see `../docs/DOMAIN_MODEL.md`
 
 
 ## 🟡 Up Next
 
 ### **S022** · Memory layer 00 — token budget + windowed recall + pipeline skeleton — replaces `DumpEverythingStrategy` (which returns every message ever stored) with a budgeted window, and lands the composite the other four layers plug into. Blocked on a real token counter: nothing in the repo counts tokens, and `RP_ENGINE_LMSTUDIO_MAX_TOKENS` caps *output*, not context. Fix the positional system-message slicing in `_build_debug_prompts` first — those indices are already wrong and a memory section shifts them again.
-⛔ **Blocked by:** **S021** — do **not** start before the `MemorySource` port and the `MemoryFragment` contract are written down. This epic implements them; it does not decide them.
-⛔ **Also blocked on:** a real token counter (nothing in the repo counts tokens — new port + implementation + settings), and the `_build_debug_prompts` slicing fix, which lands *before* the builder change.
+✅ **Unblocked 2026-08-03.** S021 settled all four decisions. The token counter is **LM Studio's own `count_tokens`** — already in the installed software development kit (SDK), no new dependency — cached per message and keyed by model name, with the budget read from `get_context_length()` at boot instead of configured. `recall` takes a frozen `MemoryRecallContext`. Budget overflow goes into the generation trace, not a per-turn log line.
+⛔ **Still do first:** the `_build_debug_prompts` positional slicing fix, which lands *before* the builder change.
 🔗 **Blocks:** S023, S024, S025, S026 — every layer plugs into the pipeline this epic builds.
-→ [epic](epics/S022-memory-layer-00-window-and-pipeline.md)
+→ [epic](epics/S022-memory-layer-00-window-and-pipeline.md) · [design](../docs/MEMORY.md)
 
 ### **S023** · Memory layer 01 — rolling summary — condense what falls out of the window into a running "story so far", re-condensing the recap when it outgrows its budget. Best value in the whole memory stack: `LMStudioConversationSummarizer` is **already implemented and never wired into the composition root**, so this is mostly an integration job plus one table. First entry in the per-session `/memory` toggle.
-⛔ **Blocked by:** **S022** (pipeline, token counter, `MemorySource` port) → which is blocked by **S021**.
-⚠️ **Open dependency — background worker.** Summarizing off the write path needs the job runner the repo does not have (see the Backlog card). The alternative is inline summarization and a visible pause every N turns. Pick one in S021, not here.
-→ [epic](epics/S023-memory-layer-01-rolling-summary.md)
+⛔ **Blocked by:** **S022** (pipeline, token counter, `MemorySource` port).
+✅ **Background worker settled 2026-08-03, and this epic builds it.** An in-process `asyncio.Queue` owned by `app/lifespan.py`, wrapping `MemoryPipeline.observe` once in the application layer — not an `asyncio.create_task` in the chat service, and not a Postgres jobs table. The rule that makes an in-memory queue safe: **a job is a question about stored state, never a command carrying data**, so a job lost to a restart costs nothing and the next turn asks again. Summaries queue at a high-water mark below the budget (75%), not at it. S025 and S026 reuse the same worker.
+→ [epic](epics/S023-memory-layer-01-rolling-summary.md) · [design](../docs/MEMORY.md)
 
 ## 🟢 In Progress
 
-### **S021** · Memory architecture — ADR-026 + design docs — write the architecture down, no code. **ADR-026 is written** (2026-08-02): the `MemorySource` port and `MemoryFragment` contract, `MemoryPipeline`, per-session `MemorySettings`, the five layers, the build order S022→S026, embeddings deferred behind a designed port, and the partial supersession of ADR-013 (rules 1 and 5, plus the "no summarization/retrieval/embeddings" clause — ADR-013's storage-vs-strategy split stands). **Left:** `ARCHITECTURE.md` (it still says "Memory Manager", which ADR-013 forbade), `DOMAIN_MODEL.md`, `DATABASE_MODEL.md`, `ROADMAP.md`, the per-source specs, and the four open decisions the ADR delegates here — background-worker mechanism, token counter, overflow handling when layer 01 is off, and what `recall` receives.
-🔗 **Blocks:** S022, S023, and the reserved S024–S026.
-📄 **Design source, cited by ADR-026:** [Five ways to remember a story](https://claude.ai/code/artifact/c77560f4-99c2-4566-8b1c-9687d3893ac5) — Pablo's chosen architecture.
-→ [epic](epics/S021-memory-architecture-adr-and-design.md) · [ADR-026](../docs/adr/0026-layered-memory.md)
+_(nothing in flight)_
 
 ## ✅ Done (recent)
+
+### **S021 · 2026-08-03 · Memory architecture — ADR-026 + the design docs** — the layered memory system is written down before any of it is built. **ADR-026** (2026-08-02) fixed the `MemorySource` port, `MemoryFragment`, `MemoryPipeline`, per-session `MemorySettings` and the S022→S026 build order. **2026-08-03 settled the four decisions the ADR delegated** and wrote them into it: (1) **background worker** — an in-process `asyncio.Queue` owned by `app/lifespan.py`, wrapping `MemoryPipeline.observe` once in the application layer; safe with no durability because **a job is a question about stored state, never a command carrying data**, so a job lost to a restart costs nothing. Rejected `asyncio.create_task` in `ChatService` and a Postgres jobs table. (2) **Token counter** — LM Studio's own `count_tokens`, already in the installed SDK, cached per message and keyed by model name; the budget is read from `get_context_length()` at boot instead of configured, so it cannot go stale on a model swap. **No new dependency.** (3) **Window overflow** — into the generation trace record, not a per-turn log line; the player is deliberately not told. (4) **Two frozen read models** — no source ever sees the live `ScenarioSession`, and `observe` carries identifiers only. Also recorded: layer 02's ranking inside `LorebookStore` is a deliberate exception to ADR-013. Docs: `ARCHITECTURE.md` lost the "Memory Manager" ADR-013 forbade, `DOMAIN_MODEL.md`, `DATABASE_MODEL.md` and `ROADMAP.md` (Milestone 4 rewritten) updated, and **`docs/MEMORY.md`** is new. No code changed. S022 is unblocked; S023 gained the worker as scope. → [archive](archive/S021-2026-08-03-memory-architecture-adr-and-design.md) · [ADR-026](../docs/adr/0026-layered-memory.md) · [MEMORY.md](../docs/MEMORY.md) · [design](https://claude.ai/code/artifact/c77560f4-99c2-4566-8b1c-9687d3893ac5) · [layout study](https://claude.ai/code/artifact/798a0d4a-c578-4de7-8ee9-4550fbfebcb5)
 
 ### **S028 · 2026-08-03 · `DECISIONS.md` split into `docs/adr/`, one ADR per file** — 26 ADRs, 1926 lines, one file → `docs/adr/NNNN-kebab-title.md` with YAML front matter (`status`, `created`, `supersedes`, `superseded_by`). Bodies moved **unchanged** — a verification script proved all 26 byte-identical apart from the `**Status:**`/`**Date:**` lines that became front matter. The `superseded_by` back link **did not exist anywhere before**; it does now, both directions, enforced by `tests/unit/docs/test_adr_files.py` (158 cases). That test paid for itself on first run: ADR-015 is superseded by **ADR-020**, not ADR-021 as first recorded. `docs/DECISIONS.md` stays as a stub — 40 references point at it, including frozen archive epics and `ai/prompts/*`, which were deliberately left alone. → [archive](archive/S028-2026-08-03-split-decisions-into-adr-files.md) · [index](../docs/adr/README.md)
 
