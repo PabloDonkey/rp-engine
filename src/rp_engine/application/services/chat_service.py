@@ -6,7 +6,16 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from rp_engine.core.character.character import Character
-from rp_engine.core.conversation.builder import ConversationBuilder, ScenarioConversationInput
+from rp_engine.core.conversation.builder import (
+    PROMPT_SECTION_CHARACTER,
+    PROMPT_SECTION_MEMORY,
+    PROMPT_SECTION_METADATA_KEY,
+    PROMPT_SECTION_RESPONSE_FORMAT,
+    PROMPT_SECTION_SCENARIO_RULES,
+    PROMPT_SECTION_WORLD,
+    ConversationBuilder,
+    ScenarioConversationInput,
+)
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import (
     FINISH_REASON_LENGTH,
@@ -23,16 +32,19 @@ from rp_engine.core.llm.errors import EmptyGenerationError
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.models import ConversationIdentity
+from rp_engine.core.memory.pipeline import MemoryPipeline
+from rp_engine.core.memory.recall_context import MemoryRecall
+from rp_engine.core.memory.recent_window_source import MESSAGE_OVERHEAD_TOKENS
 from rp_engine.core.ports import (
     ConversationStore,
     FeedbackContext,
     GenerationTraceStore,
     GroupIdentityStore,
-    MemoryStrategy,
     NoOpProcessingFeedback,
     ProcessingFeedback,
     ScenarioDefinitionStore,
     ScenarioSessionStore,
+    TokenCounter,
     UserIdentityStore,
     processing_feedback_scope,
 )
@@ -42,6 +54,9 @@ from rp_engine.core.user.user import User
 from rp_engine.core.world.world import World
 
 logger = logging.getLogger(__name__)
+
+# The user turn sent when the player asks for more story without writing anything.
+CONTINUE_MESSAGE = "continue"
 
 # Metadata keys live in the core (`core/conversation/message.py`) and are re-exported here
 # so existing importers of `chat_service.FINISH_REASON_METADATA_KEY` keep working.
@@ -68,7 +83,8 @@ class ChatService:
         self,
         orchestrator: RPOrchestrator,
         conversation_store: ConversationStore,
-        memory_strategy: MemoryStrategy,
+        memory_pipeline: MemoryPipeline,
+        token_counter: TokenCounter,
         user_identity_store: UserIdentityStore,
         group_identity_store: GroupIdentityStore,
         scenario_session_store: ScenarioSessionStore,
@@ -80,7 +96,8 @@ class ChatService:
     ) -> None:
         self._orchestrator = orchestrator
         self._conversation_store = conversation_store
-        self._memory_strategy = memory_strategy
+        self._memory_pipeline = memory_pipeline
+        self._token_counter = token_counter
         self._user_identity_store = user_identity_store
         self._group_identity_store = group_identity_store
         self._scenario_session_store = scenario_session_store
@@ -118,10 +135,11 @@ class ChatService:
         feedback = processing_feedback or NoOpProcessingFeedback()
         async with processing_feedback_scope(feedback, context=self._feedback_context(context)):
             history = await self._conversation_store.load_messages(memory_key)
-            context_messages = self._memory_strategy.build_context(history)
+            recall = await self._recall(context, history=history, user_message=cleaned_message)
+            context_messages = list(recall.messages)
             builder_input = self._build_input(
                 context,
-                memory_messages=context_messages,
+                recall=recall,
                 user_message=cleaned_message,
             )
             conversation = self._conversation_builder.build(builder_input)
@@ -144,7 +162,7 @@ class ChatService:
                 prefill_text=prefill_text,
                 session_id=session.id,
                 turn=turn,
-                context_messages=context_messages,
+                memory_recall=recall,
             )
             # Guard before the trace-adjacent work below: the trace is already recorded (an
             # empty generation is exactly what you want a trace for), but nothing has been
@@ -191,11 +209,12 @@ class ChatService:
         feedback = processing_feedback or NoOpProcessingFeedback()
         async with processing_feedback_scope(feedback, context=self._feedback_context(context)):
             history = await self._conversation_store.load_messages(memory_key)
-            context_messages = self._memory_strategy.build_context(history)
+            recall = await self._recall(context, history=history, user_message=CONTINUE_MESSAGE)
+            context_messages = list(recall.messages)
             builder_input = self._build_input(
                 context,
-                memory_messages=context_messages,
-                user_message="continue",
+                recall=recall,
+                user_message=CONTINUE_MESSAGE,
             )
             # If the last narrator reply was cut off at the token limit, resume it
             # in place; otherwise advance the story with no player input.
@@ -223,7 +242,7 @@ class ChatService:
                 prefill_text=prefill_text,
                 session_id=session.id,
                 turn=turn,
-                context_messages=context_messages,
+                memory_recall=recall,
             )
             # Guard before the trace-adjacent work below: the trace is already recorded (an
             # empty generation is exactly what you want a trace for), but nothing has been
@@ -274,19 +293,25 @@ class ChatService:
 
                 last_user = trimmed_history[latest_user_index]
                 prior_history = trimmed_history[:latest_user_index]
-                context_messages = self._memory_strategy.build_context(prior_history)
+                recall = await self._recall(
+                    context, history=prior_history, user_message=last_user.content
+                )
+                context_messages = list(recall.messages)
                 builder_input = self._build_input(
                     context,
-                    memory_messages=context_messages,
+                    recall=recall,
                     user_message=last_user.content,
                 )
                 conversation = self._conversation_builder.build(builder_input)
             elif latest_context_message.role == ConversationRole.CHARACTER:
-                context_messages = self._memory_strategy.build_context(trimmed_history)
+                recall = await self._recall(
+                    context, history=trimmed_history, user_message=CONTINUE_MESSAGE
+                )
+                context_messages = list(recall.messages)
                 builder_input = self._build_input(
                     context,
-                    memory_messages=context_messages,
-                    user_message="continue",
+                    recall=recall,
+                    user_message=CONTINUE_MESSAGE,
                 )
                 # Mirror `continue_story`: once the failed turn is dropped, whatever is now
                 # last decides the mode. Retrying a resume must resume again — advancing
@@ -318,7 +343,7 @@ class ChatService:
                 prefill_text=prefill_text,
                 session_id=session.id,
                 turn=turn,
-                context_messages=context_messages,
+                memory_recall=recall,
             )
             # Must precede the `clear()` below — a retry that came back empty must not cost
             # the player the history it was regenerating from.
@@ -341,7 +366,7 @@ class ChatService:
         request: GenerationRequest,
         session_id: UUID,
         turn: int,
-        context_messages: list[ConversationMessage],
+        memory_recall: MemoryRecall,
     ) -> LLMResponse:
         """Run one generation and record its trace, whether it succeeded or failed."""
         request_id = str(uuid4())
@@ -355,7 +380,7 @@ class ChatService:
                 request_id=request_id,
                 conversation=request.conversation,
                 generation_settings=request.settings,
-                memory_messages=context_messages,
+                memory_recall=memory_recall,
                 response=None,
                 latency_ms=self._to_latency_ms(started_at),
                 error=exc,
@@ -368,7 +393,7 @@ class ChatService:
             request_id=request_id,
             conversation=request.conversation,
             generation_settings=request.settings,
-            memory_messages=context_messages,
+            memory_recall=memory_recall,
             response=llm_response,
             latency_ms=self._to_latency_ms(started_at),
         )
@@ -383,7 +408,7 @@ class ChatService:
         prefill_text: str,
         session_id: UUID,
         turn: int,
-        context_messages: list[ConversationMessage],
+        memory_recall: MemoryRecall,
     ) -> LLMResponse:
         """Generate a reply, recovering once from the model's own token cap.
 
@@ -405,7 +430,7 @@ class ChatService:
             request=request,
             session_id=session_id,
             turn=turn,
-            context_messages=context_messages,
+            memory_recall=memory_recall,
         )
         retry_settings = self._length_retry_settings
         if retry_settings is None or response.finish_reason != FINISH_REASON_LENGTH:
@@ -449,7 +474,7 @@ class ChatService:
             ),
             session_id=session_id,
             turn=turn,
-            context_messages=context_messages,
+            memory_recall=memory_recall,
         )
         if not resumable:
             return retry_response
@@ -586,16 +611,57 @@ class ChatService:
         self,
         context: "_ScenarioContext",
         *,
-        memory_messages: list[ConversationMessage],
+        recall: MemoryRecall,
         user_message: str,
     ) -> ScenarioConversationInput:
         return ScenarioConversationInput(
             scenario=context.definition,
             session=context.session,
             user=context.user,
-            memory_messages=memory_messages,
+            memory_messages=list(recall.messages),
             user_message=user_message,
+            memory_fragments=recall.fragments,
         )
+
+    async def _recall(
+        self,
+        context: "_ScenarioContext",
+        *,
+        history: list[ConversationMessage],
+        user_message: str,
+    ) -> MemoryRecall:
+        """Ask the memory layers what this turn's prompt should carry.
+
+        The prompt is built twice. The first build has no memory in it at all, and exists
+        only to price everything memory has to share the window with — the character card,
+        the world, the session rules, the message the player just sent. Memory then gets
+        what is left.
+
+        Pricing it rather than reserving a fixed slice is what keeps the budget honest: a
+        scenario with a long card and ten session rules leaves less room for history than
+        a bare one, and no constant can know that. The second build is cheap (the builder
+        is pure string work) and the token counts behind it are cached per text, so the
+        static sections are counted once and read from the cache on every later turn.
+        """
+        priced = self._conversation_builder.build(
+            self._build_input(context, recall=MemoryRecall(), user_message=user_message)
+        )
+        reserved = await self._count_tokens(priced.messages)
+        return await self._memory_pipeline.recall(
+            session_id=context.session.id,
+            scenario_definition_id=context.definition.id,
+            messages=history,
+            current_user_message=user_message,
+            reserved_tokens=reserved,
+            settings=context.session.memory,
+        )
+
+    async def _count_tokens(self, messages: list[ConversationMessage]) -> int:
+        total = 0
+        for message in messages:
+            total += await self._token_counter.count_tokens(message.content)
+            total += MESSAGE_OVERHEAD_TOKENS
+        return total
 
     @staticmethod
     def _group_to_user(group: Group) -> User:
@@ -647,7 +713,7 @@ class ChatService:
         request_id: str,
         conversation: Conversation,
         generation_settings: GenerationSettings,
-        memory_messages: list[ConversationMessage],
+        memory_recall: MemoryRecall,
         response: LLMResponse | None,
         latency_ms: int,
         error: Exception | None = None,
@@ -676,7 +742,7 @@ class ChatService:
 
         prompt_payload = self._serialize_prompt(
             conversation=conversation,
-            memory_messages=memory_messages,
+            memory_messages=list(memory_recall.messages),
         )
         prompt_stats = self._build_prompt_stats(
             prompt_payload=prompt_payload,
@@ -704,6 +770,11 @@ class ChatService:
             "usage": usage,
             "finish_reason": finish_reason,
             "latency_ms": latency_ms,
+            # What the context budget could not hold. This is the only place it is
+            # recorded (ADR-026): the player is not told, and there is no per-turn log
+            # line, because with layer 01 off it happens on every turn of every long
+            # session and a warning that always fires is a warning nobody reads.
+            "memory": memory_recall.to_trace_record(),
         }
         if error is not None:
             record["error"] = {
@@ -744,22 +815,30 @@ class ChatService:
         memory_messages: list[ConversationMessage],
     ) -> dict[str, str]:
         system_messages = [
-            message.content
-            for message in conversation.messages
-            if message.role == ConversationRole.SYSTEM
+            message for message in conversation.messages if message.role == ConversationRole.SYSTEM
         ]
-        character_prompt = system_messages[0] if len(system_messages) > 0 else ""
-        world_prompt = system_messages[1] if len(system_messages) > 1 else ""
-        conversation_rules = system_messages[2] if len(system_messages) > 2 else ""
+        # By label, never by position. Every section the builder adds shifts the one after
+        # it, and this read was already returning the wrong three sections before the
+        # memory section was added to the end of the list.
+        sections = {
+            message.metadata.get(PROMPT_SECTION_METADATA_KEY, ""): message.content
+            for message in system_messages
+        }
         memory_snapshot = "\n".join(
             f"{message.role.value}: {message.content}" for message in memory_messages
         )
-        assembled_system_prompt = "\n\n".join(system_messages)
+        assembled_system_prompt = "\n\n".join(message.content for message in system_messages)
         return {
-            "character": character_prompt,
-            "world": world_prompt,
+            "character": sections.get(PROMPT_SECTION_CHARACTER, ""),
+            "world": sections.get(PROMPT_SECTION_WORLD, ""),
+            # The replayed turns, not the memory section: this key has always held the
+            # history the prompt carried, and the admin transcript reads it that way.
             "memory": memory_snapshot,
-            "conversation_rules": conversation_rules,
+            "memory_section": sections.get(PROMPT_SECTION_MEMORY, ""),
+            "scenario_rules": sections.get(PROMPT_SECTION_SCENARIO_RULES, ""),
+            # The engine's own reply contract. It is what slot 2 held back when the
+            # sections were read positionally.
+            "conversation_rules": sections.get(PROMPT_SECTION_RESPONSE_FORMAT, ""),
             "assembled_system_prompt": assembled_system_prompt,
         }
 

@@ -249,8 +249,8 @@ holds all evolving state.
 * `directives` (`SessionDirectives`) - the player's directives for this session.
 * `user_persona_name` (`str | None`) - the player's own character; what `{{user}}` resolves to.
 * `user_persona_description` (`str | None`) - free text rendered as the `[User Persona]` section.
-* `memory_settings` (`MemorySettings`) - **planned, S022.** Which memory layers this session
-  runs, and their budgets. See MemorySettings below.
+* `memory` (`MemorySettings`) - which memory layers this session runs. See MemorySettings
+  below.
 
 Session-scoped conversation persistence and memory keys are derived from
 `ScenarioSession.id`.
@@ -344,13 +344,16 @@ one code path (`PlaythroughService._reset`), differing only in a `carry_player_s
 
 ## MemorySettings
 
-> **Planned.** Designed in ADR-026, built from S022. Nothing below exists in code yet.
+> Built in S022. Per-layer token budgets are **not** built: the first epic with a second
+> source that can contend for the budget adds them (S023).
 
 `MemorySettings` is a frozen value object on `ScenarioSession`. It mirrors `SessionDirectives`:
 same shape, same `with_*` methods returning new instances, same home in the session's existing
 JSONB payload with no new column.
 
-It holds which memory layers this session runs, and the token budget each one may use.
+It holds which memory layers this session runs. `enabled_sources` is typed as
+`ToggleableMemorySystemId`, a type that does not contain the recent window — which is how
+"layer 00 off" becomes a type error rather than a rule someone has to check.
 
 | Layer | Toggle |
 |---|---|
@@ -360,15 +363,16 @@ It holds which memory layers this session runs, and the token budget each one ma
 | 03 fact and state store | per session |
 | 04 semantic recall | per session |
 
-Defaults come from settings. Players change them with `/memory`, next to `/rules` and
-`/director`. Operators change them from the admin panel.
+Players will change them with `/memory`, next to `/rules` and `/director`, and operators from
+the admin panel. Neither surface exists yet: S022 shipped the value object and its storage,
+and the first layer worth switching off arrives in S023.
 
 Under ADR-025, `MemorySettings` is player-owned state: `/restart` carries it forward, `/clear`
 resets it to defaults.
 
 ## MemoryFragment
 
-> **Planned.** See ADR-026.
+> Built in S022. See ADR-026.
 
 What a memory source returns. The pipeline merges fragments from every enabled source into one
 ordered block, then cuts the block to the budget by priority.
@@ -378,10 +382,15 @@ ordered block, then cuts the block to the budget by priority.
 * `body` (`str`) - the text.
 * `priority` (`int`) - decides what survives when the block is over budget.
 * `tokens` (`int`) - what it costs. A source reports its cost. It never decides whether it fits.
+* `messages` (`tuple[ConversationMessage, ...]`) - empty for every layer but 00. The recent
+  window recalls the conversation itself, which has to reach the model as chat turns with
+  their own roles; flattening it into prompt text would undo the assistant-role mapping
+  (S017) and the prefill continuation built on it (S018). Such a fragment leaves `body`
+  empty, and the budget treats it like any other fragment.
 
 ## MemoryRecallContext and MemoryObserveContext
 
-> **Planned.** See ADR-026.
+> Built in S022. See ADR-026.
 
 What a memory source receives. Frozen, and deliberately narrow: a source never gets the live
 `ScenarioSession`, because whatever a source can read becomes a contract nobody can change later.

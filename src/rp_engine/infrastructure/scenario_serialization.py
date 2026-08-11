@@ -6,10 +6,12 @@ PostgreSQL) that spread the nested structures across JSONB columns; whole-object
 helpers are used by the JSON stores that persist a single document.
 """
 
-from typing import Any
+from typing import Any, cast, get_args
 from uuid import UUID
 
 from rp_engine.core.character.character import Character
+from rp_engine.core.memory.fragment import ToggleableMemorySystemId
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import (
@@ -20,6 +22,9 @@ from rp_engine.core.scenario.session_directives import (
 from rp_engine.core.scenario.story_graph import StoryBeat, StoryGraph
 from rp_engine.core.scenario.visibility import ScenarioVisibility
 from rp_engine.core.world.world import World
+
+# The layer names a stored payload may name, read off the type so the two cannot drift.
+TOGGLEABLE_MEMORY_SOURCE_IDS: frozenset[str] = frozenset(get_args(ToggleableMemorySystemId))
 
 
 def world_to_payload(world: World | None) -> dict[str, Any] | None:
@@ -189,6 +194,31 @@ def _director_instructions_from_payload(data: dict[str, Any]) -> tuple[str, ...]
     return (legacy,) if legacy else ()
 
 
+def memory_settings_to_payload(memory: MemorySettings) -> dict[str, Any]:
+    return {"enabled_sources": list(memory.enabled_sources)}
+
+
+def memory_settings_from_payload(data: dict[str, Any] | None) -> MemorySettings:
+    """Read which memory layers a session runs.
+
+    Additive like the directives above: a session stored before S022, or one naming a
+    layer this build does not have, degrades to the defaults rather than failing the whole
+    session load. An unknown name is dropped, not kept — keeping it would let a payload
+    smuggle a value the type says is impossible.
+    """
+    if not data:
+        return MemorySettings()
+    raw = data.get("enabled_sources")
+    if not isinstance(raw, list):
+        return MemorySettings()
+    enabled = tuple(
+        source
+        for source in raw
+        if isinstance(source, str) and source in TOGGLEABLE_MEMORY_SOURCE_IDS
+    )
+    return MemorySettings(enabled_sources=cast(tuple[ToggleableMemorySystemId, ...], enabled))
+
+
 def scenario_session_to_payload(session: ScenarioSession) -> dict[str, Any]:
     return {
         "id": str(session.id),
@@ -203,6 +233,7 @@ def scenario_session_to_payload(session: ScenarioSession) -> dict[str, Any]:
         "deleted_at": session.deleted_at.isoformat() if session.deleted_at is not None else None,
         "metadata": session.metadata,
         "directives": session_directives_to_payload(session.directives),
+        "memory": memory_settings_to_payload(session.memory),
         "user_persona_name": session.user_persona_name,
         "user_persona_description": session.user_persona_description,
     }
@@ -230,6 +261,7 @@ def scenario_session_from_payload(payload: dict[str, Any]) -> ScenarioSession | 
             deleted_at=datetime.fromisoformat(raw_deleted_at) if raw_deleted_at else None,
             metadata=payload.get("metadata", {}),
             directives=session_directives_from_payload(payload.get("directives")),
+            memory=memory_settings_from_payload(payload.get("memory")),
             user_persona_name=_optional_text(payload.get("user_persona_name")),
             user_persona_description=_optional_text(payload.get("user_persona_description")),
         )

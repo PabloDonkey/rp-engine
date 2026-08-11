@@ -5,7 +5,7 @@ from rp_engine.core.ports.generation_trace_store import GenerationTraceStore
 from rp_engine.core.ports.group_identity_store import GroupIdentityStore
 from rp_engine.core.ports.identity_resolver import IdentityResolverPort
 from rp_engine.core.ports.llm_provider import LLMProvider
-from rp_engine.core.ports.memory_strategy import MemoryStrategy
+from rp_engine.core.ports.memory_source import MemorySource
 from rp_engine.core.ports.processing_feedback import (
     FeedbackContext,
     NoOpProcessingFeedback,
@@ -26,7 +26,7 @@ __all__ = [
     "GroupIdentityStore",
     "IdentityResolverPort",
     "LLMProvider",
-    "MemoryStrategy",
+    "MemorySource",
     "FeedbackContext",
     "NoOpProcessingFeedback",
     "ProcessingFeedback",

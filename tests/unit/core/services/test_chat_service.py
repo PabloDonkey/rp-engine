@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, Mock, call
+from unittest.mock import AsyncMock, call
 from uuid import UUID
 
 import pytest
@@ -19,7 +19,11 @@ from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import EmptyGenerationError
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
+from rp_engine.core.memory.character_ratio_token_counter import CharacterRatioTokenCounter
+from rp_engine.core.memory.context_budget import ContextBudget
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
+from rp_engine.core.memory.pipeline import MemoryPipeline
+from rp_engine.core.memory.recent_window_source import RecentWindowSource
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives
@@ -34,6 +38,30 @@ ROLE = "character"
 GENERATION_SETTINGS = GenerationSettings(temperature=0.8, max_tokens=600, top_p=0.95)
 
 ScenarioContext = tuple[ScenarioSession, ScenarioDefinition, User]
+
+# Token counting is faked, not mocked: the character-ratio counter is the real fallback
+# implementation, so these tests exercise the same arithmetic the engine runs.
+TOKEN_COUNTER = CharacterRatioTokenCounter()
+
+
+class _FixedContextWindow:
+    """A model with a known window, so a test can say how much room memory has."""
+
+    def __init__(self, tokens: int) -> None:
+        self._tokens = tokens
+
+    async def context_length(self) -> int:
+        return self._tokens
+
+
+def _memory_pipeline(*, context_length: int = 1_000_000) -> MemoryPipeline:
+    """The real pipeline over the real window source. The default window is far larger
+    than any prompt these tests build, so the whole stored history is replayed — which is
+    what every test here assumed before the budget existed."""
+    return MemoryPipeline(
+        sources=[RecentWindowSource(token_counter=TOKEN_COUNTER)],
+        context_budget=ContextBudget(context_window=_FixedContextWindow(context_length), share=1.0),
+    )
 
 
 def _character() -> Character:
@@ -96,10 +124,6 @@ def _build_service(
     conversation_store.load_messages = AsyncMock(
         return_value=[ConversationMessage(role=ConversationRole.USER, content="previous")]
     )
-    memory_strategy = Mock()
-    memory_strategy.build_context.return_value = [
-        ConversationMessage(role=ConversationRole.USER, content="previous")
-    ]
 
     scenario_session_store = AsyncMock()
     scenario_session_store.get_by_id = AsyncMock(return_value=session)
@@ -114,7 +138,8 @@ def _build_service(
     service = ChatService(
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=user_store,
         group_identity_store=group_store,
         scenario_session_store=scenario_session_store,
@@ -313,7 +338,6 @@ async def test_continue_resumes_when_last_reply_was_truncated(
         ),
     ]
     conversation_store.load_messages = AsyncMock(return_value=history)
-    service._memory_strategy.build_context.side_effect = lambda messages: list(messages)
     orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content=" stands a figure."))
 
     response = await service.continue_story(
@@ -488,7 +512,8 @@ async def test_chat_service_clear_conversation_uses_store_clear() -> None:
     service = ChatService(
         orchestrator=AsyncMock(),
         conversation_store=AsyncMock(),
-        memory_strategy=Mock(),
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=AsyncMock(),
         group_identity_store=AsyncMock(),
         scenario_session_store=AsyncMock(),
@@ -510,8 +535,6 @@ async def test_chat_service_uses_group_owner_as_template_user() -> None:
     orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="scene response"))
     conversation_store = AsyncMock()
     conversation_store.load_messages = AsyncMock(return_value=[])
-    memory_strategy = Mock()
-    memory_strategy.build_context.return_value = []
 
     group_session = _session(owner_kind="group", owner_id=GROUP_ID)
     scenario_session_store = AsyncMock()
@@ -525,7 +548,8 @@ async def test_chat_service_uses_group_owner_as_template_user() -> None:
     service = ChatService(
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=AsyncMock(),
         group_identity_store=group_store,
         scenario_session_store=scenario_session_store,
@@ -619,7 +643,6 @@ def _build_trace_service(
     scenario_context: ScenarioContext,
     orchestrator: AsyncMock,
     conversation_store: AsyncMock,
-    memory_strategy: Mock,
     trace_store: AsyncMock,
     generation_trace_mode: str,
 ) -> ChatService:
@@ -633,7 +656,8 @@ def _build_trace_service(
     return ChatService(
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=user_store,
         group_identity_store=AsyncMock(),
         scenario_session_store=scenario_session_store,
@@ -666,17 +690,12 @@ async def test_chat_service_writes_generation_trace_in_all_mode(
     conversation_store.load_messages = AsyncMock(
         return_value=[ConversationMessage(role=ConversationRole.USER, content="previous")]
     )
-    memory_strategy = Mock()
-    memory_strategy.build_context.return_value = [
-        ConversationMessage(role=ConversationRole.USER, content="previous")
-    ]
     trace_store = AsyncMock()
 
     service = _build_trace_service(
         scenario_context=scenario_context,
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
         trace_store=trace_store,
         generation_trace_mode="all",
     )
@@ -712,15 +731,12 @@ async def test_chat_service_writes_generation_trace_only_on_errors(
     orchestrator.generate_reply = AsyncMock(side_effect=RuntimeError("provider down"))
     conversation_store = AsyncMock()
     conversation_store.load_messages = AsyncMock(return_value=[])
-    memory_strategy = Mock()
-    memory_strategy.build_context.return_value = []
     trace_store = AsyncMock()
 
     service = _build_trace_service(
         scenario_context=scenario_context,
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
         trace_store=trace_store,
         generation_trace_mode="errors",
     )
@@ -758,8 +774,6 @@ def _build_service_with_session_store(
     conversation_store.load_messages = AsyncMock(
         return_value=[ConversationMessage(role=ConversationRole.USER, content="previous")]
     )
-    memory_strategy = Mock()
-    memory_strategy.build_context.return_value = []
 
     scenario_session_store = AsyncMock()
     scenario_session_store.get_by_id = AsyncMock(return_value=session)
@@ -773,7 +787,8 @@ def _build_service_with_session_store(
     service = ChatService(
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=user_store,
         group_identity_store=group_store,
         scenario_session_store=scenario_session_store,
@@ -899,8 +914,6 @@ def _empty_reply_service(
             ConversationMessage(role=ConversationRole.CHARACTER, content="cut off mid-"),
         ]
     )
-    memory_strategy = Mock()
-    memory_strategy.build_context.return_value = []
 
     scenario_session_store = AsyncMock()
     scenario_session_store.get_by_id = AsyncMock(
@@ -919,7 +932,8 @@ def _empty_reply_service(
     service = ChatService(
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=user_store,
         group_identity_store=group_store,
         scenario_session_store=scenario_session_store,
@@ -1031,8 +1045,6 @@ async def test_continue_builds_an_assistant_prefill_from_the_truncated_turn() ->
     )
     conversation_store = AsyncMock()
     conversation_store.load_messages = AsyncMock(return_value=[truncated])
-    memory_strategy = Mock()
-    memory_strategy.build_context.return_value = [truncated]
 
     scenario_session_store = AsyncMock()
     scenario_session_store.get_by_id = AsyncMock(return_value=session)
@@ -1046,7 +1058,8 @@ async def test_continue_builds_an_assistant_prefill_from_the_truncated_turn() ->
     service = ChatService(
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=user_store,
         group_identity_store=group_store,
         scenario_session_store=scenario_session_store,
@@ -1080,8 +1093,6 @@ async def test_plain_continue_does_not_receive_prior_reasoning() -> None:
     )
     conversation_store = AsyncMock()
     conversation_store.load_messages = AsyncMock(return_value=[finished])
-    memory_strategy = Mock()
-    memory_strategy.build_context.return_value = [finished]
 
     scenario_session_store = AsyncMock()
     scenario_session_store.get_by_id = AsyncMock(return_value=session)
@@ -1095,7 +1106,8 @@ async def test_plain_continue_does_not_receive_prior_reasoning() -> None:
     service = ChatService(
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=user_store,
         group_identity_store=group_store,
         scenario_session_store=scenario_session_store,
@@ -1117,8 +1129,6 @@ def _retry_service(history: list[ConversationMessage]) -> tuple[ChatService, Asy
     orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="regenerated"))
     conversation_store = AsyncMock()
     conversation_store.load_messages = AsyncMock(return_value=history)
-    memory_strategy = Mock()
-    memory_strategy.build_context.side_effect = lambda messages: list(messages)
 
     scenario_session_store = AsyncMock()
     scenario_session_store.get_by_id = AsyncMock(return_value=_session())
@@ -1132,7 +1142,8 @@ def _retry_service(history: list[ConversationMessage]) -> tuple[ChatService, Asy
     service = ChatService(
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=user_store,
         group_identity_store=group_store,
         scenario_session_store=scenario_session_store,
@@ -1217,8 +1228,6 @@ def _length_retry_service(
     orchestrator.generate_reply = AsyncMock(side_effect=responses)
     conversation_store = AsyncMock()
     conversation_store.load_messages = AsyncMock(return_value=stored)
-    memory_strategy = Mock()
-    memory_strategy.build_context.side_effect = lambda messages: list(messages)
 
     scenario_session_store = AsyncMock()
     scenario_session_store.get_by_id = AsyncMock(return_value=_session())
@@ -1232,7 +1241,8 @@ def _length_retry_service(
     service = ChatService(
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=user_store,
         group_identity_store=group_store,
         scenario_session_store=scenario_session_store,
@@ -1410,3 +1420,100 @@ async def test_each_recovery_attempt_is_traced_separately() -> None:
     )
 
     assert trace_store.append.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_trace_prompt_sections_are_read_by_label_not_by_position() -> None:
+    """The debug prompt used to slice system messages by position — slot 0 as the
+    character, 1 as the world, 2 as the conversation rules. Every section added since then
+    shifted those indices. A scenario with an overview adds one section ahead of the
+    character, which is enough to make the positional read return the wrong three."""
+    definition = ScenarioDefinition(
+        id=DEFINITION_ID,
+        owner_id=USER_ID,
+        name="Belzebuth",
+        description="A long ride through the ash flats.",
+        world=_world(),
+        characters={ROLE: _character()},
+    )
+    session = _session().with_directives(SessionDirectives().with_language("fr"))
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="scene"))
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(return_value=[])
+    trace_store = AsyncMock()
+
+    service = _build_trace_service(
+        scenario_context=(session, definition, User(id=USER_ID, display_name="Pablo")),
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        trace_store=trace_store,
+        generation_trace_mode="all",
+    )
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello",
+    )
+
+    prompt = trace_store.append.await_args.kwargs["record"]["prompt"]
+    assert prompt["character"].startswith("[Character]")
+    assert prompt["world"].startswith("[World]")
+    assert prompt["conversation_rules"].startswith("[Response Format]")
+
+
+@pytest.mark.asyncio
+async def test_what_the_context_budget_dropped_lands_in_the_trace(
+    scenario_context: ScenarioContext,
+) -> None:
+    """The player is never told that old turns left the prompt. The number lives here."""
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="scene"))
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(
+        return_value=[
+            ConversationMessage(role=ConversationRole.USER, content=f"turn {index}")
+            for index in range(200)
+        ]
+    )
+    trace_store = AsyncMock()
+    session, definition, user = scenario_context
+    scenario_session_store = AsyncMock()
+    scenario_session_store.get_by_id = AsyncMock(return_value=session)
+    scenario_definition_store = AsyncMock()
+    scenario_definition_store.get_by_id = AsyncMock(return_value=definition)
+    user_store = AsyncMock()
+    user_store.get_by_id = AsyncMock(return_value=user)
+    # A window with room for a few dozen turns beside the static prompt sections, and a
+    # story far longer than that.
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_pipeline=_memory_pipeline(context_length=600),
+        token_counter=TOKEN_COUNTER,
+        user_identity_store=user_store,
+        group_identity_store=AsyncMock(),
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
+        generation_settings=GENERATION_SETTINGS,
+        generation_trace_store=trace_store,
+        generation_trace_mode="all",
+    )
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello",
+    )
+
+    memory = trace_store.append.await_args.kwargs["record"]["memory"]
+    assert memory["dropped_messages"] > 0
+    assert memory["used_tokens"] <= memory["budget_tokens"]
+    conversation = orchestrator.generate_reply.await_args.args[0].conversation
+    replayed = [
+        message.content
+        for message in conversation.messages
+        if message.role != ConversationRole.SYSTEM
+    ]
+    # Whatever survived is the newest end of the story, and no message is half there.
+    assert replayed[-1] == "hello"
+    assert all(content.startswith("turn ") for content in replayed[:-1])

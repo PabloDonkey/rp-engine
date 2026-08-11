@@ -27,7 +27,8 @@ from rp_engine.application.services.session_directive_service import SessionDire
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.context_budget import ContextBudget
-from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
+from rp_engine.core.memory.pipeline import MemoryPipeline
+from rp_engine.core.memory.recent_window_source import RecentWindowSource
 from rp_engine.core.ports import (
     ConversationStore,
     GenerationTraceStore,
@@ -147,7 +148,12 @@ def build_container(settings: Settings) -> AppContainer:
     session_directive_service = SessionDirectiveService(
         scenario_session_store=scenario_session_store,
     )
-    memory_strategy = DumpEverythingStrategy()
+    # The layer list of ADR-026. Layers 01 to 04 append here as they land; nothing else
+    # changes when they do.
+    memory_pipeline = MemoryPipeline(
+        sources=[RecentWindowSource(token_counter=lmstudio_token_counter)],
+        context_budget=context_budget,
+    )
     generation_settings = GenerationSettings(
         temperature=settings.lmstudio_temperature,
         max_tokens=settings.lmstudio_max_tokens,
@@ -175,7 +181,8 @@ def build_container(settings: Settings) -> AppContainer:
     chat_service = ChatService(
         orchestrator=orchestrator,
         conversation_store=conversation_store,
-        memory_strategy=memory_strategy,
+        memory_pipeline=memory_pipeline,
+        token_counter=lmstudio_token_counter,
         user_identity_store=user_identity_store,
         group_identity_store=group_identity_store,
         scenario_session_store=scenario_session_store,

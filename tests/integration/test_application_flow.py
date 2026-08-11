@@ -19,8 +19,11 @@ from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
-from rp_engine.core.memory.dump_everything_strategy import DumpEverythingStrategy
+from rp_engine.core.memory.character_ratio_token_counter import CharacterRatioTokenCounter
+from rp_engine.core.memory.context_budget import ContextBudget
 from rp_engine.core.memory.models import MemoryKey
+from rp_engine.core.memory.pipeline import MemoryPipeline
+from rp_engine.core.memory.recent_window_source import RecentWindowSource
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.identity import UserIdentity
@@ -317,6 +320,22 @@ class FakeUpdate:
     effective_chat: FakeChat | None
 
 
+TOKEN_COUNTER = CharacterRatioTokenCounter()
+
+
+class _FixedContextWindow:
+    async def context_length(self) -> int:
+        return 1_000_000
+
+
+def _memory_pipeline() -> MemoryPipeline:
+    """Layer 00 over a window no test prompt can fill, so the whole history is replayed."""
+    return MemoryPipeline(
+        sources=[RecentWindowSource(token_counter=TOKEN_COUNTER)],
+        context_budget=ContextBudget(context_window=_FixedContextWindow(), share=1.0),
+    )
+
+
 @pytest.mark.asyncio
 async def test_application_smoke_flow_without_external_services() -> None:
     provider = FakeLLMProvider()
@@ -324,7 +343,8 @@ async def test_application_smoke_flow_without_external_services() -> None:
     chat_service = ChatService(
         orchestrator=orchestrator,
         conversation_store=InMemoryConversationStore(),
-        memory_strategy=DumpEverythingStrategy(),
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=FakeUserStore(),
         group_identity_store=FakeGroupStore(),
         scenario_session_store=FakeScenarioSessionStore(),
@@ -366,7 +386,8 @@ async def test_continue_command_is_not_saved_as_literal_command() -> None:
     chat_service = ChatService(
         orchestrator=orchestrator,
         conversation_store=store,
-        memory_strategy=DumpEverythingStrategy(),
+        memory_pipeline=_memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
         user_identity_store=FakeUserStore(),
         group_identity_store=FakeGroupStore(),
         scenario_session_store=FakeScenarioSessionStore(),

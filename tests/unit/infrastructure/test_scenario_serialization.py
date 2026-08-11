@@ -2,9 +2,13 @@ from uuid import UUID
 
 import pytest
 
+from rp_engine.core.memory.fragment import ToggleableMemorySystemId
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import ScenarioRule, SessionDirectives
 from rp_engine.infrastructure.scenario_serialization import (
+    memory_settings_from_payload,
+    memory_settings_to_payload,
     scenario_session_from_payload,
     scenario_session_to_payload,
     session_directives_from_payload,
@@ -123,3 +127,54 @@ def test_legacy_payloads_predating_the_lifecycle_fields_load_as_live() -> None:
     assert restored.updated_at == session.created_at
     assert restored.deleted_at is None
     assert restored.user_persona_name is None
+
+
+@pytest.mark.parametrize(
+    "enabled",
+    [
+        (),
+        ("rolling_summary",),
+        ("rolling_summary", "lorebook", "fact_state", "semantic_recall"),
+    ],
+)
+def test_memory_settings_round_trip(enabled: tuple[ToggleableMemorySystemId, ...]) -> None:
+    settings = MemorySettings(enabled_sources=enabled)
+
+    assert memory_settings_from_payload(memory_settings_to_payload(settings)) == settings
+
+
+def test_scenario_session_round_trip_carries_the_memory_settings() -> None:
+    session = ScenarioSession.create_for_user(
+        scenario_definition_id="def-1",
+        user_id=USER_ID,
+        memory=MemorySettings(enabled_sources=("rolling_summary",)),
+    )
+
+    restored = scenario_session_from_payload(scenario_session_to_payload(session))
+
+    assert restored is not None
+    assert restored.memory == session.memory
+
+
+def test_payloads_predating_the_memory_settings_load_with_the_defaults() -> None:
+    """A session exported before S022 has no memory key and must still load."""
+    session = ScenarioSession.create_for_user(scenario_definition_id="def-1", user_id=USER_ID)
+    payload = scenario_session_to_payload(session)
+    payload.pop("memory")
+
+    restored = scenario_session_from_payload(payload)
+
+    assert restored is not None
+    assert restored.memory == MemorySettings()
+
+
+def test_an_unknown_memory_layer_is_dropped_rather_than_kept() -> None:
+    # Keeping it would let a stored payload smuggle in a value the type says cannot exist.
+    restored = memory_settings_from_payload({"enabled_sources": ["rolling_summary", "telepathy"]})
+
+    assert restored.enabled_sources == ("rolling_summary",)
+
+
+@pytest.mark.parametrize("payload", [None, {}, {"enabled_sources": "rolling_summary"}])
+def test_a_malformed_memory_payload_degrades_to_the_defaults(payload: object) -> None:
+    assert memory_settings_from_payload(payload) == MemorySettings()  # type: ignore[arg-type]

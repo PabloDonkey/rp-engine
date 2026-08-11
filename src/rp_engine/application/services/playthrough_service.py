@@ -5,6 +5,7 @@ from uuid import UUID
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.ports.conversation_store import ConversationStore
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
@@ -106,9 +107,7 @@ class PlaythroughService:
         pending one-turn director instruction is dropped: it was aimed at a reply that will
         now never happen.
         """
-        return await self._reset(
-            owner_kind=owner_kind, owner_id=owner_id, carry_player_state=True
-        )
+        return await self._reset(owner_kind=owner_kind, owner_id=owner_id, carry_player_state=True)
 
     async def clear(
         self,
@@ -123,9 +122,7 @@ class PlaythroughService:
         for a session's life. It restarts the same scenario rather than dropping the player
         to "no active playthrough".
         """
-        return await self._reset(
-            owner_kind=owner_kind, owner_id=owner_id, carry_player_state=False
-        )
+        return await self._reset(owner_kind=owner_kind, owner_id=owner_id, carry_player_state=False)
 
     async def set_persona(
         self,
@@ -148,9 +145,10 @@ class PlaythroughService:
         try:
             with_persona = session.with_persona(name=name, description=description)
         except ValueError:
-            logger.info("Rejected a persona for a session that has one", extra={
-                "session_id": str(session_id)
-            })
+            logger.info(
+                "Rejected a persona for a session that has one",
+                extra={"session_id": str(session_id)},
+            )
             return None
         saved = await self._scenario_session_store.save(with_persona)
         return PlaythroughStart(
@@ -185,6 +183,7 @@ class PlaythroughService:
             directives=(
                 active.directives.without_director_instructions() if carry_player_state else None
             ),
+            memory=active.memory if carry_player_state else None,
             user_persona_name=active.user_persona_name if carry_player_state else None,
             user_persona_description=(
                 active.user_persona_description if carry_player_state else None
@@ -229,18 +228,18 @@ class PlaythroughService:
         owner_id: UUID,
         scenario: ScenarioDefinition,
         directives: SessionDirectives | None = None,
+        memory: MemorySettings | None = None,
         user_persona_name: str | None = None,
         user_persona_description: str | None = None,
     ) -> PlaythroughStart:
-        participants = {
-            role: character.id for role, character in scenario.characters.items()
-        }
+        participants = {role: character.id for role, character in scenario.characters.items()}
         if owner_kind == "user":
             session = ScenarioSession.create_for_user(
                 scenario_definition_id=scenario.id,
                 user_id=owner_id,
                 active_participants=participants,
                 directives=directives,
+                memory=memory,
                 user_persona_name=user_persona_name,
                 user_persona_description=user_persona_description,
             )
@@ -250,6 +249,7 @@ class PlaythroughService:
                 group_id=owner_id,
                 active_participants=participants,
                 directives=directives,
+                memory=memory,
                 user_persona_name=user_persona_name,
                 user_persona_description=user_persona_description,
             )

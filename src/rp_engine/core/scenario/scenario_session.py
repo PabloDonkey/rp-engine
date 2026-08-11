@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.scenario.session_directives import SessionDirectives
 
 SessionOwnerKind = Literal["user", "group"]
@@ -17,6 +18,7 @@ class ScenarioSession:
     - A reference to the scenario blueprint (immutable)
     - Runtime state (participants, world state, story progress)
     - Player directives (language, scenario rules, director instruction)
+    - Which memory layers the session runs
     - The player's own persona (name + description, immutable once set)
     - Ownership (user or group)
     - A lifecycle: `deleted_at is None` means "this is the live session"; a session
@@ -39,6 +41,7 @@ class ScenarioSession:
     deleted_at: datetime | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     directives: SessionDirectives = field(default_factory=SessionDirectives)
+    memory: MemorySettings = field(default_factory=MemorySettings)
     user_persona_name: str | None = None
     user_persona_description: str | None = None
 
@@ -53,6 +56,7 @@ class ScenarioSession:
         story_progress: dict[str, Any] | None = None,
         metadata: dict[str, str] | None = None,
         directives: SessionDirectives | None = None,
+        memory: MemorySettings | None = None,
         user_persona_name: str | None = None,
         user_persona_description: str | None = None,
     ) -> "ScenarioSession":
@@ -70,6 +74,7 @@ class ScenarioSession:
             updated_at=now,
             metadata=metadata or {},
             directives=directives or SessionDirectives(),
+            memory=memory or MemorySettings(),
             user_persona_name=user_persona_name,
             user_persona_description=user_persona_description,
         )
@@ -85,6 +90,7 @@ class ScenarioSession:
         story_progress: dict[str, Any] | None = None,
         metadata: dict[str, str] | None = None,
         directives: SessionDirectives | None = None,
+        memory: MemorySettings | None = None,
         user_persona_name: str | None = None,
         user_persona_description: str | None = None,
     ) -> "ScenarioSession":
@@ -102,6 +108,7 @@ class ScenarioSession:
             updated_at=now,
             metadata=metadata or {},
             directives=directives or SessionDirectives(),
+            memory=memory or MemorySettings(),
             user_persona_name=user_persona_name,
             user_persona_description=user_persona_description,
         )
@@ -122,6 +129,11 @@ class ScenarioSession:
     def with_directives(self, directives: SessionDirectives) -> "ScenarioSession":
         """Return a copy carrying new directives; the session is otherwise unchanged."""
         return replace(self, directives=directives)
+
+    def with_memory(self, memory: MemorySettings) -> "ScenarioSession":
+        """Return a copy running different memory layers; the session is otherwise
+        unchanged."""
+        return replace(self, memory=memory)
 
     def with_persona(self, *, name: str, description: str = "") -> "ScenarioSession":
         """Attach the player's persona. A session accepts one exactly once.

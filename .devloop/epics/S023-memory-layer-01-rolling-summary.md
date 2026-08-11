@@ -1,8 +1,23 @@
 # S023 · Memory layer 01 — rolling summary
 
-**Status:** 🔵 Backlog (not started)
-**Depends on:** **S022** (the pipeline, the token counter, the `MemorySource` port) → which depends
-on **S021** (ADR-026).
+**Status:** 🟡 Up Next — unblocked 2026-08-10.
+**Depends on:** **S022** (the pipeline, the token counter, the `MemorySource` port) → **done
+2026-08-10**, see [archive](../archive/S022-2026-08-10-memory-layer-00-window-and-pipeline.md).
+
+**What S022 left for this epic:**
+
+* `MemoryPipeline.observe` exists and is tested, but **nothing calls it**. This epic owns the
+  background worker that does, per ADR-026 decision 1.
+* Per-source token budgets on `MemorySettings` were cut as YAGNI — there was no second source to
+  contend for the budget. This is that second source, so it adds them.
+* Every source is offered the *whole* remaining budget and they run at the same time, so the sum
+  can exceed it and the priority cut resolves it. With two sources this is worth revisiting
+  against fixed shares.
+* The memory section of the prompt renders fragments as `label` then `body`, joined by a blank
+  line, and falls back to `MEMORY_HINT` when nothing is recalled. `[Story So Far]` is the first
+  real fragment to land there.
+* `MemoryFragment.messages` is layer 00's exception for replaying chat turns. Layer 01 returns
+  text, so it leaves that field empty and fills `body`.
 **Design source:** [Five ways to remember a story](https://claude.ai/code/artifact/c77560f4-99c2-4566-8b1c-9687d3893ac5)
 — Pablo's chosen memory architecture. ADR-026 must cite this link.
 **Effort:** ~1–2 days

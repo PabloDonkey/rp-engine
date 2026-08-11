@@ -2,11 +2,12 @@
 
 How the engine decides what the model is allowed to remember.
 
-> **Status: design.** ADR-026 accepted the architecture on 2026-08-02 and S021 settled the four
-> open decisions on 2026-08-03. None of it is built. S022 to S026 build it, in that order.
+> **Status: layer 00 is built.** ADR-026 accepted the architecture on 2026-08-02 and S021
+> settled the four open decisions on 2026-08-03. S022 built the token counter, the budget, the
+> pipeline and layer 00 on 2026-08-10. Layers 01 to 04 are still design; S023 to S026 build
+> them, in that order.
 >
-> Today `DumpEverythingStrategy` puts every message ever stored into every prompt, and nothing
-> counts tokens. That is the problem this design replaces.
+> `DumpEverythingStrategy`, which put every message ever stored into every prompt, is gone.
 
 Read ADR-026 for the decisions and the reasoning. This document is the working reference: what
 each layer stores, what it returns, and what it costs.
@@ -55,9 +56,17 @@ Token counts come from LM Studio's `count_tokens`, which uses the loaded model's
 The engine caches each count per message, keyed by model name. A character-ratio estimate takes
 over if LM Studio cannot be reached, and logs that it did.
 
-When the block is over budget, the pipeline cuts by fragment priority. What it dropped — message
-count and token total — goes into the generation trace record, visible per message in the admin
-panel. It is not logged per turn, because with layer 01 off this happens on every turn of every
+The memory budget is what the rest of the prompt leaves. Every turn, the prompt is built once
+with no memory in it, priced, and the remainder handed to the pipeline. A long character card
+and a stack of session rules therefore take room from the history, which no fixed reserve could
+have known.
+
+When the block is over budget, the pipeline cuts by fragment priority, dropping whole fragments.
+What it dropped — how many stored turns did not reach the prompt, and the tokens in any fragment
+that was cut — goes into the generation trace record, visible per message in the admin panel.
+The dropped turns' own token total is deliberately not reported: the window stops counting at
+the first message that does not fit, so a total would mean counting the whole history on every
+turn, which is the cost the walk exists to avoid. It is not logged per turn, because with layer 01 off this happens on every turn of every
 long session, and a warning that always fires is a warning nobody reads.
 
 The one case that does get a warning: layer 01 is on and its summary is behind. That should never
@@ -68,7 +77,7 @@ budget.
 
 ## Layer 00 — recent window
 
-**Ships in S022.** Cannot be switched off. It is the conversation itself.
+**Shipped in S022.** Cannot be switched off. It is the conversation itself.
 
 | | |
 |---|---|
@@ -77,8 +86,17 @@ budget.
 | `observe` does | nothing |
 | Cost per turn | none beyond counting tokens |
 
-It replaces `DumpEverythingStrategy`, which returns every message ever stored. The only real
+It replaced `DumpEverythingStrategy`, which returned every message ever stored. The only real
 change is that it stops at a budget.
+
+It walks the stored turns from newest to oldest and keeps whole messages until the next one
+does not fit. A message that alone exceeds the budget stops the walk rather than being skipped:
+skipping it would put the turns on both sides of a missing turn into the prompt, which reads as
+a story with a hole in it rather than a story that starts later.
+
+Its fragment carries the turns themselves, not text. They reach the model as chat messages with
+their own roles, which is what the assistant-role mapping (S017) and the prefill continuation
+(S018) depend on.
 
 **The floor.** When layer 01 is on, the window may not drop a message the summary does not yet
 cover. `session_summaries.covers_through_turn` is that floor. When layer 01 is off there is no

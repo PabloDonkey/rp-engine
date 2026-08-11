@@ -153,7 +153,8 @@ Columns:
 - updated_at (timestamptz, NOT NULL — stamped by the repository on every `save`)
 - deleted_at (timestamptz, NULL — **null = the live session**; set when a reset supersedes it)
 - metadata (JSONB)
-- directives (JSONB — player directives: `{language, rules: [{id, text}], director_instructions: [str]}`)
+- directives (JSONB — player directives: `{language, rules: [{id, text}], director_instructions: [str]}`,
+  plus `memory: {enabled_sources: [str]}` since S022 — see below)
 - user_persona_name (VARCHAR(128), NULL — the player's character; what `{{user}}` resolves to)
 - user_persona_description (TEXT, NULL — rendered as the prompt's `[User Persona]` section)
 
@@ -218,10 +219,13 @@ Columns:
 > Nothing in this section exists yet. It is the schema the memory layers will add, recorded in
 > S021 so each epic does not invent its own. See ADR-026 and `docs/MEMORY.md`.
 
-**`MemorySettings` adds no column.** It rides the existing `scenario_sessions` JSONB payload,
-the same way `directives` does, for the same reason: it is read and written as one value object
-and never queried field by field. The warning above still applies — changing a key inside that
-document is a migration, not just a serializer edit.
+**`MemorySettings` adds no column** (shipped in S022). It rides inside the `directives` JSONB
+document, under a `memory` key, for the reason `directives` is one document in the first place:
+it is read and written as one value object and never queried field by field. The two share a
+column because they share a lifecycle — both are player-owned state under ADR-025, so
+`/restart` carries both and `/clear` resets both. A row written before S022 has no `memory`
+key and loads with the default layers. The warning above still applies: changing a key inside
+that document is a migration, not just a serializer edit.
 
 ### session_summaries — layer 01, S023
 

@@ -1,6 +1,7 @@
 from dataclasses import replace
 from uuid import UUID
 
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives
@@ -76,6 +77,15 @@ async def assert_scenario_session_store_contract(store: ScenarioSessionStore) ->
     assert consumed.directives.director_instructions == ()
     assert consumed.directives.rules == (first_rule,)
 
+    # Memory settings round-trip beside the directives, in the same column, without
+    # disturbing them (S022).
+    await store.save(consumed.with_memory(MemorySettings(enabled_sources=("rolling_summary",))))
+    with_memory = await store.get_by_id(session.id)
+    assert with_memory is not None
+    assert with_memory.memory.enabled_sources == ("rolling_summary",)
+    assert with_memory.directives.rules == (first_rule,)
+    consumed = with_memory
+
     # The persona round-trips, including "no description" staying absent rather than "".
     await store.save(consumed.with_persona(name="Sera Vane", description="A wary courier."))
     with_persona = await store.get_by_id(session.id)
@@ -97,6 +107,7 @@ async def assert_scenario_session_store_contract(store: ScenarioSessionStore) ->
         scenario_definition_id="def-2", group_id=GROUP_ID
     )
     assert group_session.directives == SessionDirectives()
+    assert group_session.memory == MemorySettings()
     await store.save(group_session)
     assert await store.get_active_for_owner(owner_kind="group", owner_id=GROUP_ID) is None
 

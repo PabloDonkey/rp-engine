@@ -4,6 +4,7 @@ from rp_engine.core.character.character import Character
 from rp_engine.core.conversation.conversation import Conversation
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
+from rp_engine.core.memory.fragment import MemoryFragment
 from rp_engine.core.memory.models import MemoryKey
 from rp_engine.core.prompts.templates import resolve_templates
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
@@ -16,6 +17,26 @@ from rp_engine.core.user.user import User
 SWITCH_CONTEXT_TO_CHARACTER_ID = "switch_context_to_character_id"
 SWITCH_CONTEXT_SUMMARY = "switch_context_summary"
 
+# Every system message says which section it is. Readers that need one section by name —
+# the generation trace, and anything added later — look it up by this label instead of by
+# position. Position is not a contract: sections are added, and each one that is added
+# ahead of another silently changes what a positional read returns.
+PROMPT_SECTION_METADATA_KEY = "prompt_section"
+PROMPT_SECTION_SCENARIO = "scenario"
+PROMPT_SECTION_CHARACTER = "character"
+PROMPT_SECTION_WORLD = "world"
+PROMPT_SECTION_USER_PERSONA = "user_persona"
+PROMPT_SECTION_SCENARIO_RULES = "scenario_rules"
+PROMPT_SECTION_RESPONSE_FORMAT = "response_format"
+PROMPT_SECTION_LANGUAGE = "language"
+PROMPT_SECTION_SESSION_RULES = "session_rules"
+PROMPT_SECTION_DIRECTOR_INSTRUCTIONS = "director_instructions"
+PROMPT_SECTION_MEMORY = "memory"
+PROMPT_SECTION_SWITCH_CONTEXT = "switch_context"
+
+# What the memory section says when no layer beyond the recent window recalled anything.
+MEMORY_HINT = "Use conversation history to keep continuity and character consistency."
+
 
 @dataclass(frozen=True, slots=True)
 class ScenarioConversationInput:
@@ -24,8 +45,13 @@ class ScenarioConversationInput:
     scenario: ScenarioDefinition
     session: ScenarioSession
     user: User
+    # The conversation turns the prompt replays, already cut to the budget by the memory
+    # pipeline. They reach the model as chat messages, not as prompt text.
     memory_messages: list[ConversationMessage]
     user_message: str
+    # What layers 01 to 04 recalled, rendered into the memory section of the system
+    # prompt. Empty until S023 lands the first of them.
+    memory_fragments: tuple[MemoryFragment, ...] = ()
     # Optional explicit active character override; when absent the active character is
     # resolved from the session's participants (or the scenario's single character).
     active_character_id: str | None = None
@@ -66,8 +92,7 @@ class ConversationBuilder:
         return self._build_directive(
             payload,
             directive=(
-                "Continue the narration naturally from the current context. "
-                "Write one reply only."
+                "Continue the narration naturally from the current context. Write one reply only."
             ),
             source="continue_command",
         )
@@ -210,7 +235,7 @@ class ConversationBuilder:
                 character=character,
             )
             messages.append(
-                ConversationMessage(role=ConversationRole.SYSTEM, content=character_definition)
+                self._system_message(character_definition, section=PROMPT_SECTION_CHARACTER)
             )
 
         world = payload.scenario.world
@@ -224,9 +249,7 @@ class ConversationBuilder:
                 payload=payload,
                 character=character,
             )
-            messages.append(
-                ConversationMessage(role=ConversationRole.SYSTEM, content=world_info)
-            )
+            messages.append(self._system_message(world_info, section=PROMPT_SECTION_WORLD))
 
         # Who the player is, alongside the other static context (scenario, character,
         # world) rather than with the directive block below — a persona is world state
@@ -234,13 +257,13 @@ class ConversationBuilder:
         user_persona = self._user_persona_text(payload.session)
         if user_persona is not None:
             messages.append(
-                ConversationMessage(
-                    role=ConversationRole.SYSTEM,
-                    content=self._resolve_templates(
+                self._system_message(
+                    self._resolve_templates(
                         value=user_persona,
                         payload=payload,
                         character=character,
                     ),
+                    section=PROMPT_SECTION_USER_PERSONA,
                 )
             )
 
@@ -251,7 +274,7 @@ class ConversationBuilder:
                 character=character,
             )
             messages.append(
-                ConversationMessage(role=ConversationRole.SYSTEM, content=scenario_rules)
+                self._system_message(scenario_rules, section=PROMPT_SECTION_SCENARIO_RULES)
             )
 
         response_format = self._resolve_templates(
@@ -260,39 +283,69 @@ class ConversationBuilder:
             character=character,
         )
         messages.append(
-            ConversationMessage(role=ConversationRole.SYSTEM, content=response_format)
+            self._system_message(response_format, section=PROMPT_SECTION_RESPONSE_FORMAT)
         )
 
         # Player directives sit after the permanent identity/behavior sections and before
         # the dynamic context: persistent preferences first (language, session rules), then
         # the highest-priority-but-transient director instruction. Empty ones are omitted
         # entirely rather than rendered as a bare header.
-        for section in (
-            self._language_text(payload.session.directives),
-            self._session_rules_text(payload.session.directives),
-            self._director_instruction_text(payload.session.directives),
+        for section_name, section in (
+            (PROMPT_SECTION_LANGUAGE, self._language_text(payload.session.directives)),
+            (PROMPT_SECTION_SESSION_RULES, self._session_rules_text(payload.session.directives)),
+            (
+                PROMPT_SECTION_DIRECTOR_INSTRUCTIONS,
+                self._director_instruction_text(payload.session.directives),
+            ),
         ):
             if section is None:
                 continue
             messages.append(
-                ConversationMessage(
-                    role=ConversationRole.SYSTEM,
-                    content=self._resolve_templates(
+                self._system_message(
+                    self._resolve_templates(
                         value=section,
                         payload=payload,
                         character=character,
                     ),
+                    section=section_name,
                 )
             )
 
-        memory_hint = "Use conversation history to keep continuity and character consistency."
-        messages.append(ConversationMessage(role=ConversationRole.SYSTEM, content=memory_hint))
+        messages.append(
+            self._system_message(
+                self._memory_text(payload.memory_fragments),
+                section=PROMPT_SECTION_MEMORY,
+            )
+        )
 
         switch_context = self._switch_context_message(payload, character)
         if switch_context is not None:
             messages.append(switch_context)
 
         return messages
+
+    @staticmethod
+    def _system_message(content: str, *, section: str) -> ConversationMessage:
+        return ConversationMessage(
+            role=ConversationRole.SYSTEM,
+            content=content,
+            metadata={PROMPT_SECTION_METADATA_KEY: section},
+        )
+
+    @staticmethod
+    def _memory_text(fragments: tuple[MemoryFragment, ...]) -> str:
+        """Render what the memory layers recalled, as one block.
+
+        The verbatim recent turns are not here: they are chat messages, not text, and they
+        reach the model as themselves. This block holds what layers 01 to 04 recalled — a
+        summary, lore, facts — each under its own label.
+
+        With no layer beyond the recent window, nothing is recalled and the block falls
+        back to the one-line hint the prompt carried before memory layers existed.
+        """
+        if not fragments:
+            return MEMORY_HINT
+        return "\n\n".join(f"{fragment.label}\n{fragment.body}" for fragment in fragments)
 
     def _build_scenario_intro(
         self,
@@ -312,7 +365,7 @@ class ConversationBuilder:
             payload=payload,
             character=None,
         )
-        return ConversationMessage(role=ConversationRole.SYSTEM, content=content)
+        return self._system_message(content, section=PROMPT_SECTION_SCENARIO)
 
     @staticmethod
     def _scenario_rules_text(scenario_rules: list[str]) -> str:
@@ -426,7 +479,7 @@ class ConversationBuilder:
             payload=payload,
             character=character,
         )
-        return ConversationMessage(role=ConversationRole.SYSTEM, content=content)
+        return self._system_message(content, section=PROMPT_SECTION_SWITCH_CONTEXT)
 
     def _resolve_message_templates(
         self,

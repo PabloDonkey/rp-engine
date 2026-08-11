@@ -14,9 +14,14 @@ from rp_engine.infrastructure.postgres.models import (
 )
 from rp_engine.infrastructure.postgres.transaction import session_scope
 from rp_engine.infrastructure.scenario_serialization import (
+    memory_settings_to_payload,
     scenario_session_from_payload,
     session_directives_to_payload,
 )
+
+# Key the memory settings live under inside the `directives` JSONB column. See
+# `_player_state_payload`.
+MEMORY_PAYLOAD_KEY = "memory"
 
 
 class PostgresScenarioSessionStore(ScenarioSessionStore):
@@ -89,7 +94,7 @@ class PostgresScenarioSessionStore(ScenarioSessionStore):
             "updated_at": stamped.updated_at,
             "deleted_at": stamped.deleted_at,
             "payload_metadata": dict(stamped.metadata),
-            "directives": session_directives_to_payload(stamped.directives),
+            "directives": _player_state_payload(stamped),
             "user_persona_name": stamped.user_persona_name,
             "user_persona_description": stamped.user_persona_description,
         }
@@ -188,10 +193,26 @@ class PostgresScenarioSessionStore(ScenarioSessionStore):
             ),
             "metadata": record.payload_metadata or {},
             "directives": record.directives or {},
+            "memory": (record.directives or {}).get(MEMORY_PAYLOAD_KEY),
             "user_persona_name": record.user_persona_name,
             "user_persona_description": record.user_persona_description,
         }
         return scenario_session_from_payload(payload)
+
+
+def _player_state_payload(session: ScenarioSession) -> dict[str, object]:
+    """Everything the player set for this session, in the one JSONB column that holds it.
+
+    The memory settings ride inside the `directives` column rather than getting a column
+    of their own (ADR-026: no new column). The two belong together: both are player-owned
+    session state under the same ADR-025 reset tier, so `/restart` carries both and
+    `/clear` resets both. A session written before S022 simply has no `memory` key, and
+    reads back with the default layers.
+    """
+    return {
+        **session_directives_to_payload(session.directives),
+        MEMORY_PAYLOAD_KEY: memory_settings_to_payload(session.memory),
+    }
 
 
 def _as_utc(value: datetime) -> datetime:
