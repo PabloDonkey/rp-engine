@@ -53,6 +53,7 @@ async def test_telegram_runtime_registers_command_menu_on_start() -> None:
         "rules",
         "rule",
         "language",
+        "memory",
         "cancel",
         "help",
         "beta",

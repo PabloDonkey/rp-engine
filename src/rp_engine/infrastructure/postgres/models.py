@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func, text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -111,6 +111,31 @@ class ScenarioSessionRecord(Base):
             postgresql_where=text("deleted_at IS NULL"),
         ),
     )
+
+
+class SessionSummaryRecord(Base):
+    """Layer 01's running recap, one row per session (ADR-026, S023).
+
+    `covers_through_turn` is the load-bearing column: it is what the background worker
+    re-reads to answer "is this session's recap behind?", and it is why the job that wakes
+    the worker can carry a session id instead of a list of messages.
+    """
+
+    __tablename__ = "session_summaries"
+
+    session_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("scenario_sessions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    covers_through_turn: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Which model wrote it. The token count beside it was made with that model's tokenizer,
+    # so a model swap is visible here rather than hidden in a stale number.
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ActiveScenarioSessionRecord(Base):

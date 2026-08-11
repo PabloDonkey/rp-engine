@@ -26,6 +26,8 @@ from rp_engine.adapters.telegram.commands import build_help_message
 from rp_engine.application.services.playthrough_service import PlaythroughStart
 from rp_engine.core.group.group import Group
 from rp_engine.core.llm.errors import EmptyGenerationError, LLMConnectionError, LLMGenerationError
+from rp_engine.core.memory.fragment import ToggleableMemorySystemId
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import (
@@ -57,6 +59,7 @@ def _session(
     owner_kind: str = "user",
     owner_id: UUID = FIXED_USER_ID,
     directives: SessionDirectives | None = None,
+    memory: MemorySettings | None = None,
     user_persona_name: str | None = None,
 ) -> ScenarioSession:
     return ScenarioSession(
@@ -68,6 +71,7 @@ def _session(
         created_at=datetime(2026, 7, 12, tzinfo=UTC),
         updated_at=datetime(2026, 7, 12, tzinfo=UTC),
         directives=directives or SessionDirectives(),
+        memory=memory or MemorySettings(),
         user_persona_name=user_persona_name,
     )
 
@@ -200,6 +204,7 @@ class FakeSessionDirectiveService:
 
     def __init__(self) -> None:
         self.directives = SessionDirectives()
+        self.memory = MemorySettings()
         self.calls: list[tuple[str, str]] = []
 
     async def set_language(
@@ -229,6 +234,21 @@ class FakeSessionDirectiveService:
         self.calls.append(("director", instruction))
         self.directives = session.directives.with_director_instruction(instruction)
         return self.directives
+
+    async def set_memory_source(
+        self,
+        *,
+        session: ScenarioSession,
+        source_id: ToggleableMemorySystemId,
+        enabled: bool,
+    ) -> MemorySettings:
+        self.calls.append(("memory", f"{source_id}:{'on' if enabled else 'off'}"))
+        self.memory = (
+            session.memory.with_source_enabled(source_id)
+            if enabled
+            else session.memory.with_source_disabled(source_id)
+        )
+        return self.memory
 
 
 @dataclass
@@ -1320,13 +1340,14 @@ async def test_identity_resolution_prefers_persona_display_name() -> None:
 def _directive_adapter(
     *,
     directives: SessionDirectives | None = None,
+    memory: MemorySettings | None = None,
     active: bool = True,
 ) -> tuple[TelegramAdapter, FakeSessionDirectiveService]:
     service = FakeSessionDirectiveService()
     adapter = _make_adapter(
         chat_service=AsyncMock(),
         playthrough_service=FakePlaythroughService(
-            active=_session(directives=directives) if active else None
+            active=_session(directives=directives, memory=memory) if active else None
         ),
         authorization=TelegramAuthorization({"42"}),
         session_directive_service=service,
@@ -1575,3 +1596,81 @@ async def test_generic_generation_errors_keep_their_own_message() -> None:
     responses = await _send(adapter, "hello there")
 
     assert responses == ["The model failed to generate a reply. Please try again."]
+
+
+@pytest.mark.asyncio
+async def test_memory_lists_the_layers_this_adventure_runs() -> None:
+    adapter, _ = _directive_adapter()
+
+    responses = await _send(adapter, "/memory")
+
+    assert "summary - a running recap of the story so far: on" in responses[0]
+
+
+@pytest.mark.asyncio
+async def test_memory_reports_a_layer_the_player_switched_off() -> None:
+    adapter, _ = _directive_adapter(memory=MemorySettings(enabled_sources=()))
+
+    responses = await _send(adapter, "/memory")
+
+    assert "summary - a running recap of the story so far: off" in responses[0]
+
+
+@pytest.mark.asyncio
+async def test_memory_switches_the_rolling_summary_off() -> None:
+    adapter, service = _directive_adapter()
+
+    responses = await _send(adapter, "/memory summary off")
+
+    assert service.calls == [("memory", "rolling_summary:off")]
+    assert service.memory.is_enabled("rolling_summary") is False
+    assert "off" in responses[0]
+
+
+@pytest.mark.asyncio
+async def test_memory_switches_the_rolling_summary_back_on() -> None:
+    adapter, service = _directive_adapter(memory=MemorySettings(enabled_sources=()))
+
+    await _send(adapter, "/memory summary on")
+
+    assert service.calls == [("memory", "rolling_summary:on")]
+    assert service.memory.is_enabled("rolling_summary") is True
+
+
+@pytest.mark.asyncio
+async def test_memory_accepts_the_engine_name_for_a_layer() -> None:
+    adapter, service = _directive_adapter()
+
+    await _send(adapter, "/memory rolling_summary off")
+
+    assert service.calls == [("memory", "rolling_summary:off")]
+
+
+@pytest.mark.asyncio
+async def test_memory_rejects_an_unknown_layer() -> None:
+    adapter, service = _directive_adapter()
+
+    responses = await _send(adapter, "/memory telepathy on")
+
+    assert service.calls == []
+    assert responses[0].startswith("Usage:")
+
+
+@pytest.mark.asyncio
+async def test_memory_rejects_an_unknown_state() -> None:
+    adapter, service = _directive_adapter()
+
+    responses = await _send(adapter, "/memory summary maybe")
+
+    assert service.calls == []
+    assert responses[0].startswith("Usage:")
+
+
+@pytest.mark.asyncio
+async def test_memory_needs_an_active_playthrough() -> None:
+    adapter, service = _directive_adapter(active=False)
+
+    responses = await _send(adapter, "/memory")
+
+    assert service.calls == []
+    assert responses == [NO_ACTIVE_PLAYTHROUGH_MESSAGE]

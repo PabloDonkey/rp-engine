@@ -9,6 +9,7 @@ import type {
   AdminUser,
   ScenarioPayload,
   ScenarioSummary,
+  SessionSummary,
 } from "@/api";
 
 function toSummary(payload: ScenarioPayload): ScenarioSummary {
@@ -37,6 +38,9 @@ export const useAdminStore = defineStore("admin", {
     // transcript on screen, not blank it.
     actionError: null as string | null,
     traces: [] as AdminTrace[],
+    // The running recap of memory layer 01. Null means the background worker has not
+    // written one for this session yet.
+    sessionSummary: null as SessionSummary | null,
     sessionLoading: false,
     sessionError: null as string | null,
 
@@ -80,14 +84,16 @@ export const useAdminStore = defineStore("admin", {
       // follow the user onto a different session.
       this.actionError = null;
       try {
-        const [session, transcript, traces] = await Promise.all([
+        const [session, transcript, traces, summary] = await Promise.all([
           api.getSession(sessionId),
           api.getSessionTranscript(sessionId),
           api.getSessionTraces(sessionId),
+          api.getSessionSummary(sessionId),
         ]);
         this.session = session;
         this.transcript = transcript;
         this.traces = traces;
+        this.sessionSummary = summary;
       } catch (error) {
         this.sessionError = error instanceof Error ? error.message : String(error);
       } finally {
@@ -124,6 +130,21 @@ export const useAdminStore = defineStore("admin", {
       this.actionError = null;
       try {
         this.session = await api.setSessionPersona(sessionId, name, description);
+        return true;
+      } catch (error) {
+        this.actionError = error instanceof Error ? error.message : String(error);
+        return false;
+      }
+    },
+
+    async setSessionMemorySource(
+      sessionId: string,
+      sourceId: string,
+      enabled: boolean,
+    ): Promise<boolean> {
+      this.actionError = null;
+      try {
+        this.session = await api.setSessionMemorySource(sessionId, sourceId, enabled);
         return true;
       } catch (error) {
         this.actionError = error instanceof Error ? error.message : String(error);

@@ -17,6 +17,7 @@ SUPPORTED_COMMANDS: dict[str, TelegramCommand] = {
     TelegramCommand.RULE.value: TelegramCommand.RULE,
     TelegramCommand.RULES.value: TelegramCommand.RULES,
     TelegramCommand.LANGUAGE.value: TelegramCommand.LANGUAGE,
+    TelegramCommand.MEMORY.value: TelegramCommand.MEMORY,
     TelegramCommand.ADMIN_BETA_LIST.value: TelegramCommand.ADMIN_BETA_LIST,
     TelegramCommand.ADMIN_BETA_ACCEPT.value: TelegramCommand.ADMIN_BETA_ACCEPT,
     TelegramCommand.ADMIN_BETA_REJECT.value: TelegramCommand.ADMIN_BETA_REJECT,
@@ -35,6 +36,7 @@ TELEGRAM_MENU_COMMANDS: tuple[tuple[str, str], ...] = (
     ("rules", "List the rules you set for this adventure"),
     ("rule", "Manage rules: /rule add|remove"),
     ("language", "Set the reply language: /language <code>"),
+    ("memory", "Show or switch what the story remembers"),
     ("cancel", "Cancel the current menu"),
     ("help", "Show available commands"),
     ("beta", "Request a beta seat"),
@@ -64,6 +66,7 @@ AUTHORIZED_HELP_MESSAGE = (
     "/rules - List your rules\n"
     "/rule remove <id> - Remove one of your rules\n"
     "/language <code> - Reply language, e.g. en, fr, auto\n"
+    "/memory - Show what the story remembers; /memory summary on|off to change it\n"
     "/cancel - Cancel the current menu\n"
     "/help - Show this help message\n"
     "/beta - Request a beta seat\n"

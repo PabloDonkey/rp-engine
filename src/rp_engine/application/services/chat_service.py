@@ -33,9 +33,10 @@ from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.memory.pipeline import MemoryPipeline
-from rp_engine.core.memory.recall_context import MemoryRecall
+from rp_engine.core.memory.recall_context import MemoryObserveContext, MemoryRecall
 from rp_engine.core.memory.recent_window_source import MESSAGE_OVERHEAD_TOKENS
 from rp_engine.core.ports import (
+    BackgroundTaskScheduler,
     ConversationStore,
     FeedbackContext,
     GenerationTraceStore,
@@ -93,6 +94,7 @@ class ChatService:
         generation_trace_store: GenerationTraceStore | None = None,
         generation_trace_mode: Literal["off", "errors", "all"] = "off",
         length_retry_settings: GenerationSettings | None = None,
+        task_scheduler: BackgroundTaskScheduler | None = None,
     ) -> None:
         self._orchestrator = orchestrator
         self._conversation_store = conversation_store
@@ -108,6 +110,9 @@ class ChatService:
         # Settings for the one automatic retry after a reply stops at the token cap. `None`
         # turns the recovery off, which is what every caller that does not care about it gets.
         self._length_retry_settings = length_retry_settings
+        # Where the memory layers' write half runs. `None` means nothing observes turns,
+        # which is what every caller that only reads memory gets.
+        self._task_scheduler = task_scheduler
         self._conversation_builder = ConversationBuilder()
 
     async def send_message(
@@ -190,6 +195,7 @@ class ChatService:
             memory_key,
             self._narrator_message(llm_response, turn),
         )
+        self._observe_turn(context, turn=turn)
         return character_response
 
     async def continue_story(
@@ -254,6 +260,7 @@ class ChatService:
             memory_key,
             self._narrator_message(llm_response, turn),
         )
+        self._observe_turn(context, turn=turn)
         return character_response
 
     async def regenerate_last_response(
@@ -358,6 +365,7 @@ class ChatService:
             memory_key,
             self._narrator_message(llm_response, turn),
         )
+        self._observe_turn(context, turn=turn)
         return character_response
 
     async def _generate_traced(
@@ -580,9 +588,7 @@ class ChatService:
         else:
             raise ValueError("Scenario session has an unsupported owner kind.")
 
-        definition = await self._scenario_definition_store.get_by_id(
-            session.scenario_definition_id
-        )
+        definition = await self._scenario_definition_store.get_by_id(session.scenario_definition_id)
         if definition is None:
             raise ValueError("Scenario definition not found for session.")
 
@@ -655,6 +661,34 @@ class ChatService:
             reserved_tokens=reserved,
             settings=context.session.memory,
         )
+
+    def _observe_turn(self, context: "_ScenarioContext", *, turn: int) -> None:
+        """Ask the memory layers to catch up, off the turn path.
+
+        This is the one place the write half is started (ADR-026 decision 1): the scheduler
+        wraps `MemoryPipeline.observe` here, so no memory source knows that background
+        execution exists. It returns as soon as the question is queued, and the answer
+        never reaches the player — a layer that fails, or a job dropped by a full queue or
+        a restart, costs nothing, because the next turn asks the same question.
+
+        One key per session, not per layer: the pipeline runs every enabled layer in one
+        job, so two fast turns of the same session must collapse into one pass rather than
+        two writers racing over the same rows.
+        """
+        scheduler = self._task_scheduler
+        if scheduler is None:
+            return
+        observe_context = MemoryObserveContext(
+            session_id=context.session.id,
+            scenario_definition_id=context.definition.id,
+            turn=turn,
+        )
+        settings = context.session.memory
+
+        async def job() -> None:
+            await self._memory_pipeline.observe(observe_context, settings=settings)
+
+        scheduler.submit(key=f"memory:{context.session.id}", job=job)
 
     async def _count_tokens(self, messages: list[ConversationMessage]) -> int:
         total = 0

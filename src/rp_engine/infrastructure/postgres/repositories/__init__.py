@@ -13,6 +13,9 @@ from rp_engine.infrastructure.postgres.repositories.scenario_definition_store im
 from rp_engine.infrastructure.postgres.repositories.scenario_session_store import (
     PostgresScenarioSessionStore,
 )
+from rp_engine.infrastructure.postgres.repositories.session_summary_store import (
+    PostgresSessionSummaryStore,
+)
 from rp_engine.infrastructure.postgres.repositories.user_identity_store import (
     PostgresUserIdentityStore,
 )
@@ -23,5 +26,6 @@ __all__ = [
     "PostgresGroupIdentityStore",
     "PostgresScenarioDefinitionStore",
     "PostgresScenarioSessionStore",
+    "PostgresSessionSummaryStore",
     "PostgresUserIdentityStore",
 ]

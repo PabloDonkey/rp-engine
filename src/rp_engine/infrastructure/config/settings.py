@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     # Context window assumed when LM Studio cannot be asked at all. Small on purpose —
     # guessing too high overflows the real window and loses the turn.
     memory_fallback_context_length: int = Field(default=4096, ge=1)
+    # Where memory layer 01 catches up, as a share of the context budget. Below 1.0 on
+    # purpose (ADR-026 decision 1, rule 5): the recap is written while the window still has
+    # room, so the window never has to drop a message the recap does not yet cover.
+    memory_summary_high_water_share: float = Field(default=0.75, gt=0.0, le=1.0)
 
     debug_status_enabled: bool = False
     debug_generation_trace: Literal["off", "errors", "all"] = "off"

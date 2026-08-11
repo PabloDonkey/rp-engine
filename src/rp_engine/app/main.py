@@ -29,6 +29,7 @@ from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.context_budget import ContextBudget
 from rp_engine.core.memory.pipeline import MemoryPipeline
 from rp_engine.core.memory.recent_window_source import RecentWindowSource
+from rp_engine.core.memory.rolling_summary_source import RollingSummarySource
 from rp_engine.core.ports import (
     ConversationStore,
     GenerationTraceStore,
@@ -36,11 +37,16 @@ from rp_engine.core.ports import (
     LLMProvider,
     ScenarioDefinitionStore,
     ScenarioSessionStore,
+    SessionSummaryStore,
     TokenCounter,
     UserIdentityStore,
 )
 from rp_engine.infrastructure.config.settings import Settings, get_settings
-from rp_engine.infrastructure.llm.lmstudio import LMStudioProvider, LMStudioTokenCounter
+from rp_engine.infrastructure.llm.lmstudio import (
+    LMStudioConversationSummarizer,
+    LMStudioProvider,
+    LMStudioTokenCounter,
+)
 from rp_engine.infrastructure.postgres import (
     PostgresConfig,
     PostgresConversationStore,
@@ -53,8 +59,10 @@ from rp_engine.infrastructure.postgres.repositories import (
     PostgresGroupIdentityStore,
     PostgresScenarioDefinitionStore,
     PostgresScenarioSessionStore,
+    PostgresSessionSummaryStore,
     PostgresUserIdentityStore,
 )
+from rp_engine.infrastructure.tasks import AsyncioTaskScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +94,7 @@ class AppContainer:
     admin_service: AdminService
     telegram_authorization: TelegramAuthorization
     telegram_runtime: TelegramRuntime | None
+    task_scheduler: AsyncioTaskScheduler
     runtime_state: RuntimeState
     db_health_probe: PostgresHealthProbe
     db_startup_check_fail_fast: bool
@@ -127,6 +136,9 @@ def build_container(settings: Settings) -> AppContainer:
     generation_trace_store: GenerationTraceStore = PostgresGenerationTraceStore(
         postgres_session_factory
     )
+    session_summary_store: SessionSummaryStore = PostgresSessionSummaryStore(
+        postgres_session_factory
+    )
     user_identity_store: UserIdentityStore = PostgresUserIdentityStore(postgres_session_factory)
     group_identity_store: GroupIdentityStore = PostgresGroupIdentityStore(postgres_session_factory)
     db_health_probe = PostgresHealthProbe(
@@ -148,12 +160,26 @@ def build_container(settings: Settings) -> AppContainer:
     session_directive_service = SessionDirectiveService(
         scenario_session_store=scenario_session_store,
     )
-    # The layer list of ADR-026. Layers 01 to 04 append here as they land; nothing else
+    # The layer list of ADR-026. Layers 02 to 04 append here as they land; nothing else
     # changes when they do.
     memory_pipeline = MemoryPipeline(
-        sources=[RecentWindowSource(token_counter=lmstudio_token_counter)],
+        sources=[
+            RecentWindowSource(token_counter=lmstudio_token_counter),
+            RollingSummarySource(
+                summary_store=session_summary_store,
+                conversation_store=conversation_store,
+                summarizer=LMStudioConversationSummarizer(llm_provider=llm_provider),
+                token_counter=lmstudio_token_counter,
+                model_name=settings.lmstudio_model,
+                high_water_share=settings.memory_summary_high_water_share,
+            ),
+        ],
         context_budget=context_budget,
     )
+    # The write half of every memory layer runs here, off the turn path (ADR-026 decision
+    # 1). `app/lifespan.py` starts and cancels it next to the Telegram runtime, which is
+    # why the container holds the concrete type rather than the port.
+    task_scheduler = AsyncioTaskScheduler()
     generation_settings = GenerationSettings(
         temperature=settings.lmstudio_temperature,
         max_tokens=settings.lmstudio_max_tokens,
@@ -170,6 +196,7 @@ def build_container(settings: Settings) -> AppContainer:
         conversation_store=conversation_store,
         generation_trace_store=generation_trace_store,
         scenario_definition_store=scenario_definition_store,
+        session_summary_store=session_summary_store,
     )
     telegram_authorization = TelegramAuthorization.from_directory(
         settings.telegram_authorization_dir,
@@ -191,6 +218,7 @@ def build_container(settings: Settings) -> AppContainer:
         generation_trace_store=generation_trace_store,
         generation_trace_mode=settings.debug_generation_trace,
         length_retry_settings=length_retry_settings,
+        task_scheduler=task_scheduler,
     )
 
     telegram_runtime: TelegramRuntime | None = None
@@ -249,6 +277,7 @@ def build_container(settings: Settings) -> AppContainer:
         admin_service=admin_service,
         telegram_authorization=telegram_authorization,
         telegram_runtime=telegram_runtime,
+        task_scheduler=task_scheduler,
         runtime_state=RuntimeState(),
         db_health_probe=db_health_probe,
         db_startup_check_fail_fast=settings.postgres_startup_check_fail_fast,

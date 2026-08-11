@@ -178,3 +178,35 @@ def test_an_unknown_memory_layer_is_dropped_rather_than_kept() -> None:
 @pytest.mark.parametrize("payload", [None, {}, {"enabled_sources": "rolling_summary"}])
 def test_a_malformed_memory_payload_degrades_to_the_defaults(payload: object) -> None:
     assert memory_settings_from_payload(payload) == MemorySettings()  # type: ignore[arg-type]
+
+
+def test_source_budgets_round_trip() -> None:
+    settings = MemorySettings().with_source_budget("rolling_summary", 0.4)
+
+    restored = memory_settings_from_payload(memory_settings_to_payload(settings))
+
+    assert restored.budget_for("rolling_summary", 1000) == 400
+
+
+def test_a_payload_without_source_budgets_loads_the_defaults() -> None:
+    """A session stored by S022, before any layer had a share to defend."""
+    restored = memory_settings_from_payload({"enabled_sources": ["rolling_summary"]})
+
+    assert restored.source_budgets == MemorySettings().source_budgets
+
+
+def test_a_share_outside_the_allowed_range_is_dropped() -> None:
+    # The value object refuses to hold one, so keeping it would fail the whole load.
+    restored = memory_settings_from_payload(
+        {"enabled_sources": [], "source_budgets": {"rolling_summary": 4.0, "lorebook": 0.1}}
+    )
+
+    assert [budget.source for budget in restored.source_budgets] == ["lorebook"]
+
+
+def test_an_unknown_layer_in_the_budgets_is_dropped() -> None:
+    restored = memory_settings_from_payload(
+        {"enabled_sources": [], "source_budgets": {"telepathy": 0.5}}
+    )
+
+    assert restored.source_budgets == ()

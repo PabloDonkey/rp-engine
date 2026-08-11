@@ -44,6 +44,18 @@ class FakeScenarioTransferService:
         return ImportReport(imported=0, skipped=0)
 
 
+class FakeTaskScheduler:
+    def __init__(self) -> None:
+        self.started = False
+        self.stopped = False
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+
 class FakeContextBudget:
     def __init__(self, *, total: int = 5734) -> None:
         self.total = total
@@ -65,6 +77,7 @@ class FakeContainer:
     )
     scenario_catalog_dirs: list[str] = field(default_factory=lambda: ["data/catalog"])
     context_budget: FakeContextBudget = field(default_factory=FakeContextBudget)
+    task_scheduler: FakeTaskScheduler = field(default_factory=FakeTaskScheduler)
 
 
 @pytest.mark.asyncio

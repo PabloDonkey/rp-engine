@@ -36,11 +36,20 @@ class MemoryObserveContext:
     only. Carrying the message text would make the job a command carrying data, and
     ADR-026 requires a job to be a question about stored state — that is what makes a job
     lost to a restart harmless.
+
+    The two budgets are the exception, and they cannot go stale: the pipeline fills them in
+    when the job runs, not when it was submitted. A layer that writes something the prompt
+    will later have to hold needs to know how much room that is, and rule 3 keeps that sum
+    with the pipeline rather than letting each layer work it out for itself.
     """
 
     session_id: UUID
     scenario_definition_id: str
     turn: int
+    # The whole memory budget, which is what layer 00's window competes for.
+    memory_budget: int = 0
+    # This layer's slice of it, from `MemorySettings.budget_for`.
+    source_budget: int = 0
 
 
 @dataclass(frozen=True, slots=True)

@@ -344,28 +344,34 @@ one code path (`PlaythroughService._reset`), differing only in a `carry_player_s
 
 ## MemorySettings
 
-> Built in S022. Per-layer token budgets are **not** built: the first epic with a second
-> source that can contend for the budget adds them (S023).
+> Built in S022. S023 added the per-layer budget shares and the surfaces that switch a layer.
 
 `MemorySettings` is a frozen value object on `ScenarioSession`. It mirrors `SessionDirectives`:
 same shape, same `with_*` methods returning new instances, same home in the session's existing
 JSONB payload with no new column.
 
-It holds which memory layers this session runs. `enabled_sources` is typed as
-`ToggleableMemorySystemId`, a type that does not contain the recent window — which is how
-"layer 00 off" becomes a type error rather than a rule someone has to check.
+It holds which memory layers this session runs, and what share of the memory budget each may
+spend. `enabled_sources` is typed as `ToggleableMemorySystemId`, a type that does not contain the
+recent window — which is how "layer 00 off" becomes a type error rather than a rule someone has
+to check.
+
+A `MemorySourceBudget` is a **share** of the memory budget, not a token count, for the reason the
+whole budget is one: a hand-set number goes silently wrong the moment a model with a different
+window is loaded. Layer 01 takes a quarter. A layer with no share is offered everything that is
+left, which is what layer 00 gets, so the shares do not have to add up to one — the pipeline's
+priority cut resolves any overlap.
 
 | Layer | Toggle |
 |---|---|
 | 00 recent window | always on — the type makes "off" unrepresentable, not merely invalid |
-| 01 rolling summary | per session |
+| 01 rolling summary | per session, **on by default** |
 | 02 lorebook | per session |
 | 03 fact and state store | per session |
 | 04 semantic recall | per session |
 
-Players will change them with `/memory`, next to `/rules` and `/director`, and operators from
-the admin panel. Neither surface exists yet: S022 shipped the value object and its storage,
-and the first layer worth switching off arrives in S023.
+Players change them with `/memory`, next to `/rules` and `/director`: bare `/memory` lists the
+layers and their state, `/memory summary on|off` switches one. Operators switch the same layers
+from the session page of the admin panel, which also shows the recap layer 01 stored.
 
 Under ADR-025, `MemorySettings` is player-owned state: `/restart` carries it forward, `/clear`
 resets it to defaults.

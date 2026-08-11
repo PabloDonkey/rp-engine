@@ -5,6 +5,9 @@ from pydantic import BaseModel
 
 from rp_engine.application.services.admin_service import AdminDeletedMessage, AdminUserSummary
 from rp_engine.core.conversation.message import ConversationMessage
+from rp_engine.core.memory.fragment import ToggleableMemorySystemId
+from rp_engine.core.memory.session_summary import SessionSummary
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives
@@ -61,6 +64,58 @@ class AdminSessionDirectivesResponse(BaseModel):
         )
 
 
+class AdminSessionMemoryResponse(BaseModel):
+    """Which memory layers this session runs, and what each may spend.
+
+    The recent conversation is missing on purpose: it is the story itself and cannot be
+    switched off, so there is no state to report for it (ADR-026 rule 5).
+    """
+
+    enabled_sources: list[str]
+    source_budget_shares: dict[str, float]
+
+    @classmethod
+    def from_memory(cls, memory: MemorySettings) -> "AdminSessionMemoryResponse":
+        return cls(
+            enabled_sources=list(memory.enabled_sources),
+            source_budget_shares={budget.source: budget.share for budget in memory.source_budgets},
+        )
+
+
+class AdminSessionMemoryRequest(BaseModel):
+    """Switch one layer on or off. The panel sends one layer at a time, so a failed call
+    leaves the other layers exactly as they were."""
+
+    source_id: ToggleableMemorySystemId
+    enabled: bool
+
+
+class AdminSessionSummaryResponse(BaseModel):
+    """The recap layer 01 stores, as the model receives it.
+
+    `covers_through_turn` is the number worth reading first: it says how far the recap has
+    caught up, and a recap far behind the transcript is the alarm ADR-026 describes.
+    """
+
+    summary: str
+    covers_through_turn: int
+    tokens: int
+    model_name: str
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_summary(cls, summary: SessionSummary) -> "AdminSessionSummaryResponse":
+        return cls(
+            summary=summary.summary,
+            covers_through_turn=summary.covers_through_turn,
+            tokens=summary.tokens,
+            model_name=summary.model_name,
+            created_at=summary.created_at,
+            updated_at=summary.updated_at,
+        )
+
+
 class AdminSessionResponse(BaseModel):
     id: UUID
     scenario_definition_id: str
@@ -73,6 +128,7 @@ class AdminSessionResponse(BaseModel):
     deleted_at: datetime | None = None
     message_count: int | None = None
     directives: AdminSessionDirectivesResponse
+    memory: AdminSessionMemoryResponse
     user_persona_name: str | None = None
     user_persona_description: str | None = None
 
@@ -90,6 +146,7 @@ class AdminSessionResponse(BaseModel):
             deleted_at=session.deleted_at,
             message_count=message_count,
             directives=AdminSessionDirectivesResponse.from_directives(session.directives),
+            memory=AdminSessionMemoryResponse.from_memory(session.memory),
             user_persona_name=session.user_persona_name,
             user_persona_description=session.user_persona_description,
         )

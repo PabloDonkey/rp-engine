@@ -110,13 +110,13 @@ Five layers behind one port, built in this order. Each ships on its own and is j
 
 | Story | Layer | What lands |
 |---|---|---|
-| S022 | 00 recent window | `TokenCounter`, the budget read from the model, `MemoryPipeline`, and a windowed history that replaces `DumpEverythingStrategy` |
-| S023 | 01 rolling summary | the background worker, and the running "story so far" |
+| S022 | 00 recent window | **done 2026-08-10** — `TokenCounter`, the budget read from the model, `MemoryPipeline`, and a windowed history that replaces `DumpEverythingStrategy` |
+| S023 | 01 rolling summary | **done 2026-08-10** — the background worker, and the running "story so far" |
 | S024 | 02 lorebook | authored facts with trigger keys, matched by Postgres full-text search, plus admin editing |
 | S025 | 03 fact and state store | extracted facts with validity windows, and deterministic conflict resolution |
 | S026 | 04 semantic recall | embeddings. Only if a concrete failure demands it. |
 
-Alongside them: `MemorySettings` on the session, a `/memory` command, and admin panel controls.
+Alongside them: `MemorySettings` on the session, a `/memory` command, and admin panel controls — all three shipped with S022 and S023.
 
 ### Success Criteria
 

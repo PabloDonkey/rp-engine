@@ -7,6 +7,7 @@ from rp_engine.infrastructure.postgres.repositories import (
     PostgresGroupIdentityStore,
     PostgresScenarioDefinitionStore,
     PostgresScenarioSessionStore,
+    PostgresSessionSummaryStore,
     PostgresUserIdentityStore,
 )
 
@@ -20,5 +21,6 @@ __all__ = [
     "PostgresGroupIdentityStore",
     "PostgresScenarioDefinitionStore",
     "PostgresScenarioSessionStore",
+    "PostgresSessionSummaryStore",
     "PostgresUserIdentityStore",
 ]

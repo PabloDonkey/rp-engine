@@ -1,6 +1,8 @@
 import logging
 from uuid import UUID
 
+from rp_engine.core.memory.fragment import ToggleableMemorySystemId
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import (
@@ -12,11 +14,16 @@ logger = logging.getLogger(__name__)
 
 
 class SessionDirectiveService:
-    """Read/write the player directives attached to a scenario session.
+    """Read/write the player-owned settings attached to a scenario session.
 
-    The directives themselves are domain logic (`SessionDirectives` owns validation and
-    rule-id allocation); this service only decides *when* they are persisted, so adapters
-    never touch `ScenarioSessionStore` directly.
+    The settings themselves are domain logic (`SessionDirectives` owns validation and
+    rule-id allocation, `MemorySettings` owns which layers may run); this service only
+    decides *when* they are persisted, so adapters never touch `ScenarioSessionStore`
+    directly.
+
+    Directives and memory settings share this service because they share a lifecycle: both
+    are player-owned state under ADR-025, so `/restart` carries both forward and `/clear`
+    resets both.
     """
 
     def __init__(self, *, scenario_session_store: ScenarioSessionStore) -> None:
@@ -91,6 +98,31 @@ class SessionDirectiveService:
     ) -> SessionDirectives:
         updated = session.directives.without_director_instructions()
         await self._save(session, updated)
+        return updated
+
+    async def set_memory_source(
+        self,
+        *,
+        session: ScenarioSession,
+        source_id: ToggleableMemorySystemId,
+        enabled: bool,
+    ) -> MemorySettings:
+        """Switch one memory layer on or off for this session.
+
+        Layer 00 is not reachable from here, and not because of a check: the parameter type
+        does not contain it (ADR-026 rule 5).
+        """
+        updated = (
+            session.memory.with_source_enabled(source_id)
+            if enabled
+            else session.memory.with_source_disabled(source_id)
+        )
+        await self._scenario_session_store.save(session.with_memory(updated))
+        logger.info(
+            "Session memory layer %s",
+            "enabled" if enabled else "disabled",
+            extra={"session_id": str(session.id), "memory_source": source_id},
+        )
         return updated
 
     async def _save(self, session: ScenarioSession, directives: SessionDirectives) -> None:

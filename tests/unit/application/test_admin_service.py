@@ -6,6 +6,7 @@ from rp_engine.application.services.admin_service import AdminService
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
+from rp_engine.core.memory.session_summary import SessionSummary
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.identity import UserIdentity
@@ -91,6 +92,18 @@ class FakeConversationStore:
         self._messages.pop(memory_key.value, None)
 
 
+class FakeSessionSummaryStore:
+    def __init__(self, summary: SessionSummary | None = None) -> None:
+        self.summary = summary
+
+    async def get(self, session_id: UUID) -> SessionSummary | None:
+        return self.summary
+
+    async def save(self, summary: SessionSummary) -> SessionSummary:
+        self.summary = summary
+        return summary
+
+
 class FakeGenerationTraceStore:
     def __init__(self) -> None:
         self._records: dict[UUID, list[dict[str, object]]] = {}
@@ -148,6 +161,7 @@ def _service(
         conversation_store=convo_store,
         generation_trace_store=traces,
         scenario_definition_store=FakeScenarioDefinitionStore(scenarios),
+        session_summary_store=FakeSessionSummaryStore(),
     )
     return service, session_store, convo_store, traces
 
@@ -278,3 +292,50 @@ async def test_set_session_persona_returns_none_for_an_unknown_session() -> None
     service, _, _, _ = _service(sessions=[])
 
     assert await service.set_session_persona(uuid4(), name="Sera Vane") is None
+
+
+@pytest.mark.asyncio
+async def test_set_session_memory_source_switches_a_layer_off() -> None:
+    service, store, _, _ = _service(sessions=[_session(owner_id=USER_ID)])
+
+    updated = await service.set_session_memory_source(
+        SESSION_ID, source_id="rolling_summary", enabled=False
+    )
+
+    assert updated is not None
+    assert updated.memory.is_enabled("rolling_summary") is False
+    assert store.sessions[SESSION_ID].memory.is_enabled("rolling_summary") is False
+
+
+@pytest.mark.asyncio
+async def test_set_session_memory_source_returns_none_for_an_unknown_session() -> None:
+    service, _, _, _ = _service()
+
+    assert (
+        await service.set_session_memory_source(
+            SESSION_ID, source_id="rolling_summary", enabled=True
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_session_summary_returns_what_layer_01_stored() -> None:
+    stored = SessionSummary.create(
+        session_id=SESSION_ID,
+        summary="They crossed the river.",
+        covers_through_turn=7,
+        tokens=9,
+        model_name="test-model",
+    )
+    session_store = FakeScenarioSessionStore([_session(owner_id=USER_ID)])
+    service = AdminService(
+        user_identity_store=FakeUserIdentityStore([]),
+        scenario_session_store=session_store,
+        conversation_store=FakeConversationStore(),
+        generation_trace_store=FakeGenerationTraceStore(),
+        scenario_definition_store=FakeScenarioDefinitionStore(None),
+        session_summary_store=FakeSessionSummaryStore(stored),
+    )
+
+    assert await service.get_session_summary(SESSION_ID) == stored

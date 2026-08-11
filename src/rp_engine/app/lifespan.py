@@ -30,6 +30,12 @@ class ContextBudgetProtocol(Protocol):
     async def total_tokens(self) -> int: ...
 
 
+class TaskSchedulerProtocol(Protocol):
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+
 class ContainerProtocol(Protocol):
     @property
     def telegram_runtime(self) -> TelegramRuntimeProtocol | None: ...
@@ -51,6 +57,9 @@ class ContainerProtocol(Protocol):
 
     @property
     def context_budget(self) -> ContextBudgetProtocol: ...
+
+    @property
+    def task_scheduler(self) -> TaskSchedulerProtocol: ...
 
 
 class RuntimeStateProtocol(Protocol):
@@ -101,6 +110,10 @@ def create_lifespan(
             extra={"context_token_budget": context_token_budget},
         )
 
+        # Before the Telegram runtime, so the first turn of the first session already has
+        # somewhere to put its memory work.
+        await container.task_scheduler.start()
+
         if container.telegram_runtime is not None:
             await container.telegram_runtime.start()
             logger.info("Telegram adapter started")
@@ -115,6 +128,10 @@ def create_lifespan(
             logger.info("Application runtime stopping")
             if container.telegram_runtime is not None:
                 await container.telegram_runtime.stop()
+            # Cancelled, not drained (ADR-026 decision 1, rule 3): waiting on a model call
+            # that can take thirty seconds would hold up the restart, for work the next
+            # turn redoes anyway.
+            await container.task_scheduler.stop()
             container.runtime_state.app_state = "stopped"
             logger.info("Application stopped")
 

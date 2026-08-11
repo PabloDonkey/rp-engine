@@ -214,10 +214,11 @@ Columns:
 - owner_id (PK part)
 - session_id (UUID, FK -> scenario_sessions.id ON DELETE CASCADE)
 
-## Planned: the memory tables (ADR-026)
+## The memory tables (ADR-026)
 
-> Nothing in this section exists yet. It is the schema the memory layers will add, recorded in
-> S021 so each epic does not invent its own. See ADR-026 and `docs/MEMORY.md`.
+> `session_summaries` exists (S023). The rest of this section is still the schema the later
+> memory layers will add, recorded in S021 so each epic does not invent its own. See ADR-026 and
+> `docs/MEMORY.md`.
 
 **`MemorySettings` adds no column** (shipped in S022). It rides inside the `directives` JSONB
 document, under a `memory` key, for the reason `directives` is one document in the first place:
@@ -227,21 +228,28 @@ column because they share a lifecycle — both are player-owned state under ADR-
 key and loads with the default layers. The warning above still applies: changing a key inside
 that document is a migration, not just a serializer edit.
 
-### session_summaries — layer 01, S023
+### session_summaries — layer 01, added by `20260810_0012` (S023)
 
 One row per session. Holds the running "story so far" and the watermark that says how far it
-reaches.
+reaches. Written only by the background worker; read on every turn by `RollingSummarySource`.
 
 - session_id (UUID, PK, FK -> scenario_sessions.id ON DELETE CASCADE)
 - summary (TEXT)
-- covers_through_turn (INTEGER — the last turn folded into the summary)
+- covers_through_turn (INTEGER — narrator replies folded in, the same clock the messages'
+  `turn` metadata uses)
 - tokens (INTEGER — the summary's own token cost)
-- model_name (TEXT — which model wrote it, so a model swap is visible)
+- model_name (VARCHAR(255) — which model wrote it, so a model swap is visible)
 - created_at, updated_at (timestamptz)
 
 `covers_through_turn` is the load-bearing column. It is both the window's floor and the answer
 to the background worker's question "is this session's summary behind?". Without it the job
 would have to carry the message list, which ADR-026 forbids.
+
+`PostgresSessionSummaryStore.save()` is an `INSERT ... ON CONFLICT DO UPDATE` that leaves
+`created_at` alone: the recap is one long-lived value that is rewritten, not a version per pass.
+No history of the recap is kept, because the transcript it was made from already is one. The
+cascade means deleting a session takes its recap with it — a recap without its transcript is a
+claim about a story nobody can check.
 
 ### lorebook_entries — layer 02, S024
 

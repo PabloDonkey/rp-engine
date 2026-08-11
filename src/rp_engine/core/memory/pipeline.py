@@ -8,6 +8,7 @@ fits the room the prompt has left (ADR-026).
 import asyncio
 import logging
 from collections.abc import Sequence
+from dataclasses import replace
 from uuid import UUID
 
 from rp_engine.core.conversation.message import ConversationMessage
@@ -70,20 +71,27 @@ class MemoryPipeline:
         enabled = [source for source in self._sources if settings.is_enabled(source.id)]
         if not enabled or available <= 0:
             return MemoryRecall(budget_tokens=available, dropped_messages=len(messages))
+        present = {source.id for source in enabled}
 
-        context = MemoryRecallContext(
-            session_id=session_id,
-            scenario_definition_id=scenario_definition_id,
-            recent_messages=tuple(messages),
-            current_user_message=current_user_message,
-            remaining_budget=available,
-        )
-        # Every source is offered the whole budget and they run at the same time, so the
-        # sum of what they return can exceed it. That is what the cut below is for: the
-        # alternative, handing out fixed shares up front, wastes the share of any source
-        # that had nothing to say this turn.
+        # Every source is offered its own share of the budget, and a source with no share
+        # gets what the other shares leave. They run at the same time and a source may
+        # return more than it was offered, so the sum can still exceed the budget; that is
+        # what the cut below is for.
         results = await asyncio.gather(
-            *(source.recall(context) for source in enabled),
+            *(
+                source.recall(
+                    MemoryRecallContext(
+                        session_id=session_id,
+                        scenario_definition_id=scenario_definition_id,
+                        recent_messages=tuple(messages),
+                        current_user_message=current_user_message,
+                        remaining_budget=settings.budget_for(
+                            source.id, available, among=present
+                        ),
+                    )
+                )
+                for source in enabled
+            ),
             return_exceptions=True,
         )
 
@@ -110,13 +118,32 @@ class MemoryPipeline:
     async def observe(self, context: MemoryObserveContext, *, settings: MemorySettings) -> None:
         """Tell the enabled sources that a turn completed.
 
-        Runs off the turn path, in the background worker S023 introduces. Failures are
+        Runs off the turn path, in the background worker, so it may be slow. Failures are
         logged and swallowed for the same reason `recall` swallows them: nothing here is
         allowed to reach the player.
+
+        The budgets are resolved here rather than by the caller. This runs seconds after
+        the turn that submitted it, and it is the pipeline that owns the budget in either
+        half (ADR-026 rule 3).
         """
         enabled = [source for source in self._sources if settings.is_enabled(source.id)]
+        if not enabled:
+            return
+        present = {source.id for source in enabled}
+        memory_budget = await self._context_budget.total_tokens()
         results = await asyncio.gather(
-            *(source.observe(context) for source in enabled),
+            *(
+                source.observe(
+                    replace(
+                        context,
+                        memory_budget=memory_budget,
+                        source_budget=settings.budget_for(
+                            source.id, memory_budget, among=present
+                        ),
+                    )
+                )
+                for source in enabled
+            ),
             return_exceptions=True,
         )
         for source, result in zip(enabled, results, strict=True):

@@ -35,6 +35,10 @@ ToggleableMemorySystemId = Literal[
 # fragment is dropped. The recent window sits above every other layer because it is the
 # conversation, and a prompt without it has no scene to continue.
 PRIORITY_RECENT_WINDOW = 100
+# The rolling summary sits directly below the window and above every later layer: it is
+# the only thing that speaks for the part of the story the window can no longer hold, so
+# dropping it costs more than dropping any lore or fact fragment.
+PRIORITY_ROLLING_SUMMARY = 80
 
 
 @dataclass(frozen=True, slots=True)

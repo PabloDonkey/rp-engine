@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from rp_engine.application.services.session_directive_service import SessionDirectiveService
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_session import ScenarioSession, SessionOwnerKind
 from rp_engine.core.scenario.session_directives import SessionDirectives
@@ -202,3 +203,46 @@ async def test_writes_do_not_disturb_the_rest_of_the_session(
     assert stored.world_state == {"location": "vault"}
     assert stored.metadata == {"difficulty": "hard"}
     assert stored.created_at == session.created_at
+
+
+@pytest.mark.asyncio
+async def test_switching_a_memory_layer_off_is_persisted(
+    service: SessionDirectiveService,
+    store: InMemoryScenarioSessionStore,
+) -> None:
+    session = _session()
+    await store.save(session)
+
+    updated = await service.set_memory_source(
+        session=session, source_id="rolling_summary", enabled=False
+    )
+
+    assert updated.is_enabled("rolling_summary") is False
+    assert store.sessions[session.id].memory.is_enabled("rolling_summary") is False
+
+
+@pytest.mark.asyncio
+async def test_switching_a_memory_layer_on_is_persisted(
+    service: SessionDirectiveService,
+    store: InMemoryScenarioSessionStore,
+) -> None:
+    session = _session().with_memory(MemorySettings(enabled_sources=()))
+    await store.save(session)
+
+    await service.set_memory_source(session=session, source_id="rolling_summary", enabled=True)
+
+    assert store.sessions[session.id].memory.is_enabled("rolling_summary") is True
+
+
+@pytest.mark.asyncio
+async def test_a_memory_write_leaves_the_directives_alone(
+    service: SessionDirectiveService,
+    store: InMemoryScenarioSessionStore,
+) -> None:
+    # The two live in one JSONB document, so a write to either must carry the other.
+    session = _session().with_directives(SessionDirectives(language="fr"))
+    await store.save(session)
+
+    await service.set_memory_source(session=session, source_id="rolling_summary", enabled=False)
+
+    assert store.sessions[session.id].directives.language == "fr"

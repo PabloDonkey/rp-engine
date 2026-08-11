@@ -23,7 +23,9 @@ from rp_engine.core.memory.character_ratio_token_counter import CharacterRatioTo
 from rp_engine.core.memory.context_budget import ContextBudget
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
 from rp_engine.core.memory.pipeline import MemoryPipeline
+from rp_engine.core.memory.recall_context import MemoryObserveContext
 from rp_engine.core.memory.recent_window_source import RecentWindowSource
+from rp_engine.core.ports import BackgroundJob
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives
@@ -110,6 +112,19 @@ def _session(*, owner_kind: str = "user", owner_id: UUID = USER_ID) -> ScenarioS
 @pytest.fixture
 def scenario_context() -> ScenarioContext:
     return _session(), _definition(), User(id=USER_ID, display_name="Pablo")
+
+
+class RecordingTaskScheduler:
+    """Runs nothing. It records what the turn asked the background worker to do."""
+
+    def __init__(self) -> None:
+        self.submitted: list[str] = []
+        self.jobs: list[BackgroundJob] = []
+
+    def submit(self, *, key: str, job: BackgroundJob) -> bool:
+        self.submitted.append(key)
+        self.jobs.append(job)
+        return True
 
 
 def _build_service(
@@ -1517,3 +1532,130 @@ async def test_what_the_context_budget_dropped_lands_in_the_trace(
     # Whatever survived is the newest end of the story, and no message is half there.
     assert replayed[-1] == "hello"
     assert all(content.startswith("turn ") for content in replayed[:-1])
+
+
+def _service_with_scheduler(
+    *,
+    scenario_context: ScenarioContext,
+    history: list[ConversationMessage],
+    memory_pipeline: MemoryPipeline | None = None,
+) -> tuple[ChatService, RecordingTaskScheduler, AsyncMock]:
+    session, definition, user = scenario_context
+    orchestrator = AsyncMock()
+    orchestrator.generate_reply = AsyncMock(return_value=LLMResponse(content="scene response"))
+    conversation_store = AsyncMock()
+    conversation_store.load_messages = AsyncMock(return_value=history)
+
+    scenario_session_store = AsyncMock()
+    scenario_session_store.get_by_id = AsyncMock(return_value=session)
+    scenario_definition_store = AsyncMock()
+    scenario_definition_store.get_by_id = AsyncMock(return_value=definition)
+    user_store = AsyncMock()
+    user_store.get_by_id = AsyncMock(return_value=user)
+    group_store = AsyncMock()
+    group_store.get_by_id = AsyncMock(return_value=None)
+
+    scheduler = RecordingTaskScheduler()
+    service = ChatService(
+        orchestrator=orchestrator,
+        conversation_store=conversation_store,
+        memory_pipeline=memory_pipeline or _memory_pipeline(),
+        token_counter=TOKEN_COUNTER,
+        user_identity_store=user_store,
+        group_identity_store=group_store,
+        scenario_session_store=scenario_session_store,
+        scenario_definition_store=scenario_definition_store,
+        generation_settings=GENERATION_SETTINGS,
+        task_scheduler=scheduler,
+    )
+    return service, scheduler, conversation_store
+
+
+@pytest.mark.asyncio
+async def test_a_finished_turn_asks_the_memory_layers_to_catch_up(
+    scenario_context: ScenarioContext,
+) -> None:
+    service, scheduler, _ = _service_with_scheduler(
+        scenario_context=scenario_context,
+        history=[ConversationMessage(role=ConversationRole.USER, content="previous")],
+    )
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+        message="hello there",
+    )
+
+    # One key per session: two fast turns must collapse into one pass, not race.
+    assert scheduler.submitted == [f"memory:{SESSION_ID}"]
+
+
+@pytest.mark.asyncio
+async def test_continue_and_retry_ask_the_memory_layers_too(
+    scenario_context: ScenarioContext,
+) -> None:
+    history = [
+        ConversationMessage(role=ConversationRole.USER, content="previous"),
+        ConversationMessage(role=ConversationRole.CHARACTER, content="a reply"),
+    ]
+    service, scheduler, _ = _service_with_scheduler(
+        scenario_context=scenario_context, history=history
+    )
+    identity = ConversationIdentity.for_session(str(SESSION_ID))
+
+    await service.continue_story(conversation_identity=identity)
+    await service.regenerate_last_response(conversation_identity=identity)
+
+    assert scheduler.submitted == [f"memory:{SESSION_ID}", f"memory:{SESSION_ID}"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_turn_asks_nothing(scenario_context: ScenarioContext) -> None:
+    """Nothing was stored, so there is nothing for the memory layers to catch up with."""
+    service, scheduler, _ = _service_with_scheduler(
+        scenario_context=scenario_context,
+        history=[ConversationMessage(role=ConversationRole.USER, content="previous")],
+    )
+
+    with pytest.raises(ValueError):
+        await service.send_message(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+            message="   ",
+        )
+
+    assert scheduler.submitted == []
+
+
+@pytest.mark.asyncio
+async def test_the_submitted_job_runs_the_pipeline_write_half(
+    scenario_context: ScenarioContext,
+) -> None:
+    """The job is a question about stored state, so it can run at any time — including
+    now, in the test, with no event loop of its own."""
+    session, _, _ = scenario_context
+    observed: list[int] = []
+
+    class RecordingSource:
+        id = "rolling_summary"
+
+        async def recall(self, context: object) -> tuple[()]:
+            return ()
+
+        async def observe(self, context: MemoryObserveContext) -> None:
+            observed.append(context.turn)
+
+    service, scheduler, _ = _service_with_scheduler(
+        scenario_context=scenario_context,
+        history=[ConversationMessage(role=ConversationRole.USER, content="previous")],
+        memory_pipeline=MemoryPipeline(
+            sources=[RecordingSource()],
+            context_budget=ContextBudget(context_window=_FixedContextWindow(1000), share=1.0),
+        ),
+    )
+
+    await service.send_message(
+        conversation_identity=ConversationIdentity.for_session(str(session.id)),
+        message="hello there",
+    )
+    await scheduler.jobs[0]()
+
+    assert observed == [1]

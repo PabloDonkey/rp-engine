@@ -30,7 +30,9 @@ from rp_engine.core.llm.errors import (
     LLMGenerationError,
     LLMTimeoutError,
 )
+from rp_engine.core.memory.fragment import ToggleableMemorySystemId
 from rp_engine.core.memory.models import ConversationIdentity
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.prompts.templates import resolve_templates
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession, SessionOwnerKind
@@ -54,13 +56,11 @@ AUTHORIZED_START_NO_PLAY_MESSAGE = (
 AUTHORIZED_START_RESUME_MESSAGE = "Resuming your adventure...\n\n"
 
 AUTHORIZED_START_RESUME_FALLBACK = (
-    "You're in the middle of an adventure. Send a message to continue, "
-    "or /restart to begin again."
+    "You're in the middle of an adventure. Send a message to continue, or /restart to begin again."
 )
 
 NO_ACTIVE_PLAYTHROUGH_MESSAGE = (
-    "You don't have an adventure in progress.\n"
-    "Use /scenarios to browse, then /play <id> to begin."
+    "You don't have an adventure in progress.\nUse /scenarios to browse, then /play <id> to begin."
 )
 
 GROUP_ADMIN_ONLY_MESSAGE = "Only group administrators can use this command."
@@ -77,7 +77,27 @@ DIRECTIVE_COMMANDS: frozenset[TelegramCommand] = frozenset(
         TelegramCommand.RULE,
         TelegramCommand.RULES,
         TelegramCommand.LANGUAGE,
+        TelegramCommand.MEMORY,
     }
+)
+
+# The player-facing names of the memory layers (ADR-026). The canonical layer ids are
+# engine vocabulary — "rolling_summary" tells a player nothing — so the command speaks in
+# these and accepts the ids too, for anyone reading the design documents.
+MEMORY_LAYER_NAMES: dict[str, ToggleableMemorySystemId] = {
+    "summary": "rolling_summary",
+    "rolling_summary": "rolling_summary",
+}
+
+MEMORY_LAYER_LABELS: dict[ToggleableMemorySystemId, str] = {
+    "rolling_summary": "summary - a running recap of the story so far",
+}
+
+MEMORY_USAGE_MESSAGE = (
+    "Usage:\n"
+    "/memory - Show what the story remembers\n"
+    "/memory summary on - Keep a running recap of what falls out of recent memory\n"
+    "/memory summary off - Stop keeping it"
 )
 
 DIRECTOR_USAGE_MESSAGE = (
@@ -94,9 +114,7 @@ RULE_USAGE_MESSAGE = (
     "/rules - List your rules"
 )
 
-NO_RULES_MESSAGE = (
-    "You haven't set any rules for this adventure.\nAdd one with /rule add <rule>."
-)
+NO_RULES_MESSAGE = "You haven't set any rules for this adventure.\nAdd one with /rule add <rule>."
 
 # S015 — persona capture. The prompt replaces the story intro for a brand-new session; the
 # intro is sent once the player has answered (or skipped).
@@ -152,9 +170,9 @@ class _OwnerContext:
     resolved_user: User
     resolved_group: Group | None
 
+
 BETA_REGISTERED_MESSAGE = (
-    "Thanks. You are already on the closed beta waiting list. "
-    "Please wait for admin approval."
+    "Thanks. You are already on the closed beta waiting list. Please wait for admin approval."
 )
 
 BETA_CREATED_MESSAGE = (
@@ -232,6 +250,14 @@ class SessionDirectiveServicePort(Protocol):
     async def add_director_instruction(
         self, *, session: ScenarioSession, instruction: str
     ) -> SessionDirectives: ...
+
+    async def set_memory_source(
+        self,
+        *,
+        session: ScenarioSession,
+        source_id: ToggleableMemorySystemId,
+        enabled: bool,
+    ) -> MemorySettings: ...
 
 
 class GroupIdentityResolverPort(Protocol):
@@ -315,9 +341,7 @@ class TelegramAdapter:
                 owner_kind=owner.owner_kind, owner_id=owner.owner_id
             )
             if active is None:
-                await self._reply_with_split(
-                    message=message, text=AUTHORIZED_START_NO_PLAY_MESSAGE
-                )
+                await self._reply_with_split(message=message, text=AUTHORIZED_START_NO_PLAY_MESSAGE)
                 return
             resume = await self._playthrough_service.resume_text(session=active)
             resume_text = (
@@ -667,7 +691,55 @@ class TelegramAdapter:
             return self._format_rules(session.directives.rules)
         if command == TelegramCommand.RULE:
             return await self._handle_rule(session=session, argument=argument)
+        if command == TelegramCommand.MEMORY:
+            return await self._handle_memory(session=session, argument=argument)
         return RULE_USAGE_MESSAGE
+
+    async def _handle_memory(
+        self,
+        *,
+        session: ScenarioSession,
+        argument: str | None,
+    ) -> str:
+        """Show or switch the memory layers of this adventure.
+
+        The recent conversation is missing from the list on purpose: it is the story
+        itself, so it cannot be switched off and there is nothing to report about it.
+        """
+        pieces = (argument or "").strip().split()
+        if not pieces:
+            return self._format_memory(session)
+        if len(pieces) != 2:
+            return MEMORY_USAGE_MESSAGE
+
+        layer = MEMORY_LAYER_NAMES.get(pieces[0].lower())
+        state = pieces[1].lower()
+        if layer is None or state not in {"on", "off"}:
+            return MEMORY_USAGE_MESSAGE
+
+        await self._session_directive_service.set_memory_source(
+            session=session,
+            source_id=layer,
+            enabled=state == "on",
+        )
+        if state == "on":
+            return (
+                "The story will keep a running recap. It catches up in the background, so "
+                "give it a turn or two."
+            )
+        return (
+            "The running recap is off. Only the recent conversation reaches the story from now on."
+        )
+
+    @staticmethod
+    def _format_memory(session: ScenarioSession) -> str:
+        lines = ["What this adventure remembers:", ""]
+        for layer, label in MEMORY_LAYER_LABELS.items():
+            state = "on" if session.memory.is_enabled(layer) else "off"
+            lines.append(f"{label}: {state}")
+        lines.append("")
+        lines.append("Change it with /memory summary on|off.")
+        return "\n".join(lines)
 
     async def _handle_director(
         self,
@@ -714,9 +786,7 @@ class TelegramAdapter:
 
         code = normalize_language(requested)
         if code is None:
-            return (
-                f"Unsupported language '{requested}'.\n\n{self._supported_languages_text()}"
-            )
+            return f"Unsupported language '{requested}'.\n\n{self._supported_languages_text()}"
 
         await self._session_directive_service.set_language(session=session, language=code)
         if code == "auto":
@@ -739,9 +809,7 @@ class TelegramAdapter:
         if subcommand == "add":
             if not remainder:
                 return "Usage: /rule add <rule>"
-            rule = await self._session_directive_service.add_rule(
-                session=session, text=remainder
-            )
+            rule = await self._session_directive_service.add_rule(session=session, text=remainder)
             return f"Rule {rule.id} added: {rule.text}"
 
         if subcommand == "remove":
@@ -1216,9 +1284,7 @@ class TelegramAdapter:
             except ValueError:
                 # Ask again rather than guessing: a blank first line is not a skip, and the
                 # pending state stays so the next message is still read as the answer.
-                await self._reply_with_split(
-                    message=message, text=PERSONA_NAME_REQUIRED_MESSAGE
-                )
+                await self._reply_with_split(message=message, text=PERSONA_NAME_REQUIRED_MESSAGE)
                 return True
 
         started = await self._playthrough_service.set_persona(

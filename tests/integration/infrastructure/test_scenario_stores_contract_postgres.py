@@ -9,6 +9,7 @@ from rp_engine.infrastructure.postgres import (
     PostgresConfig,
     PostgresScenarioDefinitionStore,
     PostgresScenarioSessionStore,
+    PostgresSessionSummaryStore,
     create_engine,
     create_session_factory,
 )
@@ -19,10 +20,13 @@ from tests.unit.infrastructure.contracts.scenario_definition_store_contract impo
 from tests.unit.infrastructure.contracts.scenario_session_store_contract import (
     assert_scenario_session_store_contract,
 )
+from tests.unit.infrastructure.contracts.session_summary_store_contract import (
+    assert_session_summary_store_contract,
+)
 
 _TRUNCATE = (
-    "TRUNCATE TABLE active_scenario_sessions, scenario_sessions, scenario_definitions "
-    "RESTART IDENTITY CASCADE"
+    "TRUNCATE TABLE session_summaries, active_scenario_sessions, scenario_sessions, "
+    "scenario_definitions RESTART IDENTITY CASCADE"
 )
 
 
@@ -68,3 +72,25 @@ async def test_postgres_scenario_session_store_contract(
     postgres_scenario_session_store: PostgresScenarioSessionStore,
 ) -> None:
     await assert_scenario_session_store_contract(postgres_scenario_session_store)
+
+
+@pytest_asyncio.fixture
+async def postgres_session_summary_stores(
+    postgres_config: PostgresConfig,
+) -> AsyncIterator[tuple[PostgresSessionSummaryStore, PostgresScenarioSessionStore]]:
+    engine = await _prepare_engine(postgres_config)
+    factory = create_session_factory(engine)
+    yield PostgresSessionSummaryStore(factory), PostgresScenarioSessionStore(factory)
+    async with engine.begin() as connection:
+        await connection.execute(text(_TRUNCATE))
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_postgres_session_summary_store_contract(
+    postgres_session_summary_stores: tuple[
+        PostgresSessionSummaryStore, PostgresScenarioSessionStore
+    ],
+) -> None:
+    summary_store, session_store = postgres_session_summary_stores
+    await assert_session_summary_store_contract(summary_store, session_store=session_store)

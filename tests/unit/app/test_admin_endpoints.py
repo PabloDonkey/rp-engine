@@ -11,6 +11,8 @@ from rp_engine.app.main import create_app
 from rp_engine.application.services.admin_service import AdminDeletedMessage, AdminUserSummary
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
+from rp_engine.core.memory.session_summary import SessionSummary
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives
@@ -535,3 +537,88 @@ def test_delete_last_message_404_when_conversation_is_empty(tmp_path: Path) -> N
     response = client.delete(f"/admin/sessions/{SESSION_ID}/messages/last")
 
     assert response.status_code == 404
+
+
+def test_get_session_reports_the_memory_layers(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+
+    body = client.get(f"/admin/sessions/{SESSION_ID}").json()
+
+    assert body["memory"]["enabled_sources"] == ["rolling_summary"]
+    assert body["memory"]["source_budget_shares"] == {"rolling_summary": 0.25}
+
+
+def test_set_session_memory_switches_a_layer_off(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    switched_off = _session().with_memory(MemorySettings(enabled_sources=()))
+    container.admin_service.set_session_memory_source = AsyncMock(return_value=switched_off)
+    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+
+    response = client.put(
+        f"/admin/sessions/{SESSION_ID}/memory",
+        json={"source_id": "rolling_summary", "enabled": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["memory"]["enabled_sources"] == []
+    container.admin_service.set_session_memory_source.assert_awaited_once()
+
+
+def test_set_session_memory_404_for_an_unknown_session(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.set_session_memory_source = AsyncMock(return_value=None)
+
+    response = client.put(
+        f"/admin/sessions/{SESSION_ID}/memory",
+        json={"source_id": "rolling_summary", "enabled": True},
+    )
+
+    assert response.status_code == 404
+
+
+def test_the_recent_window_cannot_be_switched_off_through_the_panel(tmp_path: Path) -> None:
+    """Layer 00 is the conversation itself, so the request type does not accept it."""
+    client, container = _setup(tmp_path)
+    container.admin_service.set_session_memory_source = AsyncMock()
+
+    response = client.put(
+        f"/admin/sessions/{SESSION_ID}/memory",
+        json={"source_id": "recent_window", "enabled": False},
+    )
+
+    assert response.status_code == 422
+    container.admin_service.set_session_memory_source.assert_not_awaited()
+
+
+def test_get_session_summary_returns_the_stored_recap(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.get_session_summary = AsyncMock(
+        return_value=SessionSummary.create(
+            session_id=SESSION_ID,
+            summary="They crossed the river.",
+            covers_through_turn=7,
+            tokens=9,
+            model_name="test-model",
+        )
+    )
+
+    body = client.get(f"/admin/sessions/{SESSION_ID}/summary").json()
+
+    assert body["summary"] == "They crossed the river."
+    assert body["covers_through_turn"] == 7
+    assert body["tokens"] == 9
+    assert body["model_name"] == "test-model"
+
+
+def test_get_session_summary_is_null_before_the_first_pass(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.get_session_summary = AsyncMock(return_value=None)
+
+    response = client.get(f"/admin/sessions/{SESSION_ID}/summary")
+
+    assert response.status_code == 200
+    assert response.json() is None

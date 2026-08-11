@@ -1,3 +1,7 @@
+from rp_engine.core.ports.background_task_scheduler import (
+    BackgroundJob,
+    BackgroundTaskScheduler,
+)
 from rp_engine.core.ports.context_window import ContextWindowProbe
 from rp_engine.core.ports.conversation_store import ConversationStore
 from rp_engine.core.ports.conversation_summarizer import ConversationSummarizer
@@ -14,11 +18,14 @@ from rp_engine.core.ports.processing_feedback import (
 )
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
+from rp_engine.core.ports.session_summary_store import SessionSummaryStore
 from rp_engine.core.ports.token_counter import TokenCounter
 from rp_engine.core.ports.user_identity_store import UserIdentityStore
 from rp_engine.core.ports.world_store import WorldStore
 
 __all__ = [
+    "BackgroundJob",
+    "BackgroundTaskScheduler",
     "ContextWindowProbe",
     "ConversationStore",
     "ConversationSummarizer",
@@ -33,6 +40,7 @@ __all__ = [
     "processing_feedback_scope",
     "ScenarioDefinitionStore",
     "ScenarioSessionStore",
+    "SessionSummaryStore",
     "TokenCounter",
     "UserIdentityStore",
     "WorldStore",

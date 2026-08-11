@@ -14,6 +14,22 @@ const SessionDirectivesSchema = z.object({
   director_instructions: z.array(z.string()),
 });
 
+// Which memory layers the session runs (ADR-026). The recent conversation is absent on
+// purpose: it is the story itself and cannot be switched off.
+const SessionMemorySchema = z.object({
+  enabled_sources: z.array(z.string()),
+  source_budget_shares: z.record(z.string(), z.number()),
+});
+
+const SessionSummarySchema = z.object({
+  summary: z.string(),
+  covers_through_turn: z.number(),
+  tokens: z.number(),
+  model_name: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
 const AdminSessionSchema = z.object({
   id: z.string(),
   scenario_definition_id: z.string(),
@@ -25,6 +41,7 @@ const AdminSessionSchema = z.object({
   deleted_at: z.string().nullable(),
   message_count: z.number().nullable(),
   directives: SessionDirectivesSchema,
+  memory: SessionMemorySchema,
   user_persona_name: z.string().nullable(),
   user_persona_description: z.string().nullable(),
 });
@@ -63,6 +80,7 @@ const SessionExportSchema = z.object({
 });
 
 export type AdminUser = z.infer<typeof AdminUserSchema>;
+export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 export type AdminSession = z.infer<typeof AdminSessionSchema>;
 export type AdminMessage = z.infer<typeof AdminMessageSchema>;
 export type AdminTrace = z.infer<typeof AdminTraceSchema>;
@@ -145,6 +163,23 @@ export function setSessionPersona(
   return request(`/sessions/${sessionId}/persona`, AdminSessionSchema, {
     method: "PUT",
     body: JSON.stringify({ name, description }),
+  });
+}
+
+// The running recap of memory layer 01, or null before its first background pass.
+export function getSessionSummary(sessionId: string): Promise<SessionSummary | null> {
+  return request(`/sessions/${sessionId}/summary`, SessionSummarySchema.nullable());
+}
+
+// One layer at a time, so a failed call leaves the other layers as they were.
+export function setSessionMemorySource(
+  sessionId: string,
+  sourceId: string,
+  enabled: boolean,
+): Promise<AdminSession> {
+  return request(`/sessions/${sessionId}/memory`, AdminSessionSchema, {
+    method: "PUT",
+    body: JSON.stringify({ source_id: sourceId, enabled }),
   });
 }
 

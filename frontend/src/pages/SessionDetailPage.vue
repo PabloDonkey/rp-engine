@@ -43,6 +43,30 @@ watch(
   },
 );
 
+// Memory layers (ADR-026). Only the toggleable ones are listed: the recent conversation is
+// the story itself, so there is no state to show for it.
+const MEMORY_LAYERS: { id: string; label: string; hint: string }[] = [
+  {
+    id: "rolling_summary",
+    label: "Rolling summary",
+    hint: "Condenses what falls out of the recent window into a running recap.",
+  },
+];
+const memorySaving = ref("");
+
+function memoryEnabled(sourceId: string): boolean {
+  return store.session?.memory.enabled_sources.includes(sourceId) ?? false;
+}
+
+async function onToggleMemory(sourceId: string): Promise<void> {
+  memorySaving.value = sourceId;
+  try {
+    await store.setSessionMemorySource(props.sessionId, sourceId, !memoryEnabled(sourceId));
+  } finally {
+    memorySaving.value = "";
+  }
+}
+
 const backTo = computed(() =>
   store.session ? { name: "user-sessions", params: { userId: store.session.owner_id } } : "/users",
 );
@@ -280,6 +304,42 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
         <p v-else class="text-sm text-neutral-500">
           No persona, and this session was superseded — a persona set here would never reach
           a prompt.
+        </p>
+      </div>
+
+      <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+        Memory
+      </h2>
+      <div
+        class="mb-6 grid gap-3 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10"
+      >
+        <!-- The same switch the player has through /memory. -->
+        <div v-for="layer in MEMORY_LAYERS" :key="layer.id" class="flex items-start gap-3">
+          <button
+            type="button"
+            class="rounded border border-black/10 px-2 py-1 text-xs dark:border-white/10"
+            :disabled="memorySaving === layer.id"
+            @click="onToggleMemory(layer.id)"
+          >
+            {{ memoryEnabled(layer.id) ? "On" : "Off" }}
+          </button>
+          <div>
+            <div>{{ layer.label }}</div>
+            <div class="text-xs text-neutral-500">{{ layer.hint }}</div>
+          </div>
+        </div>
+
+        <div v-if="store.sessionSummary" class="grid gap-1">
+          <div class="text-xs text-neutral-500">
+            Story so far — covers {{ store.sessionSummary.covers_through_turn }} turn(s),
+            {{ store.sessionSummary.tokens }} tokens, written by
+            {{ store.sessionSummary.model_name }} on
+            {{ new Date(store.sessionSummary.updated_at).toLocaleString() }}
+          </div>
+          <p class="whitespace-pre-wrap">{{ store.sessionSummary.summary }}</p>
+        </div>
+        <p v-else class="text-xs text-neutral-500">
+          No recap yet. It is written in the background, once the story outgrows the window.
         </p>
       </div>
 

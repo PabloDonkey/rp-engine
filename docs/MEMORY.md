@@ -2,10 +2,10 @@
 
 How the engine decides what the model is allowed to remember.
 
-> **Status: layer 00 is built.** ADR-026 accepted the architecture on 2026-08-02 and S021
-> settled the four open decisions on 2026-08-03. S022 built the token counter, the budget, the
-> pipeline and layer 00 on 2026-08-10. Layers 01 to 04 are still design; S023 to S026 build
-> them, in that order.
+> **Status: layers 00 and 01 are built.** ADR-026 accepted the architecture on 2026-08-02 and
+> S021 settled the four open decisions on 2026-08-03. S022 built the token counter, the budget,
+> the pipeline and layer 00 on 2026-08-10. S023 built the background worker and layer 01 on the
+> same day. Layers 02 to 04 are still design; S024 to S026 build them, in that order.
 >
 > `DumpEverythingStrategy`, which put every message ever stored into every prompt, is gone.
 
@@ -36,10 +36,22 @@ Every source implements `MemorySource`, which has two halves:
 * **`recall`** runs before the prompt is built. It returns `MemoryFragment` values. It is on the
   turn path, so it must be fast.
 * **`observe`** runs after a successful turn. The background worker runs it, so it never sits on
-  the turn path and may be slow.
+  the turn path and may be slow. `ChatService` submits one job per finished turn, keyed by
+  session, and never waits for it.
 
-The pipeline owns the budget. A source reports what its fragment costs. It never decides whether
-its fragment fits.
+The pipeline owns the budget, in both halves. A source reports what its fragment costs and is
+told what it may spend. It never decides whether its fragment fits.
+
+A source may have a **share** of the budget, held per session in `MemorySettings`. Layer 01 takes
+a quarter by default. A source with no share gets what the other enabled shares leave, which is
+what layer 00 gets, so the shares never have to add up to one.
+
+The subtraction is what makes a share mean anything. Layer 00 would otherwise fill the budget
+with turns on any long story, and every lower-priority fragment would then be dropped by the cut
+below for want of room. The cost is that an unused share is wasted for that turn: a recap shorter
+than its allowance leaves the difference unspent. A layer this build does not run reserves
+nothing, so a session that switched on a layer against a newer build does not shrink the window
+of an older one.
 
 A source that fails does not fail the turn. The pipeline logs it, drops its fragments, and
 carries on with the rest.
@@ -106,8 +118,9 @@ floor, and dropped messages are simply gone from the prompt.
 
 ## Layer 01 — rolling summary
 
-**Ships in S023.** The best value in the stack: `LMStudioConversationSummarizer` and its port are
-already written, and the composition root has never wired them in.
+**Shipped in S023.** On by default. `LMStudioConversationSummarizer` was already written and
+never wired in; S023 wired it and replaced its character-handoff prompt with two rolling-recap
+prompts, one that folds new turns into the recap and one that condenses the recap itself.
 
 | | |
 |---|---|
@@ -116,13 +129,21 @@ already written, and the composition root has never wired them in.
 | `observe` does | submits "is this session's summary behind?" to the worker |
 | Cost per turn | none on the turn path. One model call every N turns, in the background. |
 
-**How the worker decides.** It reads `covers_through_turn`, compares it with the conversation,
-and measures what falls outside the window budget. If the window has passed its high-water mark
-(start at 75%), it condenses the next stretch and moves the watermark. When the summary itself
-outgrows its own budget, it condenses the summary again.
+**How the worker decides.** It re-reads the transcript and `covers_through_turn`, then walks the
+turns from newest to oldest to find two marks: the high-water mark (75% of the budget, set by
+`RP_ENGINE_MEMORY_SUMMARY_HIGH_WATER_SHARE`) and the window edge. Everything past the high-water
+mark that the recap does not yet cover is folded in, and the fold stops after a narrator reply so
+a player line never lands in the recap while the answer to it stays in the window. When the recap
+outgrows its own share of the budget, it is condensed once more — one pass, not a loop.
 
 The job carries no message text — only the session id and the turn. That is what makes a job
-lost to a restart harmless: the next turn asks the same question.
+lost to a restart harmless: the next turn asks the same question. Running the job late, twice, or
+not at all all end in the same stored state, and there is a test that asserts exactly that.
+
+**The alarm.** Before folding, the worker compares what the recap covered against what the window
+could hold on the turn that just ran. If turns fell outside the window that the recap had not
+reached, they reached the model through nothing at all, and that is the one memory warning
+ADR-026 asks for. The high-water mark exists so it never fires.
 
 **What it loses.** Exact wording. A summary is a paraphrase, so a line of dialogue the player
 cares about will not come back the way it was said. That is what layers 02 and 04 cover.
@@ -203,14 +224,16 @@ prerequisite for it being any good.
 ## Per-session control
 
 `MemorySettings` is a frozen value object on `ScenarioSession`, shaped like `SessionDirectives`.
-It holds the enabled set and the per-source budgets, and rides the session's existing JSONB
+It holds the enabled set and the per-source budget shares, and rides the session's existing JSONB
 payload with no new column.
 
 Layer 00 cannot be switched off, and the type makes that unrepresentable rather than merely
 invalid. Layers 01 to 04 are per session. Defaults come from settings.
 
-Players change them with `/memory`, next to `/rules` and `/director`. Operators change them from
-the admin panel.
+Players change them with `/memory`, next to `/rules` and `/director`: bare `/memory` lists the
+layers and their state, and `/memory summary on|off` switches one. Operators switch the same
+layers from the session page of the admin panel, which also shows the stored recap and how far it
+reaches.
 
 Under ADR-025, this is player-owned state: `/restart` carries it forward, `/clear` resets it.
 
@@ -223,3 +246,20 @@ Write a class implementing `MemorySource`. Add it to the list in `app/main.py`. 
 
 Nothing else changes. No existing source, no pipeline code, no builder code. That property is why
 S021 wrote the contracts above down before anyone built a layer.
+
+---
+
+## The background worker
+
+One `asyncio.Queue` inside the running process, owned by `app/lifespan.py` and started next to
+the Telegram runtime. `ChatService` submits one job per finished turn and returns at once.
+
+| Rule | Why |
+|---|---|
+| One job per session at a time; a duplicate is dropped | Two fast turns must not race over the same rows |
+| Bounded queue; on overflow, log and drop | A backlog means the worker cannot keep up, which dropping shows and buffering hides |
+| Cancelled on shutdown, never drained | Draining would hold a restart on a model call for work the next turn redoes |
+| Every job wrapped; failures logged and swallowed | Nothing here is allowed to reach the player |
+
+All four are safe for one reason: **a job is a question about stored state, never a command
+carrying data.** Losing one costs nothing.

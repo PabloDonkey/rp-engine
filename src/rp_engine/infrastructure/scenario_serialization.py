@@ -11,7 +11,7 @@ from uuid import UUID
 
 from rp_engine.core.character.character import Character
 from rp_engine.core.memory.fragment import ToggleableMemorySystemId
-from rp_engine.core.memory.settings import MemorySettings
+from rp_engine.core.memory.settings import MemorySettings, MemorySourceBudget
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import (
@@ -195,28 +195,55 @@ def _director_instructions_from_payload(data: dict[str, Any]) -> tuple[str, ...]
 
 
 def memory_settings_to_payload(memory: MemorySettings) -> dict[str, Any]:
-    return {"enabled_sources": list(memory.enabled_sources)}
+    return {
+        "enabled_sources": list(memory.enabled_sources),
+        "source_budgets": {budget.source: budget.share for budget in memory.source_budgets},
+    }
 
 
 def memory_settings_from_payload(data: dict[str, Any] | None) -> MemorySettings:
-    """Read which memory layers a session runs.
+    """Read which memory layers a session runs, and what each may spend.
 
     Additive like the directives above: a session stored before S022, or one naming a
     layer this build does not have, degrades to the defaults rather than failing the whole
     session load. An unknown name is dropped, not kept — keeping it would let a payload
-    smuggle a value the type says is impossible.
+    smuggle a value the type says is impossible. A share outside (0, 1] is dropped the same
+    way, since the value object refuses to hold one.
     """
     if not data:
         return MemorySettings()
     raw = data.get("enabled_sources")
-    if not isinstance(raw, list):
-        return MemorySettings()
-    enabled = tuple(
-        source
-        for source in raw
-        if isinstance(source, str) and source in TOGGLEABLE_MEMORY_SOURCE_IDS
+    enabled = (
+        tuple(
+            source
+            for source in raw
+            if isinstance(source, str) and source in TOGGLEABLE_MEMORY_SOURCE_IDS
+        )
+        if isinstance(raw, list)
+        else MemorySettings().enabled_sources
     )
-    return MemorySettings(enabled_sources=cast(tuple[ToggleableMemorySystemId, ...], enabled))
+    return MemorySettings(
+        enabled_sources=cast(tuple[ToggleableMemorySystemId, ...], enabled),
+        source_budgets=_memory_source_budgets_from_payload(data.get("source_budgets")),
+    )
+
+
+def _memory_source_budgets_from_payload(raw: Any) -> tuple[MemorySourceBudget, ...]:
+    if not isinstance(raw, dict):
+        return MemorySettings().source_budgets
+    budgets: list[MemorySourceBudget] = []
+    for source, share in raw.items():
+        if source not in TOGGLEABLE_MEMORY_SOURCE_IDS or not isinstance(share, int | float):
+            continue
+        if isinstance(share, bool) or not 0.0 < float(share) <= 1.0:
+            continue
+        budgets.append(
+            MemorySourceBudget(
+                source=cast(ToggleableMemorySystemId, source),
+                share=float(share),
+            )
+        )
+    return tuple(budgets)
 
 
 def scenario_session_to_payload(session: ScenarioSession) -> dict[str, Any]:

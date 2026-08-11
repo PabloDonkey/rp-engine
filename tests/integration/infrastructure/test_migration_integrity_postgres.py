@@ -21,6 +21,7 @@ from rp_engine.infrastructure.postgres import (
     PostgresGroupIdentityStore,
     PostgresScenarioDefinitionStore,
     PostgresScenarioSessionStore,
+    PostgresSessionSummaryStore,
     PostgresUserIdentityStore,
     create_engine,
     create_session_factory,
@@ -41,6 +42,9 @@ from tests.unit.infrastructure.contracts.scenario_definition_store_contract impo
 )
 from tests.unit.infrastructure.contracts.scenario_session_store_contract import (
     assert_scenario_session_store_contract,
+)
+from tests.unit.infrastructure.contracts.session_summary_store_contract import (
+    assert_session_summary_store_contract,
 )
 from tests.unit.infrastructure.contracts.user_identity_store_contract import (
     assert_user_identity_store_contract,
@@ -145,6 +149,10 @@ async def test_migrate_then_contract_all_stores(migrated_engine: AsyncEngine) ->
     await assert_user_identity_store_contract(PostgresUserIdentityStore(session_factory))
     await assert_group_identity_store_contract(PostgresGroupIdentityStore(session_factory))
     await assert_generation_trace_store_contract(PostgresGenerationTraceStore(session_factory))
+    await assert_session_summary_store_contract(
+        PostgresSessionSummaryStore(session_factory),
+        session_store=PostgresScenarioSessionStore(session_factory),
+    )
 
 
 _PRE_S020_REVISION = "20260727_0010"
@@ -254,6 +262,63 @@ async def test_migration_upgrade_downgrade_round_trip(
             lambda conn: set(inspect(conn).get_table_names())
         )
     assert _MODEL_TABLES <= table_names_after
+
+    async with engine.begin() as connection:
+        await connection.execute(text("DROP SCHEMA public CASCADE"))
+        await connection.execute(text("CREATE SCHEMA public"))
+    await engine.dispose()
+
+
+_PRE_S023_REVISION = "20260802_0011"
+
+
+@pytest.mark.asyncio
+async def test_the_session_summaries_table_is_reversible_on_its_own(
+    migration_postgres_config: PostgresConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Memory layer 01's table, up and down one step at a time.
+
+    The round trip above proves the whole chain reverses. This proves the single step does,
+    which is the one an operator runs when a release is rolled back.
+    """
+    _point_alembic_env_at(monkeypatch, migration_postgres_config)
+    engine = create_engine(migration_postgres_config)
+    await _reset_schema(engine)
+    alembic_config = _alembic_config()
+
+    await asyncio.to_thread(command.upgrade, alembic_config, "head")
+
+    async with engine.connect() as connection:
+        columns = await connection.run_sync(
+            lambda conn: {
+                column["name"] for column in inspect(conn).get_columns("session_summaries")
+            }
+        )
+    assert columns == {
+        "session_id",
+        "summary",
+        "covers_through_turn",
+        "tokens",
+        "model_name",
+        "created_at",
+        "updated_at",
+    }
+
+    await asyncio.to_thread(command.downgrade, alembic_config, _PRE_S023_REVISION)
+
+    async with engine.connect() as connection:
+        after_downgrade = await connection.run_sync(
+            lambda conn: set(inspect(conn).get_table_names())
+        )
+    assert "session_summaries" not in after_downgrade
+    # The sessions the recaps pointed at are untouched by the downgrade.
+    assert "scenario_sessions" in after_downgrade
+
+    await asyncio.to_thread(command.upgrade, alembic_config, "head")
+
+    async with engine.connect() as connection:
+        after_upgrade = await connection.run_sync(lambda conn: set(inspect(conn).get_table_names()))
+    assert "session_summaries" in after_upgrade
 
     async with engine.begin() as connection:
         await connection.execute(text("DROP SCHEMA public CASCADE"))

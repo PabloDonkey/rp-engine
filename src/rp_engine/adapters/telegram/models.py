@@ -19,6 +19,7 @@ class TelegramCommand(StrEnum):
     RULE = "/rule"
     RULES = "/rules"
     LANGUAGE = "/language"
+    MEMORY = "/memory"
     ADMIN_BETA_LIST = "/admin_beta_list"
     ADMIN_BETA_ACCEPT = "/admin_beta_accept"
     ADMIN_BETA_REJECT = "/admin_beta_reject"

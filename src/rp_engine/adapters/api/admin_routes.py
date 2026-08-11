@@ -7,8 +7,10 @@ from sqlalchemy.exc import IntegrityError
 from rp_engine.adapters.api.admin_models import (
     AdminDeletedMessageResponse,
     AdminMessageResponse,
+    AdminSessionMemoryRequest,
     AdminSessionPersonaRequest,
     AdminSessionResponse,
+    AdminSessionSummaryResponse,
     AdminTraceResponse,
     AdminUserResponse,
     ScenarioSummaryResponse,
@@ -113,6 +115,33 @@ def create_admin_router(
         transcript = await admin_service.get_session_transcript(session_id)
         return AdminSessionResponse.from_session(updated, message_count=len(transcript))
 
+    @router.get("/sessions/{session_id}/summary")
+    async def get_session_summary(session_id: UUID) -> AdminSessionSummaryResponse | None:
+        """The running recap memory layer 01 keeps, or null when it has not written one yet."""
+        session = await admin_service.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        summary = await admin_service.get_session_summary(session_id)
+        return None if summary is None else AdminSessionSummaryResponse.from_summary(summary)
+
+    @router.put("/sessions/{session_id}/memory")
+    async def set_session_memory(
+        session_id: UUID, payload: AdminSessionMemoryRequest
+    ) -> AdminSessionResponse:
+        """Switch one memory layer on or off for a session.
+
+        The same switch the player has through `/memory`, for an operator who is already
+        looking at the session. Layer 00 cannot be named here: the request type only
+        accepts the toggleable layers.
+        """
+        updated = await admin_service.set_session_memory_source(
+            session_id, source_id=payload.source_id, enabled=payload.enabled
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        transcript = await admin_service.get_session_transcript(session_id)
+        return AdminSessionResponse.from_session(updated, message_count=len(transcript))
+
     @router.delete("/sessions/{session_id}/messages/last")
     async def delete_last_message(session_id: UUID) -> AdminDeletedMessageResponse:
         """Remove the newest message only, together with its generation traces.
@@ -206,9 +235,7 @@ def create_admin_router(
         if await admin_service.get_scenario(scenario_id) is None:
             raise HTTPException(status_code=404, detail="Scenario not found")
         if payload.get("id") != scenario_id:
-            raise HTTPException(
-                status_code=400, detail="Scenario id in body must match the URL id"
-            )
+            raise HTTPException(status_code=400, detail="Scenario id in body must match the URL id")
         scenario = await scenario_transfer_service.import_scenario_payload(payload)
         if scenario is None:
             raise HTTPException(status_code=422, detail="Scenario payload failed validation")

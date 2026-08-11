@@ -92,7 +92,7 @@ For Telegram, authorization and permissions are transport concerns handled in th
 * Private chats use user-level whitelist authorization.
 * Group chats use group-level whitelist authorization.
 * In authorized groups, all members can advance the story via `/chat <message>`; plain group messages are ignored.
-* Story/session-control commands (`/play`, `/restart`, `/continue`, `/retry`) and session-directive commands (`/director`, `/rule`, `/rules`, `/language`) are restricted to Telegram chat administrators and creators in group chats.
+* Story/session-control commands (`/play`, `/restart`, `/continue`, `/retry`) and session-directive commands (`/director`, `/rule`, `/rules`, `/language`, `/memory`) are restricted to Telegram chat administrators and creators in group chats.
 * Telegram message-size limits are handled by adapter-level message splitting during delivery.
 * Telegram external identities are resolved into internal engine users before calling use cases.
 * Telegram command menu registration (`set_my_commands`) is adapter/runtime-owned.
@@ -119,7 +119,7 @@ Example for Telegram:
 * `/continue` is translated to `ChatService.continue_story(...)` (which itself resumes a truncated reply or advances)
 * `/retry` is translated to `ChatService.regenerate_last_response(...)`, then the adapter replaces the previous narrator message in place
 * `/chat <message>` (groups) and plain private messages are translated to `ChatService.send_message(...)`
-* `/director <instruction>`, `/rule add|remove|list`, `/rules`, and `/language <code>` are translated to `SessionDirectiveService` calls; the adapter owns the subcommand syntax and the reply wording, the domain owns validation and rule-id allocation
+* `/director <instruction>`, `/rule add|remove|list`, `/rules`, `/language <code>` and `/memory [layer on|off]` are translated to `SessionDirectiveService` calls; the adapter owns the subcommand syntax and the reply wording, the domain owns validation and rule-id allocation
 * `/help`, `/cancel`, and `/beta` are handled entirely by the Telegram adapter
 
 The engine and application services never parse Telegram command syntax. Persisting the
@@ -155,6 +155,7 @@ Current use-case API:
 * `PlaythroughService.get_active(...)` / `PlaythroughService.resume_text(...)`
 * `SessionDirectiveService.set_language(...)` / `add_rule(...)` / `remove_rule(...)`
 * `SessionDirectiveService.add_director_instruction(...)` / `clear_director_instructions(...)` / `get(...)`
+* `SessionDirectiveService.set_memory_source(...)` — which memory layers the session runs
 
 Adapters call these use cases directly. Scenario selection is driven by the curated
 catalog and `PlaythroughService`; there is no user-facing character creation/selection.
@@ -372,7 +373,12 @@ Postgres and decides what to do. A job lost to a restart therefore costs nothing
 turn asks the same question. This is why the queue needs no durable backing store.
 
 `BackgroundTaskScheduler` is the port in `core/ports/`. `AsyncioTaskScheduler` implements it
-in `infrastructure/`. Tests use an inline fake that runs the job at once.
+in `infrastructure/tasks/`. Tests use a fake that records the submitted job and runs it when
+the test chooses, which is what makes the background half testable with a plain `await`.
+
+Three rules keep the queue safe without any durability: one job in flight per key, a bounded
+queue that drops on overflow, and cancellation instead of draining on shutdown. `ChatService`
+composes the key from the session id, so two fast turns of one session collapse into one pass.
 
 ---
 
@@ -553,11 +559,12 @@ PlaythroughService.restart(...)
 
 ```text
 /director <instruction>            /rule add|remove <…>   /rules   /language <code>
+                                   /memory [summary on|off]
     ↓                                  ↓
 Telegram Adapter                   Telegram Adapter
     ↓                                  ↓
 SessionDirectiveService            SessionDirectiveService
-.add_director_instruction(...)     .add_rule/.remove_rule/.set_language(...)
+.add_director_instruction(...)     .add_rule/.remove_rule/.set_language/.set_memory_source(...)
     ↓                                  ↓
 queued; the next successful         applied to every following turn until changed
 generation consumes and clears

@@ -46,6 +46,7 @@ class StubSource:
     ) -> None:
         self.id = source_id
         self.observed: list[int] = []
+        self.observed_contexts: list[MemoryObserveContext] = []
         self.seen_budget: int | None = None
         self._fragment = MemoryFragment(
             source=source_id,
@@ -61,6 +62,7 @@ class StubSource:
 
     async def observe(self, context: MemoryObserveContext) -> None:
         self.observed.append(context.turn)
+        self.observed_contexts.append(context)
 
 
 class BrokenSource:
@@ -255,4 +257,94 @@ async def test_a_failing_observe_is_logged_and_swallowed(
             settings=MemorySettings(enabled_sources=("lorebook",)),
         )
 
+    assert "lorebook" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_layer_with_a_share_is_offered_only_that_share() -> None:
+    # Layer 01 takes a quarter of the budget by default; layer 00 has no share and gets
+    # what that leaves. If the window were offered all of it, it would fill the budget with
+    # turns and the cut would drop the recap on every long turn.
+    summary = StubSource("rolling_summary")
+    window = StubSource("recent_window")
+    pipeline = _pipeline([summary, window], window=1000)
+
+    await _recall(pipeline, settings=MemorySettings())
+
+    assert summary.seen_budget == 250
+    assert window.seen_budget == 750
+
+
+@pytest.mark.asyncio
+async def test_the_window_and_the_recap_both_reach_a_full_prompt() -> None:
+    """The reason the shares are subtracted, stated as behaviour.
+
+    A story long enough to fill the window must still leave room for the recap that speaks
+    for everything the window dropped.
+    """
+    window = RecentWindowSource(token_counter=FixedTokenCounter())
+    per_message = 2 + MESSAGE_OVERHEAD_TOKENS
+    recap = StubSource("rolling_summary", body="the story so far", priority=80, tokens=20)
+    pipeline = _pipeline([window, recap], window=20 * per_message)
+
+    recall = await _recall(pipeline, messages=_messages(20), settings=MemorySettings())
+
+    assert [fragment.source for fragment in recall.fragments] == ["rolling_summary"]
+    assert len(recall.messages) == 15
+    assert recall.dropped_fragment_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_observe_hands_each_layer_the_budget_it_will_have_to_fit() -> None:
+    """The pipeline owns the budget in the write half too (ADR-026 rule 3).
+
+    It is resolved when the job runs, not when the turn submitted it, so a job that waited
+    in the queue is priced against the model that is loaded now.
+    """
+    summary = StubSource("rolling_summary")
+    pipeline = _pipeline([summary], window=1000)
+
+    await pipeline.observe(
+        MemoryObserveContext(
+            session_id=SESSION_ID, scenario_definition_id=DEFINITION_ID, turn=4
+        ),
+        settings=MemorySettings(),
+    )
+
+    assert summary.observed == [4]
+    assert summary.observed_contexts[0].memory_budget == 1000
+    assert summary.observed_contexts[0].source_budget == 250
+
+
+@pytest.mark.asyncio
+async def test_observe_skips_a_disabled_layer() -> None:
+    disabled = StubSource("lorebook")
+    pipeline = _pipeline([disabled], window=1000)
+
+    await pipeline.observe(
+        MemoryObserveContext(
+            session_id=SESSION_ID, scenario_definition_id=DEFINITION_ID, turn=4
+        ),
+        settings=MemorySettings(),
+    )
+
+    assert disabled.observed == []
+
+
+@pytest.mark.asyncio
+async def test_a_layer_that_fails_to_observe_does_not_reach_the_player(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    working = StubSource("rolling_summary")
+    pipeline = _pipeline([BrokenSource("lorebook"), working], window=1000)
+
+    with caplog.at_level(logging.WARNING):
+        await pipeline.observe(
+            MemoryObserveContext(
+                session_id=SESSION_ID, scenario_definition_id=DEFINITION_ID, turn=9
+            ),
+            settings=MemorySettings(enabled_sources=("rolling_summary", "lorebook")),
+        )
+
+    assert working.observed == [9]
     assert "lorebook" in caplog.text

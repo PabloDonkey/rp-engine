@@ -3,11 +3,14 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from rp_engine.core.conversation.message import TURN_METADATA_KEY, ConversationMessage
+from rp_engine.core.memory.fragment import ToggleableMemorySystemId
 from rp_engine.core.memory.models import ConversationIdentity
+from rp_engine.core.memory.session_summary import SessionSummary
 from rp_engine.core.ports.conversation_store import ConversationStore
 from rp_engine.core.ports.generation_trace_store import GenerationTraceStore
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
+from rp_engine.core.ports.session_summary_store import SessionSummaryStore
 from rp_engine.core.ports.user_identity_store import UserIdentityStore
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
@@ -45,12 +48,14 @@ class AdminService:
         conversation_store: ConversationStore,
         generation_trace_store: GenerationTraceStore,
         scenario_definition_store: ScenarioDefinitionStore,
+        session_summary_store: SessionSummaryStore,
     ) -> None:
         self._user_identity_store = user_identity_store
         self._scenario_session_store = scenario_session_store
         self._conversation_store = conversation_store
         self._generation_trace_store = generation_trace_store
         self._scenario_definition_store = scenario_definition_store
+        self._session_summary_store = session_summary_store
 
     async def list_users(self) -> list[AdminUserSummary]:
         users = await self._user_identity_store.list_users()
@@ -94,6 +99,32 @@ class AdminService:
         return await self._scenario_session_store.save(
             session.override_persona(name=name, description=description)
         )
+
+    async def set_session_memory_source(
+        self,
+        session_id: UUID,
+        *,
+        source_id: ToggleableMemorySystemId,
+        enabled: bool,
+    ) -> ScenarioSession | None:
+        """Switch one memory layer on or off for a session; None when it is missing.
+
+        Layer 00 is not reachable here, and not because of a check: the parameter type does
+        not contain it (ADR-026 rule 5).
+        """
+        session = await self._scenario_session_store.get_by_id(session_id)
+        if session is None:
+            return None
+        memory = (
+            session.memory.with_source_enabled(source_id)
+            if enabled
+            else session.memory.with_source_disabled(source_id)
+        )
+        return await self._scenario_session_store.save(session.with_memory(memory))
+
+    async def get_session_summary(self, session_id: UUID) -> SessionSummary | None:
+        """The recap memory layer 01 stores, so an operator can read what the model reads."""
+        return await self._session_summary_store.get(session_id)
 
     async def get_session_transcript(self, session_id: UUID) -> list[ConversationMessage]:
         memory_key = ConversationIdentity.for_session(str(session_id)).to_memory_key()
