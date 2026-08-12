@@ -89,8 +89,58 @@ async def assert_scenario_definition_store_contract(store: ScenarioDefinitionSto
     assert reloaded.characters == scenario.characters
     assert reloaded.story_graph == scenario.story_graph
 
+    # `delete` retires rather than erases, so the row is still there — retirement has
+    # its own contract below.
     await store.delete(scenario.id)
-    assert await store.get_by_id(scenario.id) is None
+    assert scenario.id not in {item.id for item in await store.list_all()}
+
+
+async def assert_scenario_retirement_contract(store: ScenarioDefinitionStore) -> None:
+    """The four properties retirement rests on (S030).
+
+    The load-bearing one is the third: the boot import saves every catalog file at every
+    start, so a `save()` that touched `deleted_at` would un-retire a curated scenario at
+    the next restart.
+    """
+    scenario = ScenarioDefinition(
+        id="retire-me", owner_id=OWNER_ID, name="Retire Me", description=""
+    )
+    await store.save(scenario)
+    assert scenario.id in {item.id for item in await store.list_all()}
+
+    await store.delete(scenario.id)
+
+    # 1. Retiring takes it out of the listing, unless the caller asks for it.
+    assert scenario.id not in {item.id for item in await store.list_all()}
+    assert scenario.id in {item.id for item in await store.list_all(include_inactive=True)}
+
+    # 2. It still resolves by id, so running stories keep playing and export still works.
+    retired = await store.get_by_id(scenario.id)
+    assert retired is not None
+    assert retired.is_active is False
+    assert retired.deleted_at is not None
+
+    # 3. Saving does not resurrect it, and does not disturb the stamp.
+    await store.save(replace(scenario, name="Retire Me (edited)"))
+    still_retired = await store.get_by_id(scenario.id)
+    assert still_retired is not None
+    assert still_retired.name == "Retire Me (edited)"
+    assert still_retired.is_active is False
+    assert still_retired.deleted_at == retired.deleted_at
+
+    # Retiring twice keeps the first stamp: when it was retired stays true.
+    await store.delete(scenario.id)
+    twice = await store.get_by_id(scenario.id)
+    assert twice is not None
+    assert twice.deleted_at == retired.deleted_at
+
+    # 4. Restore brings it back to the listing.
+    await store.restore(scenario.id)
+    restored = await store.get_by_id(scenario.id)
+    assert restored is not None
+    assert restored.is_active is True
+    assert restored.deleted_at is None
+    assert scenario.id in {item.id for item in await store.list_all()}
 
 
 async def assert_minimal_scenario_round_trip(store: ScenarioDefinitionStore) -> None:

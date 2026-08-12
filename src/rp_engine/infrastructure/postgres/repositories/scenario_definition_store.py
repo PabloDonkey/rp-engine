@@ -1,6 +1,8 @@
+from dataclasses import replace
+from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -38,8 +40,10 @@ class PostgresScenarioDefinitionStore(ScenarioDefinitionStore):
             scenario for record in records if (scenario := self._to_domain(record)) is not None
         ]
 
-    async def list_all(self) -> list[ScenarioDefinition]:
+    async def list_all(self, *, include_inactive: bool = False) -> list[ScenarioDefinition]:
         statement = select(ScenarioDefinitionRecord)
+        if not include_inactive:
+            statement = statement.where(ScenarioDefinitionRecord.deleted_at.is_(None))
         async with self._session_factory() as db_session:
             records = (await db_session.scalars(statement)).all()
         return [
@@ -47,6 +51,10 @@ class PostgresScenarioDefinitionStore(ScenarioDefinitionStore):
         ]
 
     async def save(self, scenario: ScenarioDefinition) -> None:
+        """Write the definition. `deleted_at` is deliberately absent from both the insert
+        values and the conflict update: the boot import saves every catalog file at every
+        start, so a `save` that carried the stamp would un-retire a curated scenario on the
+        next restart. Retirement moves only through `delete` and `restore`."""
         values = {
             "id": scenario.id,
             "owner_id": scenario.owner_id,
@@ -82,8 +90,24 @@ class PostgresScenarioDefinitionStore(ScenarioDefinitionStore):
             await db_session.execute(statement)
 
     async def delete(self, scenario_id: str) -> None:
-        statement = delete(ScenarioDefinitionRecord).where(
-            ScenarioDefinitionRecord.id == scenario_id
+        """Retire the scenario. `WHERE deleted_at IS NULL` makes this idempotent: a second
+        call leaves the first stamp alone, so *when* it was retired stays true."""
+        statement = (
+            update(ScenarioDefinitionRecord)
+            .where(
+                ScenarioDefinitionRecord.id == scenario_id,
+                ScenarioDefinitionRecord.deleted_at.is_(None),
+            )
+            .values(deleted_at=datetime.now(UTC))
+        )
+        async with session_scope(self._session_factory) as db_session:
+            await db_session.execute(statement)
+
+    async def restore(self, scenario_id: str) -> None:
+        statement = (
+            update(ScenarioDefinitionRecord)
+            .where(ScenarioDefinitionRecord.id == scenario_id)
+            .values(deleted_at=None)
         )
         async with session_scope(self._session_factory) as db_session:
             await db_session.execute(statement)
@@ -106,4 +130,10 @@ class PostgresScenarioDefinitionStore(ScenarioDefinitionStore):
             "allowed_group_chat_ids": record.allowed_group_chat_ids or [],
             "metadata": record.payload_metadata or {},
         }
-        return scenario_definition_from_payload(payload)
+        scenario = scenario_definition_from_payload(payload)
+        if scenario is None:
+            return None
+        # Stamped here, not carried through the payload: `deleted_at` describes this
+        # scenario's life inside *this* database, and the payload is the transfer format.
+        # An export must not hand a retired stamp to whatever imports the file.
+        return replace(scenario, deleted_at=record.deleted_at)

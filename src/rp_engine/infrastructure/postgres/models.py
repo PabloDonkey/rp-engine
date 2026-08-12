@@ -67,6 +67,8 @@ class ScenarioDefinitionRecord(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    # Retirement stamp. Written only by the store's `delete`/`restore`, never by `save`.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ScenarioSessionRecord(Base):

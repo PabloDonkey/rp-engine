@@ -39,6 +39,7 @@ from tests.unit.infrastructure.contracts.group_identity_store_contract import (
 from tests.unit.infrastructure.contracts.scenario_definition_store_contract import (
     assert_minimal_scenario_round_trip,
     assert_scenario_definition_store_contract,
+    assert_scenario_retirement_contract,
 )
 from tests.unit.infrastructure.contracts.scenario_session_store_contract import (
     assert_scenario_session_store_contract,
@@ -144,6 +145,7 @@ async def test_migrate_then_contract_all_stores(migrated_engine: AsyncEngine) ->
         PostgresScenarioDefinitionStore(session_factory)
     )
     await assert_minimal_scenario_round_trip(PostgresScenarioDefinitionStore(session_factory))
+    await assert_scenario_retirement_contract(PostgresScenarioDefinitionStore(session_factory))
     await assert_scenario_session_store_contract(PostgresScenarioSessionStore(session_factory))
     await assert_conversation_store_contract(PostgresConversationStore(session_factory))
     await assert_user_identity_store_contract(PostgresUserIdentityStore(session_factory))
@@ -323,4 +325,48 @@ async def test_the_session_summaries_table_is_reversible_on_its_own(
     async with engine.begin() as connection:
         await connection.execute(text("DROP SCHEMA public CASCADE"))
         await connection.execute(text("CREATE SCHEMA public"))
+    await engine.dispose()
+
+
+_PRE_S030_REVISION = "20260810_0012"
+
+
+@pytest.mark.asyncio
+async def test_the_scenario_retirement_column_is_reversible_on_its_own(
+    migration_postgres_config: PostgresConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S030's one nullable column, up and down one step at a time.
+
+    A retired scenario is a row with a timestamp, so a rollback only has to drop the
+    column. Every scenario then reads as active again, which is what it was before.
+    """
+    _point_alembic_env_at(monkeypatch, migration_postgres_config)
+    engine = create_engine(migration_postgres_config)
+    await _reset_schema(engine)
+    alembic_config = _alembic_config()
+
+    await asyncio.to_thread(command.upgrade, alembic_config, "head")
+
+    async with engine.connect() as connection:
+        columns = await connection.run_sync(
+            lambda conn: {
+                column["name"] for column in inspect(conn).get_columns("scenario_definitions")
+            }
+        )
+    assert "deleted_at" in columns
+
+    await asyncio.to_thread(command.downgrade, alembic_config, _PRE_S030_REVISION)
+
+    async with engine.connect() as connection:
+        after_downgrade = await connection.run_sync(
+            lambda conn: {
+                column["name"] for column in inspect(conn).get_columns("scenario_definitions")
+            }
+        )
+    assert "deleted_at" not in after_downgrade
+    # The scenarios themselves survive the rollback; only the stamp goes.
+    assert "id" in after_downgrade
+
+    await asyncio.to_thread(command.upgrade, alembic_config, "head")
+
     await engine.dispose()

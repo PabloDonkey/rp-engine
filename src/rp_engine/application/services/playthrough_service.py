@@ -79,9 +79,12 @@ class PlaythroughService:
         caller_group_chat_id: str | None = None,
     ) -> PlaythroughStart | None:
         scenario = await self._scenario_definition_store.get_by_id(scenario_id)
-        # A caller who may not access a RESTRICTED scenario is treated as if it does not
-        # exist, so locking never leaks the id through a distinct error.
-        if scenario is None or not scenario.is_playable_by(caller_group_chat_id):
+        # A caller who may not access a RESTRICTED scenario, and a caller naming a retired
+        # one, are both treated as if the scenario does not exist — neither locking nor
+        # retirement should leak the id through a distinct error.
+        if scenario is None or not scenario.is_active:
+            return None
+        if not scenario.is_playable_by(caller_group_chat_id):
             return None
         existing = await self._scenario_session_store.find_by_definition(
             owner_kind=owner_kind,

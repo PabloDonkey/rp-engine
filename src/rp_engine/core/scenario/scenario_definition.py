@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import datetime
 from uuid import UUID
 
 from rp_engine.core.character.character import Character
@@ -41,6 +42,15 @@ class ScenarioDefinition:
     # visibilities. Ignored unless visibility is RESTRICTED.
     allowed_group_chat_ids: tuple[str, ...] = ()
     metadata: Metadata = field(default_factory=dict)
+    # A retired scenario keeps its row. `/play` and the catalog listing stop offering it,
+    # but every story already running it keeps resolving by id. Only the store's `delete`
+    # and `restore` write this stamp — see `ScenarioDefinitionStore`.
+    deleted_at: datetime | None = None
+
+    @property
+    def is_active(self) -> bool:
+        """Whether this scenario may still be listed and started."""
+        return self.deleted_at is None
 
     @classmethod
     def create(

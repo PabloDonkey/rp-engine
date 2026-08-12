@@ -1,3 +1,5 @@
+from dataclasses import replace
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -35,14 +37,24 @@ class FakeScenarioDefinitionStore:
     async def find_by_owner(self, owner_id: UUID) -> list[ScenarioDefinition]:
         return [s for s in self.items.values() if s.owner_id == owner_id]
 
-    async def list_all(self) -> list[ScenarioDefinition]:
-        return list(self.items.values())
+    async def list_all(self, *, include_inactive: bool = False) -> list[ScenarioDefinition]:
+        return [s for s in self.items.values() if include_inactive or s.is_active]
 
     async def save(self, scenario: ScenarioDefinition) -> None:
-        self.items[scenario.id] = scenario
+        # Mirrors the real store: `save` never writes `deleted_at`.
+        stored = self.items.get(scenario.id)
+        deleted_at = stored.deleted_at if stored is not None else None
+        self.items[scenario.id] = replace(scenario, deleted_at=deleted_at)
 
     async def delete(self, scenario_id: str) -> None:
-        self.items.pop(scenario_id, None)
+        stored = self.items.get(scenario_id)
+        if stored is not None and stored.is_active:
+            self.items[scenario_id] = replace(stored, deleted_at=datetime.now(UTC))
+
+    async def restore(self, scenario_id: str) -> None:
+        stored = self.items.get(scenario_id)
+        if stored is not None:
+            self.items[scenario_id] = replace(stored, deleted_at=None)
 
 
 class FakeScenarioSessionStore:
@@ -450,3 +462,55 @@ async def test_set_persona_refuses_a_superseded_session() -> None:
     await service.clear(owner_kind="user", owner_id=USER_ID)
 
     assert await service.set_persona(session_id=started.session.id, name="Sera Vane") is None
+
+
+# --- retired scenarios (S030 step 2) ----------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_play_refuses_a_retired_scenario() -> None:
+    retired = replace(
+        _scenario("vault", name="Vault", opening="You face the door."),
+        deleted_at=datetime.now(UTC),
+    )
+    service, session_store, _ = _service(scenarios=[retired])
+
+    result = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+
+    # Same answer as an unknown id: retirement must not leak through a distinct reply.
+    assert result is None
+    assert await session_store.get_active_for_owner(owner_kind="user", owner_id=USER_ID) is None
+
+
+@pytest.mark.asyncio
+async def test_a_retired_scenario_leaves_the_catalog_listing() -> None:
+    live = _scenario("live", name="Aurora", opening="a")
+    retired = replace(_scenario("gone", name="Zephyr", opening="z"), deleted_at=datetime.now(UTC))
+    service, _, _ = _service(scenarios=[live, retired])
+
+    assert [s.id for s in await service.list_scenarios()] == ["live"]
+
+
+@pytest.mark.asyncio
+async def test_a_story_already_running_survives_its_scenario_being_retired() -> None:
+    """Retirement closes the front door. It does not evict the people already inside."""
+    scenario = _scenario("vault", name="Vault", opening="You face the door.")
+    definition_store = FakeScenarioDefinitionStore()
+    definition_store.items = {scenario.id: scenario}
+    session_store = FakeScenarioSessionStore()
+    service = PlaythroughService(
+        scenario_definition_store=definition_store,
+        scenario_session_store=session_store,
+        conversation_store=FakeConversationStore(),
+    )
+    started = await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault")
+    assert started is not None
+
+    await definition_store.delete("vault")
+    assert await service.start(owner_kind="user", owner_id=USER_ID, scenario_id="vault") is None
+
+    active = await session_store.get_active_for_owner(owner_kind="user", owner_id=USER_ID)
+    assert active is not None
+    assert active.id == started.session.id
+    # `/restart` keeps working for a story that is already under way.
+    assert await service.restart(owner_kind="user", owner_id=USER_ID) is not None

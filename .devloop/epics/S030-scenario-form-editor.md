@@ -1,6 +1,6 @@
 # S030 · Scenario form editor — read and edit a scenario without JSON
 
-**Status:** 🟢 In progress — step 1 of 9 done.
+**Status:** 🟢 In progress — steps 1-2 of 9 done.
 **Depends on:** **S010** — admin scenario catalog management. This epic replaces the raw-JSON
 editor S010 shipped as its own minimum bar.
 **Design source:** [Scenario editing without JSON](https://claude.ai/code/artifact/fda5b259-2e76-4491-8346-79923b0d880d)
@@ -73,23 +73,23 @@ The invariant that makes this safe: **`save()` never writes `deleted_at`.** Only
 boot, and an admin edit calls `save()` too. Without the invariant, a retired curated scenario comes
 back at the next restart.
 
-- [ ] `ScenarioDefinition` gains `deleted_at: datetime | None` and an `is_active` property.
+- [x] `ScenarioDefinition` gains `deleted_at: datetime | None` and an `is_active` property.
       `ScenarioSession` already carries the same stamp.
-- [ ] `ScenarioDefinitionStore`: `list_all(include_inactive=False)`, `delete()` becomes the soft
+- [x] `ScenarioDefinitionStore`: `list_all(include_inactive=False)`, `delete()` becomes the soft
       delete, and a new `restore()`. `get_by_id` keeps resolving. No production code calls the
       current hard `delete`, so nothing breaks.
-- [ ] Migration `20260811_0013_scenario_soft_delete.py`. One nullable timestamp column. Verify
+- [x] Migration `20260811_0013_scenario_soft_delete.py`. One nullable timestamp column. Verify
       `upgrade head` and `downgrade` against a real database.
-- [ ] `/play <id>` refuses a retired scenario
+- [x] `/play <id>` refuses a retired scenario
       ([playthrough_service.py:81](../../src/rp_engine/application/services/playthrough_service.py#L81)),
       with the same reply as an unknown id.
-- [ ] Running stories keep playing. `chat_service.py:591`, `playthrough_service.py:142` and
+- [x] Running stories keep playing. `chat_service.py:591`, `playthrough_service.py:142` and
       `playthrough_service.py:170` keep resolving by id.
-- [ ] Export keeps resolving
+- [x] Export keeps resolving
       ([scenario_transfer_service.py:75](../../src/rp_engine/application/services/scenario_transfer_service.py#L75)).
-- [ ] The export payload leaves `deleted_at` out. A transfer file describes a scenario, not its
+- [x] The export payload leaves `deleted_at` out. A transfer file describes a scenario, not its
       life inside one database.
-- [ ] Contract suite: delete hides the scenario from the list, `get_by_id` still resolves, `save`
+- [x] Contract suite: delete hides the scenario from the list, `get_by_id` still resolves, `save`
       does not resurrect, restore works.
 
 ### 3. Session count and the two new routes

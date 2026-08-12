@@ -1,3 +1,5 @@
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -25,14 +27,24 @@ class FakeScenarioDefinitionStore:
     async def find_by_owner(self, owner_id: UUID) -> list[ScenarioDefinition]:
         return [s for s in self.items.values() if s.owner_id == owner_id]
 
-    async def list_all(self) -> list[ScenarioDefinition]:
-        return list(self.items.values())
+    async def list_all(self, *, include_inactive: bool = False) -> list[ScenarioDefinition]:
+        return [s for s in self.items.values() if include_inactive or s.is_active]
 
     async def save(self, scenario: ScenarioDefinition) -> None:
-        self.items[scenario.id] = scenario
+        # Mirrors the real store: `save` never writes `deleted_at`.
+        stored = self.items.get(scenario.id)
+        deleted_at = stored.deleted_at if stored is not None else None
+        self.items[scenario.id] = replace(scenario, deleted_at=deleted_at)
 
     async def delete(self, scenario_id: str) -> None:
-        self.items.pop(scenario_id, None)
+        stored = self.items.get(scenario_id)
+        if stored is not None and stored.is_active:
+            self.items[scenario_id] = replace(stored, deleted_at=datetime.now(UTC))
+
+    async def restore(self, scenario_id: str) -> None:
+        stored = self.items.get(scenario_id)
+        if stored is not None:
+            self.items[scenario_id] = replace(stored, deleted_at=None)
 
 
 class FakeScenarioSessionStore:

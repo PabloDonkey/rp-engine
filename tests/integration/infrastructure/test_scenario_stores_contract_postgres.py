@@ -16,6 +16,7 @@ from rp_engine.infrastructure.postgres import (
 from tests.unit.infrastructure.contracts.scenario_definition_store_contract import (
     assert_minimal_scenario_round_trip,
     assert_scenario_definition_store_contract,
+    assert_scenario_retirement_contract,
 )
 from tests.unit.infrastructure.contracts.scenario_session_store_contract import (
     assert_scenario_session_store_contract,
@@ -65,6 +66,7 @@ async def test_postgres_scenario_definition_store_contract(
 ) -> None:
     await assert_scenario_definition_store_contract(postgres_scenario_definition_store)
     await assert_minimal_scenario_round_trip(postgres_scenario_definition_store)
+    await assert_scenario_retirement_contract(postgres_scenario_definition_store)
 
 
 @pytest.mark.asyncio
