@@ -1,6 +1,6 @@
 # S030 · Scenario form editor — read and edit a scenario without JSON
 
-**Status:** 🟢 In progress — steps 1-3 of 9 done.
+**Status:** 🟢 In progress — steps 1-4 of 9 done.
 **Depends on:** **S010** — admin scenario catalog management. This epic replaces the raw-JSON
 editor S010 shipped as its own minimum bar.
 **Design source:** [Scenario editing without JSON](https://claude.ai/code/artifact/fda5b259-2e76-4491-8346-79923b0d880d)
@@ -102,17 +102,20 @@ back at the next restart.
 
 ### 4. Vitest in browser mode
 
-- [ ] Add `vitest`, `@vitest/browser`, `playwright` and `vitest-browser-vue`.
-- [ ] `vite.config.ts`: the `test.browser` block, Chromium, headless.
-- [ ] `package.json`: a `test` script.
-- [ ] One passing test proves the setup before any component depends on it.
+- [x] Add `vitest`, `@vitest/browser`, `playwright` and `vitest-browser-vue`.
+- [x] `vite.config.ts`: the `test.browser` block, Chromium, headless.
+- [x] `package.json`: a `test` script.
+- [x] One passing test proves the setup before any component depends on it.
 
 Playwright downloads a browser binary once, about 150 MB, through
 `npx playwright install chromium`. There is no continuous integration (CI) setup in this
 repository, so these tests run on a developer machine only.
 
-**Open:** the browser config key differs between Vitest 2 (`browser.name`) and Vitest 3
-(`browser.instances`). Read the installed version before writing the config.
+**Answered:** the installed version is **Vitest 4.1.10**, one major past what this note
+assumed. Vitest 4 uses `browser.instances: [{ browser: "chromium" }]` and moves the
+Playwright provider into its own package, `@vitest/browser-playwright`, passed as
+`browser.provider: playwright()`. That is a fifth dependency the list above did not name.
+`defineConfig` must come from `vitest/config`, not `vite`, or the `test` block type-errors.
 
 ### 5. Client schema and typed API
 
