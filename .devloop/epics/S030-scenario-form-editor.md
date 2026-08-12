@@ -1,6 +1,6 @@
 # S030 · Scenario form editor — read and edit a scenario without JSON
 
-**Status:** 📋 Backlog — planned, not started.
+**Status:** 🟢 In progress — step 1 of 9 done.
 **Depends on:** **S010** — admin scenario catalog management. This epic replaces the raw-JSON
 editor S010 shipped as its own minimum bar.
 **Design source:** [Scenario editing without JSON](https://claude.ai/code/artifact/fda5b259-2e76-4491-8346-79923b0d880d)
@@ -50,15 +50,15 @@ scenario without erasing it.
 
 No migration. The column is already JSONB.
 
-- [ ] `core/metadata.py`: `MetadataValue = str | list[str]`. One home for the alias.
-- [ ] Apply it to `ScenarioDefinition`, `World`, `Character`, `StoryGraph` and `StoryBeat`.
-- [ ] Leave `ScenarioSession.metadata`, message metadata and LLM response metadata as
+- [x] `core/metadata.py`: `MetadataValue = str | list[str]`. One home for the alias.
+- [x] Apply it to `ScenarioDefinition`, `World`, `Character`, `StoryGraph` and `StoryBeat`.
+- [x] Leave `ScenarioSession.metadata`, message metadata and LLM response metadata as
       `dict[str, str]`. The engine writes those and reads them as strings. One such read is
       [builder.py:464](../../src/rp_engine/core/conversation/builder.py#L464).
-- [ ] Add a metadata normalizer to `scenario_serialization.py`. A string stays a string. A list of
+- [x] Add a metadata normalizer to `scenario_serialization.py`. A string stays a string. A list of
       strings stays a list. A scalar such as `1987` becomes `"1987"`, per item for a list. A nested
       object or a nested list fails the payload.
-- [ ] Tests for each row of that table.
+- [x] Tests for each row of that table.
 
 **Why coerce scalars instead of rejecting them:** the boot import already skips a bad file with a
 warning. Losing a whole scenario over one number in a hand-written file is a poor trade.

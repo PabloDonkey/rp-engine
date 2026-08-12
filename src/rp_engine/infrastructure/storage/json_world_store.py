@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from rp_engine.core.metadata import Metadata
 from rp_engine.core.ports.world_store import WorldStore
 from rp_engine.core.world.world import World
 
@@ -56,7 +57,7 @@ class JsonWorldStore(WorldStore):
         normalized_rules = tuple(rule for rule in rules if isinstance(rule, str))
         if not isinstance(metadata, dict):
             metadata = {}
-        normalized_metadata = {
+        normalized_metadata: Metadata = {
             key: value
             for key, value in metadata.items()
             if isinstance(key, str) and isinstance(value, str)

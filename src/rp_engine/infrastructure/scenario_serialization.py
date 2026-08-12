@@ -12,6 +12,7 @@ from uuid import UUID
 from rp_engine.core.character.character import Character
 from rp_engine.core.memory.fragment import ToggleableMemorySystemId
 from rp_engine.core.memory.settings import MemorySettings, MemorySourceBudget
+from rp_engine.core.metadata import Metadata, MetadataValue
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import (
@@ -25,6 +26,46 @@ from rp_engine.core.world.world import World
 
 # The layer names a stored payload may name, read off the type so the two cannot drift.
 TOGGLEABLE_MEMORY_SOURCE_IDS: frozenset[str] = frozenset(get_args(ToggleableMemorySystemId))
+
+
+def metadata_from_payload(raw: Any) -> Metadata:
+    """Read a definition-side metadata map into the `str | list[str]` value model.
+
+    A string stays a string. A list of strings stays a list. A scalar such as `1987`
+    becomes `"1987"`, per item for a list. A null value drops its key, because a null
+    carries no text to keep. A nested object or a nested list raises `ValueError`, which
+    fails the whole payload: there is no control for a deeper shape and no way to guess
+    what it meant.
+
+    Scalars are coerced rather than refused on purpose. The boot import skips a bad file
+    with a warning, and losing a whole scenario over one unquoted number in a hand-written
+    file is a poor trade.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("metadata must be an object")
+    return {
+        str(key): _metadata_value_from_payload(value)
+        for key, value in raw.items()
+        if value is not None
+    }
+
+
+def _metadata_value_from_payload(value: Any) -> MetadataValue:
+    if isinstance(value, list):
+        return [_metadata_text(item) for item in value]
+    return _metadata_text(value)
+
+
+def _metadata_text(value: Any) -> str:
+    """Coerce one scalar to text. Anything nested fails."""
+    if isinstance(value, str):
+        return value
+    # bool is a subclass of int, so `True` becomes "True" here, which is the readable form.
+    if isinstance(value, int | float):
+        return str(value)
+    raise ValueError(f"metadata value {value!r} is neither text nor a scalar")
 
 
 def world_to_payload(world: World | None) -> dict[str, Any] | None:
@@ -47,7 +88,7 @@ def world_from_payload(data: dict[str, Any] | None) -> World | None:
         name=data["name"],
         description=data["description"],
         rules=tuple(data.get("rules", [])),
-        metadata=data.get("metadata", {}),
+        metadata=metadata_from_payload(data.get("metadata")),
     )
 
 
@@ -69,7 +110,7 @@ def character_from_payload(data: dict[str, Any]) -> Character:
         description=data["description"],
         personality=data["personality"],
         greeting=data.get("greeting", ""),
-        metadata=data.get("metadata", {}),
+        metadata=metadata_from_payload(data.get("metadata")),
     )
 
 
@@ -99,14 +140,14 @@ def story_graph_from_payload(data: dict[str, Any] | None) -> StoryGraph | None:
             id=beat_data["id"],
             description=beat_data["description"],
             transitions=beat_data.get("transitions", {}),
-            metadata=beat_data.get("metadata", {}),
+            metadata=metadata_from_payload(beat_data.get("metadata")),
         )
         for beat_id, beat_data in data.get("beats", {}).items()
     }
     return StoryGraph(
         beats=beats,
         entry_beat_id=data.get("entry_beat_id"),
-        metadata=data.get("metadata", {}),
+        metadata=metadata_from_payload(data.get("metadata")),
     )
 
 
@@ -149,7 +190,7 @@ def scenario_definition_from_payload(payload: dict[str, Any]) -> ScenarioDefinit
             initial_context=payload.get("initial_context", ""),
             visibility=ScenarioVisibility(payload.get("visibility", ScenarioVisibility.PUBLIC)),
             allowed_group_chat_ids=tuple(payload.get("allowed_group_chat_ids", ())),
-            metadata=payload.get("metadata", {}),
+            metadata=metadata_from_payload(payload.get("metadata")),
         )
     except (KeyError, ValueError, TypeError):
         return None

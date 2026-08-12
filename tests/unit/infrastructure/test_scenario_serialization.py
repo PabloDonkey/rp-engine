@@ -9,10 +9,14 @@ from rp_engine.core.scenario.session_directives import ScenarioRule, SessionDire
 from rp_engine.infrastructure.scenario_serialization import (
     memory_settings_from_payload,
     memory_settings_to_payload,
+    metadata_from_payload,
+    scenario_definition_from_payload,
+    scenario_definition_to_payload,
     scenario_session_from_payload,
     scenario_session_to_payload,
     session_directives_from_payload,
     session_directives_to_payload,
+    story_graph_from_payload,
 )
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000010")
@@ -210,3 +214,99 @@ def test_an_unknown_layer_in_the_budgets_is_dropped() -> None:
     )
 
     assert restored.source_budgets == ()
+
+
+# --- metadata value model (S030 step 1) -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param({"genre": "noir"}, {"genre": "noir"}, id="text-stays-text"),
+        pytest.param(
+            {"tags": ["noir", "heist"]}, {"tags": ["noir", "heist"]}, id="list-stays-a-list"
+        ),
+        pytest.param({"year": 1987}, {"year": "1987"}, id="a-number-becomes-text"),
+        pytest.param({"rating": 4.5}, {"rating": "4.5"}, id="a-float-becomes-text"),
+        pytest.param({"mature": True}, {"mature": "True"}, id="a-bool-becomes-text"),
+        pytest.param({"tags": [1987, "noir"]}, {"tags": ["1987", "noir"]}, id="per-list-item"),
+        pytest.param({"tags": []}, {"tags": []}, id="an-empty-list-stays-a-list"),
+        pytest.param({"note": None}, {}, id="a-null-drops-its-key"),
+        pytest.param({}, {}, id="an-empty-map-stays-empty"),
+        pytest.param(None, {}, id="a-missing-map-reads-as-empty"),
+    ],
+)
+def test_metadata_normalizer_table(raw: object, expected: dict[str, object]) -> None:
+    assert metadata_from_payload(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        pytest.param({"nested": {"deep": "value"}}, id="a-nested-object-fails"),
+        pytest.param({"nested": [["deep"]]}, id="a-nested-list-fails"),
+        pytest.param({"nested": [{"deep": "value"}]}, id="an-object-inside-a-list-fails"),
+        pytest.param("not-a-map", id="a-non-object-map-fails"),
+        pytest.param(["not-a-map"], id="a-list-in-place-of-the-map-fails"),
+    ],
+)
+def test_metadata_shapes_with_no_control_fail(raw: object) -> None:
+    with pytest.raises(ValueError):
+        metadata_from_payload(raw)
+
+
+def test_a_scenario_payload_with_a_tags_list_round_trips() -> None:
+    """The real shape curated scenarios already store, which the old type denied."""
+    payload = {
+        "id": "vault",
+        "owner_id": str(USER_ID),
+        "name": "The Vault",
+        "description": "A heist.",
+        "world": {"id": "w", "name": "W", "description": "d", "metadata": {"era": ["1920s"]}},
+        "characters": {
+            "lead": {
+                "id": "c",
+                "name": "C",
+                "description": "d",
+                "personality": "p",
+                "metadata": {"tags": ["thief"]},
+            }
+        },
+        "metadata": {"tags": ["noir", "heist"], "year": 1987},
+    }
+
+    scenario = scenario_definition_from_payload(payload)
+
+    assert scenario is not None
+    assert scenario.metadata == {"tags": ["noir", "heist"], "year": "1987"}
+    assert scenario.world is not None
+    assert scenario.world.metadata == {"era": ["1920s"]}
+    assert scenario.characters["lead"].metadata == {"tags": ["thief"]}
+    assert scenario_definition_to_payload(scenario)["metadata"] == scenario.metadata
+
+
+def test_a_scenario_payload_with_nested_metadata_is_refused() -> None:
+    """A shape the form cannot draw fails the whole payload rather than loading half of it."""
+    payload = {
+        "id": "vault",
+        "owner_id": str(USER_ID),
+        "name": "The Vault",
+        "description": "A heist.",
+        "metadata": {"credits": {"writer": "someone"}},
+    }
+
+    assert scenario_definition_from_payload(payload) is None
+
+
+def test_a_story_beat_carries_the_same_value_model() -> None:
+    graph = story_graph_from_payload(
+        {
+            "entry_beat_id": "open",
+            "beats": {"open": {"id": "open", "description": "d", "metadata": {"tags": ["act1"]}}},
+            "metadata": {"acts": 3},
+        }
+    )
+
+    assert graph is not None
+    assert graph.metadata == {"acts": "3"}
+    assert graph.beats["open"].metadata == {"tags": ["act1"]}

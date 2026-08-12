@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from uuid import UUID
 
 from rp_engine.core.character.character import Character
+from rp_engine.core.metadata import Metadata
 from rp_engine.core.scenario.story_graph import StoryGraph
 from rp_engine.core.scenario.visibility import ScenarioVisibility
 from rp_engine.core.world.world import World
@@ -39,7 +40,7 @@ class ScenarioDefinition:
     # Telegram chat ids allowed to see/play a RESTRICTED scenario. Empty for other
     # visibilities. Ignored unless visibility is RESTRICTED.
     allowed_group_chat_ids: tuple[str, ...] = ()
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: Metadata = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -56,7 +57,7 @@ class ScenarioDefinition:
         initial_context: str = "",
         visibility: ScenarioVisibility = ScenarioVisibility.PUBLIC,
         allowed_group_chat_ids: tuple[str, ...] = (),
-        metadata: dict[str, str] | None = None,
+        metadata: Metadata | None = None,
     ) -> "ScenarioDefinition":
         """Factory method to create a scenario definition."""
         return cls(

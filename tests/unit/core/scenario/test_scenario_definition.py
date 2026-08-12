@@ -3,6 +3,7 @@ from uuid import UUID
 import pytest
 
 from rp_engine.core.character.character import Character
+from rp_engine.core.metadata import Metadata
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.visibility import ScenarioVisibility
 from rp_engine.core.world.world import World
@@ -109,7 +110,7 @@ def test_scenario_definition_with_initial_context():
 
 def test_scenario_definition_with_metadata():
     owner_id = UUID("12345678-1234-5678-1234-567812345678")
-    metadata = {"genre": "fantasy", "difficulty": "hard"}
+    metadata: Metadata = {"genre": "fantasy", "difficulty": "hard"}
     scenario = ScenarioDefinition(
         id="scenario_1",
         owner_id=owner_id,
@@ -138,7 +139,7 @@ def test_scenario_definition_factory_method(sample_world: World, sample_characte
     owner_id = UUID("12345678-1234-5678-1234-567812345678")
     characters = {"protagonist": sample_character}
     rules = ["Be respectful"]
-    metadata = {"genre": "fantasy"}
+    metadata: Metadata = {"genre": "fantasy"}
 
     scenario = ScenarioDefinition.create(
         scenario_id="scenario_1",

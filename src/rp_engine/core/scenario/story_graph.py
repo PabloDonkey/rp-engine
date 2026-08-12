@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 
+from rp_engine.core.metadata import Metadata
+
 
 @dataclass(frozen=True, slots=True)
 class StoryBeat:
@@ -20,7 +22,7 @@ class StoryBeat:
     id: str
     description: str
     transitions: dict[str, str] = field(default_factory=dict)
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: Metadata = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,4 +39,4 @@ class StoryGraph:
 
     beats: dict[str, StoryBeat] = field(default_factory=dict)
     entry_beat_id: str | None = None
-    metadata: dict[str, str] = field(default_factory=dict)
+    metadata: Metadata = field(default_factory=dict)
