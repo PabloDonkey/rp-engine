@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     # purpose (ADR-026 decision 1, rule 5): the recap is written while the window still has
     # room, so the window never has to drop a message the recap does not yet cover.
     memory_summary_high_water_share: float = Field(default=0.75, gt=0.0, le=1.0)
+    # How much story has to pile up past the fold line before layer 01 spends a model call,
+    # as a share of the same budget. Zero folds on every turn that has anything to fold,
+    # which is one model call per turn. It must stay below the slack the high-water share
+    # leaves, so waiting material never falls out of the window uncovered.
+    memory_summary_min_fold_share: float = Field(default=0.1, ge=0.0, lt=1.0)
 
     debug_status_enabled: bool = False
     debug_generation_trace: Literal["off", "errors", "all"] = "off"

@@ -16,9 +16,30 @@ const SessionDirectivesSchema = z.object({
 
 // Which memory layers the session runs (ADR-026). The recent conversation is absent on
 // purpose: it is the story itself and cannot be switched off.
-const SessionMemorySchema = z.object({
+const SessionMemoryStateSchema = z.object({
   enabled_sources: z.array(z.string()),
   source_budget_shares: z.record(z.string(), z.number()),
+});
+
+// How close this session is to its next recap, in the same numbers the background worker
+// uses. Token totals stop at the window edge; older messages are counted, not priced.
+const MemoryStatusSchema = z.object({
+  budget_tokens: z.number(),
+  high_water_tokens: z.number(),
+  window_tokens: z.number(),
+  window_messages: z.number(),
+  stored_messages: z.number(),
+  turns_total: z.number(),
+  covers_through_turn: z.number(),
+  pending_turns: z.number(),
+  behind_turns: z.number(),
+  pending_tokens: z.number(),
+  fold_batch_tokens: z.number(),
+  summary_tokens: z.number(),
+  summary_budget_tokens: z.number(),
+  verbatim_turns: z.number(),
+  whole_story_fits: z.boolean(),
+  fold_progress: z.number(),
 });
 
 const SessionSummarySchema = z.object({
@@ -41,9 +62,15 @@ const AdminSessionSchema = z.object({
   deleted_at: z.string().nullable(),
   message_count: z.number().nullable(),
   directives: SessionDirectivesSchema,
-  memory: SessionMemorySchema,
+  memory: SessionMemoryStateSchema,
   user_persona_name: z.string().nullable(),
   user_persona_description: z.string().nullable(),
+});
+
+const SessionMemorySchema = z.object({
+  settings: SessionMemoryStateSchema,
+  status: MemoryStatusSchema,
+  summary: SessionSummarySchema.nullable(),
 });
 
 const AdminMessageSchema = z.object({
@@ -81,6 +108,8 @@ const SessionExportSchema = z.object({
 
 export type AdminUser = z.infer<typeof AdminUserSchema>;
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
+export type MemoryStatus = z.infer<typeof MemoryStatusSchema>;
+export type SessionMemory = z.infer<typeof SessionMemorySchema>;
 export type AdminSession = z.infer<typeof AdminSessionSchema>;
 export type AdminMessage = z.infer<typeof AdminMessageSchema>;
 export type AdminTrace = z.infer<typeof AdminTraceSchema>;
@@ -166,9 +195,9 @@ export function setSessionPersona(
   });
 }
 
-// The running recap of memory layer 01, or null before its first background pass.
-export function getSessionSummary(sessionId: string): Promise<SessionSummary | null> {
-  return request(`/sessions/${sessionId}/summary`, SessionSummarySchema.nullable());
+// Which layers run, how close the next recap is, and what the recap says — one call.
+export function getSessionMemory(sessionId: string): Promise<SessionMemory> {
+  return request(`/sessions/${sessionId}/memory`, SessionMemorySchema);
 }
 
 // One layer at a time, so a failed call leaves the other layers as they were.
@@ -176,10 +205,17 @@ export function setSessionMemorySource(
   sessionId: string,
   sourceId: string,
   enabled: boolean,
-): Promise<AdminSession> {
-  return request(`/sessions/${sessionId}/memory`, AdminSessionSchema, {
+): Promise<SessionMemory> {
+  return request(`/sessions/${sessionId}/memory`, SessionMemorySchema, {
     method: "PUT",
     body: JSON.stringify({ source_id: sourceId, enabled }),
+  });
+}
+
+// Runs the summary pass now. It waits for the model, so it can take a while.
+export function refreshSessionSummary(sessionId: string): Promise<SessionMemory> {
+  return request(`/sessions/${sessionId}/memory/refresh`, SessionMemorySchema, {
+    method: "POST",
   });
 }
 

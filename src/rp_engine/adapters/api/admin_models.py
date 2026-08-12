@@ -3,9 +3,14 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from rp_engine.application.services.admin_service import AdminDeletedMessage, AdminUserSummary
+from rp_engine.application.services.admin_service import (
+    AdminDeletedMessage,
+    AdminSessionMemory,
+    AdminUserSummary,
+)
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.memory.fragment import ToggleableMemorySystemId
+from rp_engine.core.memory.rolling_summary_source import RollingSummaryStatus
 from rp_engine.core.memory.session_summary import SessionSummary
 from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
@@ -64,7 +69,7 @@ class AdminSessionDirectivesResponse(BaseModel):
         )
 
 
-class AdminSessionMemoryResponse(BaseModel):
+class AdminSessionMemoryStateResponse(BaseModel):
     """Which memory layers this session runs, and what each may spend.
 
     The recent conversation is missing on purpose: it is the story itself and cannot be
@@ -75,7 +80,7 @@ class AdminSessionMemoryResponse(BaseModel):
     source_budget_shares: dict[str, float]
 
     @classmethod
-    def from_memory(cls, memory: MemorySettings) -> "AdminSessionMemoryResponse":
+    def from_memory(cls, memory: MemorySettings) -> "AdminSessionMemoryStateResponse":
         return cls(
             enabled_sources=list(memory.enabled_sources),
             source_budget_shares={budget.source: budget.share for budget in memory.source_budgets},
@@ -88,6 +93,56 @@ class AdminSessionMemoryRequest(BaseModel):
 
     source_id: ToggleableMemorySystemId
     enabled: bool
+
+
+class AdminMemoryStatusResponse(BaseModel):
+    """How close this session is to its next recap, in the worker's own numbers.
+
+    Token totals stop at the window edge: messages older than that are counted, not priced,
+    because pricing them means counting the whole history on every read.
+    """
+
+    budget_tokens: int
+    high_water_tokens: int
+    window_tokens: int
+    window_messages: int
+    stored_messages: int
+    turns_total: int
+    covers_through_turn: int
+    pending_turns: int
+    behind_turns: int
+    pending_tokens: int
+    fold_batch_tokens: int
+    summary_tokens: int
+    summary_budget_tokens: int
+    # Turns the prompt still replays word for word, and whether every stored turn still
+    # reaches it. Derived, but the panel should not have to re-derive them.
+    verbatim_turns: int
+    whole_story_fits: bool
+    # 0.0 to 1.0, where 1.0 means the next pass folds. It fills and empties, because the
+    # window itself never shrinks when a turn is folded into the recap.
+    fold_progress: float
+
+    @classmethod
+    def from_status(cls, status: RollingSummaryStatus) -> "AdminMemoryStatusResponse":
+        return cls(
+            budget_tokens=status.budget_tokens,
+            high_water_tokens=status.high_water_tokens,
+            window_tokens=status.window_tokens,
+            window_messages=status.window_messages,
+            stored_messages=status.stored_messages,
+            turns_total=status.turns_total,
+            covers_through_turn=status.covers_through_turn,
+            pending_turns=status.pending_turns,
+            behind_turns=status.behind_turns,
+            pending_tokens=status.pending_tokens,
+            fold_batch_tokens=status.fold_batch_tokens,
+            summary_tokens=status.summary_tokens,
+            summary_budget_tokens=status.summary_budget_tokens,
+            verbatim_turns=status.verbatim_turns,
+            whole_story_fits=status.whole_story_fits,
+            fold_progress=status.fold_progress,
+        )
 
 
 class AdminSessionSummaryResponse(BaseModel):
@@ -116,6 +171,26 @@ class AdminSessionSummaryResponse(BaseModel):
         )
 
 
+class AdminSessionMemoryResponse(BaseModel):
+    """The whole memory panel for one session, read in one call."""
+
+    settings: AdminSessionMemoryStateResponse
+    status: AdminMemoryStatusResponse
+    summary: AdminSessionSummaryResponse | None
+
+    @classmethod
+    def from_memory(cls, memory: AdminSessionMemory) -> "AdminSessionMemoryResponse":
+        return cls(
+            settings=AdminSessionMemoryStateResponse.from_memory(memory.settings),
+            status=AdminMemoryStatusResponse.from_status(memory.status),
+            summary=(
+                None
+                if memory.summary is None
+                else AdminSessionSummaryResponse.from_summary(memory.summary)
+            ),
+        )
+
+
 class AdminSessionResponse(BaseModel):
     id: UUID
     scenario_definition_id: str
@@ -128,7 +203,7 @@ class AdminSessionResponse(BaseModel):
     deleted_at: datetime | None = None
     message_count: int | None = None
     directives: AdminSessionDirectivesResponse
-    memory: AdminSessionMemoryResponse
+    memory: AdminSessionMemoryStateResponse
     user_persona_name: str | None = None
     user_persona_description: str | None = None
 
@@ -146,7 +221,7 @@ class AdminSessionResponse(BaseModel):
             deleted_at=session.deleted_at,
             message_count=message_count,
             directives=AdminSessionDirectivesResponse.from_directives(session.directives),
-            memory=AdminSessionMemoryResponse.from_memory(session.memory),
+            memory=AdminSessionMemoryStateResponse.from_memory(session.memory),
             user_persona_name=session.user_persona_name,
             user_persona_description=session.user_persona_description,
         )

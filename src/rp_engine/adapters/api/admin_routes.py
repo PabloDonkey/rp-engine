@@ -8,9 +8,9 @@ from rp_engine.adapters.api.admin_models import (
     AdminDeletedMessageResponse,
     AdminMessageResponse,
     AdminSessionMemoryRequest,
+    AdminSessionMemoryResponse,
     AdminSessionPersonaRequest,
     AdminSessionResponse,
-    AdminSessionSummaryResponse,
     AdminTraceResponse,
     AdminUserResponse,
     ScenarioSummaryResponse,
@@ -115,19 +115,18 @@ def create_admin_router(
         transcript = await admin_service.get_session_transcript(session_id)
         return AdminSessionResponse.from_session(updated, message_count=len(transcript))
 
-    @router.get("/sessions/{session_id}/summary")
-    async def get_session_summary(session_id: UUID) -> AdminSessionSummaryResponse | None:
-        """The running recap memory layer 01 keeps, or null when it has not written one yet."""
-        session = await admin_service.get_session(session_id)
-        if session is None:
+    @router.get("/sessions/{session_id}/memory")
+    async def get_session_memory(session_id: UUID) -> AdminSessionMemoryResponse:
+        """Which memory layers run, how close the next recap is, and what the recap says."""
+        memory = await admin_service.get_session_memory(session_id)
+        if memory is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        summary = await admin_service.get_session_summary(session_id)
-        return None if summary is None else AdminSessionSummaryResponse.from_summary(summary)
+        return AdminSessionMemoryResponse.from_memory(memory)
 
     @router.put("/sessions/{session_id}/memory")
     async def set_session_memory(
         session_id: UUID, payload: AdminSessionMemoryRequest
-    ) -> AdminSessionResponse:
+    ) -> AdminSessionMemoryResponse:
         """Switch one memory layer on or off for a session.
 
         The same switch the player has through `/memory`, for an operator who is already
@@ -139,8 +138,23 @@ def create_admin_router(
         )
         if updated is None:
             raise HTTPException(status_code=404, detail="Session not found")
-        transcript = await admin_service.get_session_transcript(session_id)
-        return AdminSessionResponse.from_session(updated, message_count=len(transcript))
+        memory = await admin_service.get_session_memory(session_id)
+        if memory is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return AdminSessionMemoryResponse.from_memory(memory)
+
+    @router.post("/sessions/{session_id}/memory/refresh")
+    async def refresh_session_summary(session_id: UUID) -> AdminSessionMemoryResponse:
+        """Run the rolling-summary pass now, instead of waiting for the next turn.
+
+        It runs inline, so this request lasts as long as one model call when there is
+        something to fold. When there is nothing to fold it returns at once and leaves the
+        recap alone, which is the same answer the background worker would give.
+        """
+        memory = await admin_service.refresh_session_summary(session_id)
+        if memory is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return AdminSessionMemoryResponse.from_memory(memory)
 
     @router.delete("/sessions/{session_id}/messages/last")
     async def delete_last_message(session_id: UUID) -> AdminDeletedMessageResponse:

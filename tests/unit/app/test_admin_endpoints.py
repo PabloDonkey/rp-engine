@@ -8,9 +8,14 @@ from sqlalchemy.exc import IntegrityError
 
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.app.main import create_app
-from rp_engine.application.services.admin_service import AdminDeletedMessage, AdminUserSummary
+from rp_engine.application.services.admin_service import (
+    AdminDeletedMessage,
+    AdminSessionMemory,
+    AdminUserSummary,
+)
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
+from rp_engine.core.memory.rolling_summary_source import RollingSummaryStatus
 from rp_engine.core.memory.session_summary import SessionSummary
 from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
@@ -23,6 +28,9 @@ from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 
 USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 SESSION_ID = UUID("00000000-0000-0000-0000-000000000999")
+
+# Sentinel so `_memory(summary=None)` can mean "no recap" rather than "use the default".
+_UNSET = object()
 
 
 def _setup(tmp_path: Path) -> tuple[TestClient, Any]:
@@ -50,6 +58,42 @@ def _telegram_user(*, display_name: str = "Pablo") -> User:
 def _session() -> ScenarioSession:
     return ScenarioSession(
         id=SESSION_ID, scenario_definition_id="def-1", owner_kind="user", owner_id=USER_ID
+    )
+
+
+def _summary() -> SessionSummary:
+    return SessionSummary.create(
+        session_id=SESSION_ID,
+        summary="They crossed the river.",
+        covers_through_turn=7,
+        tokens=9,
+        model_name="test-model",
+    )
+
+
+def _memory(
+    *,
+    settings: MemorySettings | None = None,
+    summary: SessionSummary | None | object = _UNSET,
+) -> AdminSessionMemory:
+    return AdminSessionMemory(
+        settings=settings or MemorySettings(),
+        status=RollingSummaryStatus(
+            budget_tokens=1000,
+            high_water_tokens=750,
+            window_tokens=600,
+            window_messages=20,
+            stored_messages=20,
+            turns_total=10,
+            covers_through_turn=7,
+            pending_turns=0,
+            behind_turns=0,
+            pending_tokens=0,
+            fold_batch_tokens=100,
+            summary_tokens=9,
+            summary_budget_tokens=250,
+        ),
+        summary=_summary() if summary is _UNSET else cast(SessionSummary | None, summary),
     )
 
 
@@ -550,11 +594,39 @@ def test_get_session_reports_the_memory_layers(tmp_path: Path) -> None:
     assert body["memory"]["source_budget_shares"] == {"rolling_summary": 0.25}
 
 
+def test_get_session_memory_reports_the_window_status(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session_memory = AsyncMock(return_value=_memory())
+
+    body = client.get(f"/admin/sessions/{SESSION_ID}/memory").json()
+
+    assert body["settings"]["enabled_sources"] == ["rolling_summary"]
+    assert body["status"]["window_tokens"] == 600
+    assert body["status"]["high_water_tokens"] == 750
+    assert body["status"]["pending_turns"] == 0
+    assert body["status"]["fold_batch_tokens"] == 100
+    # Nothing is waiting, so the next fold is nowhere near.
+    assert body["status"]["fold_progress"] == 0.0
+    # The three parts of the story add up to the whole of it.
+    assert body["status"]["verbatim_turns"] == 3
+    assert body["status"]["whole_story_fits"] is True
+    assert body["summary"]["covers_through_turn"] == 7
+
+
+def test_get_session_memory_404_for_an_unknown_session(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session_memory = AsyncMock(return_value=None)
+
+    assert client.get(f"/admin/sessions/{SESSION_ID}/memory").status_code == 404
+
+
 def test_set_session_memory_switches_a_layer_off(tmp_path: Path) -> None:
     client, container = _setup(tmp_path)
     switched_off = _session().with_memory(MemorySettings(enabled_sources=()))
     container.admin_service.set_session_memory_source = AsyncMock(return_value=switched_off)
-    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+    container.admin_service.get_session_memory = AsyncMock(
+        return_value=_memory(settings=MemorySettings(enabled_sources=()))
+    )
 
     response = client.put(
         f"/admin/sessions/{SESSION_ID}/memory",
@@ -562,7 +634,7 @@ def test_set_session_memory_switches_a_layer_off(tmp_path: Path) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json()["memory"]["enabled_sources"] == []
+    assert response.json()["settings"]["enabled_sources"] == []
     container.admin_service.set_session_memory_source.assert_awaited_once()
 
 
@@ -592,33 +664,28 @@ def test_the_recent_window_cannot_be_switched_off_through_the_panel(tmp_path: Pa
     container.admin_service.set_session_memory_source.assert_not_awaited()
 
 
-def test_get_session_summary_returns_the_stored_recap(tmp_path: Path) -> None:
+def test_refreshing_the_summary_runs_the_pass_and_returns_the_recap(tmp_path: Path) -> None:
     client, container = _setup(tmp_path)
-    container.admin_service.get_session = AsyncMock(return_value=_session())
-    container.admin_service.get_session_summary = AsyncMock(
-        return_value=SessionSummary.create(
-            session_id=SESSION_ID,
-            summary="They crossed the river.",
-            covers_through_turn=7,
-            tokens=9,
-            model_name="test-model",
-        )
-    )
+    container.admin_service.refresh_session_summary = AsyncMock(return_value=_memory())
 
-    body = client.get(f"/admin/sessions/{SESSION_ID}/summary").json()
-
-    assert body["summary"] == "They crossed the river."
-    assert body["covers_through_turn"] == 7
-    assert body["tokens"] == 9
-    assert body["model_name"] == "test-model"
-
-
-def test_get_session_summary_is_null_before_the_first_pass(tmp_path: Path) -> None:
-    client, container = _setup(tmp_path)
-    container.admin_service.get_session = AsyncMock(return_value=_session())
-    container.admin_service.get_session_summary = AsyncMock(return_value=None)
-
-    response = client.get(f"/admin/sessions/{SESSION_ID}/summary")
+    response = client.post(f"/admin/sessions/{SESSION_ID}/memory/refresh")
 
     assert response.status_code == 200
-    assert response.json() is None
+    assert response.json()["summary"]["summary"] == "They crossed the river."
+    container.admin_service.refresh_session_summary.assert_awaited_once()
+
+
+def test_refreshing_an_unknown_session_reports_404(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.refresh_session_summary = AsyncMock(return_value=None)
+
+    assert client.post(f"/admin/sessions/{SESSION_ID}/memory/refresh").status_code == 404
+
+
+def test_the_memory_panel_reports_no_recap_before_the_first_pass(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session_memory = AsyncMock(return_value=_memory(summary=None))
+
+    body = client.get(f"/admin/sessions/{SESSION_ID}/memory").json()
+
+    assert body["summary"] is None

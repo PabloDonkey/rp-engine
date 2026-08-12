@@ -136,9 +136,28 @@ mark that the recap does not yet cover is folded in, and the fold stops after a 
 a player line never lands in the recap while the answer to it stays in the window. When the recap
 outgrows its own share of the budget, it is condensed once more — one pass, not a loop.
 
+**It folds in batches, not every turn.** Once a story passes the fold line, every new turn pushes
+one more turn past it. Folding each one as it arrives would mean a model call per turn, to add a
+single turn to a paraphrase. So a pass runs only when the waiting turns reach
+`RP_ENGINE_MEMORY_SUMMARY_MIN_FOLD_SHARE` of the budget, 10% by default. The batch has to stay
+below the slack between the fold line and the window edge, which is 25% of the budget at the
+default marks. Waiting turns therefore sit inside that slack, where the window still replays them
+word for word, so nothing is ever lost while a batch fills.
+
+**Folding does not shrink the window.** A folded turn stays in the transcript and keeps its place
+in the prompt until the window can no longer hold it. The recap is written ahead of that day, not
+in exchange for it. This is why the panel shows the batch filling and emptying rather than the
+window emptying: the window never empties.
+
 The job carries no message text — only the session id and the turn. That is what makes a job
 lost to a restart harmless: the next turn asks the same question. Running the job late, twice, or
 not at all all end in the same stored state, and there is a test that asserts exactly that.
+
+The panel reads those same marks through `RollingSummarySource.status`, which is a read-only
+twin of the first half of `observe`. The panel and the worker therefore cannot disagree about
+what is due. It reports the story as three parts that add up to the whole of it: the turns the
+recap covers, the turns waiting for the next batch, and the turns the prompt still replays word
+for word.
 
 **The alarm.** Before folding, the worker compares what the recap covered against what the window
 could hold on the turn that just ran. If turns fell outside the window that the recap had not

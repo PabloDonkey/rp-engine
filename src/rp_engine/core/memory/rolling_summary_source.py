@@ -16,6 +16,7 @@ making recaps longer.
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from uuid import UUID
 
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
@@ -41,12 +42,84 @@ STORY_SO_FAR_LABEL = "[Story So Far]"
 # an overflow into an alarm rather than the routine case.
 DEFAULT_HIGH_WATER_SHARE = 0.75
 
+# How much story has to pile up past the fold line before a pass is worth a model call, as
+# a share of the budget. Without it the recap is rewritten on nearly every turn once a
+# story passes the line, because each new turn pushes one more turn past it: a model call
+# per turn, to add one turn to a paraphrase.
+#
+# It must stay below the slack between the fold line and the window edge (0.25 of the
+# budget at the default high-water share). Material waits inside that slack, so the window
+# still never drops a turn the recap has not covered.
+DEFAULT_MIN_FOLD_SHARE = 0.1
+
 # Words asked of the summarizer per token of budget. English runs near 0.75 words per
 # token; asking for less leaves room for the recap to overshoot without being dropped.
 WORDS_PER_TOKEN = 0.6
 # The recap stays short on purpose: recent, clearly stated detail beats a long buried one.
 MIN_TARGET_WORDS = 50
 MAX_TARGET_WORDS = 250
+
+
+@dataclass(frozen=True, slots=True)
+class RollingSummaryStatus:
+    """Where a session stands, for someone watching it.
+
+    Nothing on the turn path reads this. It exists so an operator can see what the next
+    pass will do instead of waiting to find out, and it is measured exactly the way the
+    worker measures it — the same walk, the same marks, the same threshold.
+
+    The story splits into three parts, oldest first: the turns the recap covers, the turns
+    waiting past the fold line, and the turns the prompt still replays word for word. They
+    add up to `turns_total`.
+
+    Token totals stop at the window edge. Messages older than that are counted but not
+    priced, for the reason S022 gave: pricing them means counting the whole history, which
+    is the cost the walk exists to avoid.
+    """
+
+    # The whole memory budget, and the share of it past which turns are folded.
+    budget_tokens: int
+    high_water_tokens: int
+    # What the stored turns cost, counted from the newest and stopped at the budget.
+    window_tokens: int
+    window_messages: int
+    stored_messages: int
+    # Narrator replies: how many the session has, how many the recap covers, how many wait
+    # past the fold line, and how many already left the window uncovered.
+    turns_total: int
+    covers_through_turn: int
+    pending_turns: int
+    behind_turns: int
+    # What the waiting turns cost, and how much has to pile up before a pass runs.
+    pending_tokens: int
+    fold_batch_tokens: int
+    # The recap's own cost against its own share.
+    summary_tokens: int
+    summary_budget_tokens: int
+
+    @property
+    def verbatim_turns(self) -> int:
+        """Turns the prompt still replays word for word, exactly as they were written."""
+        return max(0, self.turns_total - self.covers_through_turn - self.pending_turns)
+
+    @property
+    def whole_story_fits(self) -> bool:
+        """Whether every stored turn still reaches the prompt."""
+        return self.window_messages >= self.stored_messages
+
+    @property
+    def fold_progress(self) -> float:
+        """How full the next batch is, where 1.0 means the next pass will fold it.
+
+        This fills and empties. The window itself never shrinks, because folding a turn
+        into the recap does not delete it, so measuring the window against the fold line
+        would sit at full forever once a story passed it.
+        """
+        if self.behind_turns > 0:
+            return 1.0
+        if self.fold_batch_tokens <= 0:
+            return 1.0 if self.pending_turns > 0 else 0.0
+        return min(1.0, self.pending_tokens / self.fold_batch_tokens)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +135,9 @@ class _WindowMarks:
     # Outside the window budget altogether. The window cannot replay these at all, so a
     # recap that does not reach this far has already lost story.
     window_index: int
+    # What the messages inside the window cost. It stops at the window edge, so it is a
+    # floor on the whole transcript rather than its total.
+    window_tokens: int
 
 
 class RollingSummarySource(MemorySource):
@@ -76,15 +152,25 @@ class RollingSummarySource(MemorySource):
         token_counter: TokenCounter,
         model_name: str,
         high_water_share: float = DEFAULT_HIGH_WATER_SHARE,
+        min_fold_share: float = DEFAULT_MIN_FOLD_SHARE,
     ) -> None:
         if not 0.0 < high_water_share <= 1.0:
             raise ValueError("high_water_share must be greater than 0 and at most 1.")
+        if not 0.0 <= min_fold_share < 1.0 - high_water_share:
+            # A batch larger than the slack between the fold line and the window edge would
+            # let material wait past the point where the window can still replay it, which
+            # is exactly the loss the fold line exists to prevent.
+            raise ValueError(
+                "min_fold_share must be at least 0 and smaller than the slack the "
+                "high-water share leaves."
+            )
         self._summary_store = summary_store
         self._conversation_store = conversation_store
         self._summarizer = summarizer
         self._token_counter = token_counter
         self._model_name = model_name
         self._high_water_share = high_water_share
+        self._min_fold_share = min_fold_share
 
     async def recall(self, context: MemoryRecallContext) -> tuple[MemoryFragment, ...]:
         """Return the stored recap, or nothing when there is none yet.
@@ -105,6 +191,42 @@ class RollingSummarySource(MemorySource):
                 priority=PRIORITY_ROLLING_SUMMARY,
                 tokens=stored.tokens,
             ),
+        )
+
+    async def status(
+        self,
+        *,
+        session_id: UUID,
+        memory_budget: int,
+        source_budget: int,
+    ) -> RollingSummaryStatus:
+        """Report where this session stands, without changing anything.
+
+        A read-only twin of the first half of `observe`. It answers the question an
+        operator has — what will the next pass do — with the numbers the worker itself
+        would use, including the batch it waits for.
+        """
+        memory_key = ConversationIdentity.for_session(str(session_id)).to_memory_key()
+        messages = await self._conversation_store.load_messages(memory_key)
+        stored = await self._summary_store.get(session_id)
+        covered_turn = stored.covers_through_turn if stored is not None else 0
+        marks = await self._window_marks(messages, memory_budget)
+        fold_through = self._end_of_turn(messages, marks.high_water_index)
+        pending = messages[self._index_after_turn(messages, covered_turn) : fold_through]
+        return RollingSummaryStatus(
+            budget_tokens=memory_budget,
+            high_water_tokens=int(memory_budget * self._high_water_share),
+            window_tokens=marks.window_tokens,
+            window_messages=len(messages) - marks.window_index,
+            stored_messages=len(messages),
+            turns_total=self._turns_before(messages, len(messages)),
+            covers_through_turn=covered_turn,
+            pending_turns=max(0, self._turns_before(messages, fold_through) - covered_turn),
+            behind_turns=max(0, self._turns_before(messages, marks.window_index) - covered_turn),
+            pending_tokens=await self._cost_of(pending),
+            fold_batch_tokens=int(memory_budget * self._min_fold_share),
+            summary_tokens=stored.tokens if stored is not None else 0,
+            summary_budget_tokens=source_budget,
         )
 
     async def observe(self, context: MemoryObserveContext) -> None:
@@ -134,10 +256,20 @@ class RollingSummarySource(MemorySource):
         pending = messages[self._index_after_turn(messages, covered_turn) : fold_through]
         pending_turn = self._turns_before(messages, fold_through)
 
+        has_new_turns = bool(pending) and pending_turn > covered_turn
+        # Whether the waiting turns are worth a model call yet. Without this the recap is
+        # rewritten on nearly every turn once a story passes the fold line, because each
+        # new turn pushes one more turn past it.
+        urgent = self._turns_before(messages, marks.window_index) > covered_turn
+        batch_tokens = int(context.memory_budget * self._min_fold_share)
+        fold_now = has_new_turns and (
+            urgent or await self._cost_of(pending) >= batch_tokens
+        )
+
         summary = stored.summary if stored is not None else ""
         tokens = stored.tokens if stored is not None else 0
         covers_through_turn = covered_turn
-        if pending and pending_turn > covered_turn:
+        if fold_now:
             summary = await self._summarizer.summarize_story_so_far(
                 previous_summary=summary,
                 new_messages=list(pending),
@@ -281,10 +413,22 @@ class RollingSummarySource(MemorySource):
             window_index = position
             if used <= high_water_tokens:
                 high_water_index = position
-        return _WindowMarks(high_water_index=high_water_index, window_index=window_index)
+        return _WindowMarks(
+            high_water_index=high_water_index,
+            window_index=window_index,
+            window_tokens=used,
+        )
 
     async def _cost(self, message: ConversationMessage) -> int:
         return await self._token_counter.count_tokens(message.content) + MESSAGE_OVERHEAD_TOKENS
+
+    async def _cost_of(self, messages: Sequence[ConversationMessage]) -> int:
+        """What a stretch of messages costs. Bounded work: a stretch waiting to be folded
+        is at most the slack between the fold line and the window edge."""
+        total = 0
+        for message in messages:
+            total += await self._cost(message)
+        return total
 
     @staticmethod
     def _target_words(budget: int) -> int:

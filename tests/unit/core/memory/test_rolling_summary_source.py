@@ -103,6 +103,7 @@ def _source(
     messages: Sequence[ConversationMessage],
     summary_store: FakeSummaryStore,
     summarizer: FakeSummarizer,
+    min_fold_share: float = 0.1,
 ) -> RollingSummarySource:
     return RollingSummarySource(
         summary_store=summary_store,
@@ -110,6 +111,7 @@ def _source(
         summarizer=summarizer,
         token_counter=WordTokenCounter(),
         model_name=MODEL_NAME,
+        min_fold_share=min_fold_share,
     )
 
 
@@ -382,3 +384,187 @@ def test_the_high_water_share_must_be_a_share() -> None:
             model_name=MODEL_NAME,
             high_water_share=1.5,
         )
+
+
+@pytest.mark.asyncio
+async def test_status_reports_a_story_with_nothing_waiting() -> None:
+    # Ten messages cost 50 tokens against a fold line of 75, so nothing has passed it.
+    store = FakeSummaryStore()
+    source = _source(messages=_messages(10), summary_store=store, summarizer=FakeSummarizer())
+
+    status = await source.status(session_id=SESSION_ID, memory_budget=100, source_budget=25)
+
+    assert status.budget_tokens == 100
+    assert status.high_water_tokens == 75
+    assert status.window_tokens == 50
+    assert status.window_messages == 10
+    assert status.stored_messages == 10
+    assert status.turns_total == 5
+    assert status.pending_turns == 0
+    assert status.behind_turns == 0
+    assert status.pending_tokens == 0
+    assert status.fold_batch_tokens == 10
+    assert status.fold_progress == 0.0
+    # Every turn still reaches the prompt word for word.
+    assert status.verbatim_turns == 5
+    assert status.whole_story_fits is True
+
+
+@pytest.mark.asyncio
+async def test_status_reports_the_turns_the_next_pass_would_fold() -> None:
+    store = FakeSummaryStore()
+    source = _source(messages=_messages(30), summary_store=store, summarizer=FakeSummarizer())
+
+    status = await source.status(session_id=SESSION_ID, memory_budget=100, source_budget=25)
+
+    # The window is full, so it reads as at the fold line, and 7 turns are ready to fold.
+    assert status.fold_progress == 1.0
+    assert status.pending_turns == 7
+    assert status.stored_messages == 30
+    assert status.window_messages == 20
+    assert status.turns_total == 15
+
+
+@pytest.mark.asyncio
+async def test_status_reports_the_recap_and_what_it_still_misses() -> None:
+    store = FakeSummaryStore(_stored("They crossed the river.", turn=4, tokens=5))
+    source = _source(messages=_messages(30), summary_store=store, summarizer=FakeSummarizer())
+
+    status = await source.status(session_id=SESSION_ID, memory_budget=100, source_budget=25)
+
+    assert status.covers_through_turn == 4
+    assert status.summary_tokens == 5
+    assert status.summary_budget_tokens == 25
+    # Turns 5 to 7 are past the fold line and not covered yet.
+    assert status.pending_turns == 3
+    # Nothing has left the window uncovered: the window still reaches turn 5.
+    assert status.behind_turns == 1
+
+
+@pytest.mark.asyncio
+async def test_status_changes_nothing() -> None:
+    store = FakeSummaryStore()
+    summarizer = FakeSummarizer()
+    source = _source(messages=_messages(30), summary_store=store, summarizer=summarizer)
+
+    await source.status(session_id=SESSION_ID, memory_budget=100, source_budget=25)
+
+    assert summarizer.folded == []
+    assert store.saves == 0
+    assert store.stored is None
+
+
+@pytest.mark.asyncio
+async def test_status_on_an_empty_session_is_all_zeros() -> None:
+    source = _source(messages=[], summary_store=FakeSummaryStore(), summarizer=FakeSummarizer())
+
+    status = await source.status(session_id=SESSION_ID, memory_budget=100, source_budget=25)
+
+    assert status.window_tokens == 0
+    assert status.stored_messages == 0
+    assert status.turns_total == 0
+    assert status.fold_progress == 0.0
+
+
+@pytest.mark.asyncio
+async def test_a_small_batch_is_not_worth_a_model_call() -> None:
+    """The recap must not be rewritten on every turn once a story passes the fold line.
+
+    Each new turn pushes one more turn past the line. Without a batch, that is one model
+    call per turn to add one turn to a paraphrase.
+    """
+    store = FakeSummaryStore(_stored("They crossed the river.", turn=9))
+    summarizer = FakeSummarizer()
+    # 50 messages cost 250 tokens. The fold line at 150 leaves 10 turns past it, and the
+    # recap already covers 9 of them. The tenth is one turn, 10 tokens against a batch
+    # of 40.
+    source = _source(
+        messages=_messages(50),
+        summary_store=store,
+        summarizer=summarizer,
+        min_fold_share=0.2,
+    )
+
+    await source.observe(_observe_context(turn=15, memory_budget=200, source_budget=50))
+
+    assert summarizer.folded == []
+    assert store.saves == 0
+
+
+@pytest.mark.asyncio
+async def test_a_full_batch_is_folded() -> None:
+    # The same story with nothing covered yet: 10 turns wait, 100 tokens against a batch
+    # of 40, so the pass is worth its model call.
+    store = FakeSummaryStore()
+    summarizer = FakeSummarizer()
+    source = _source(
+        messages=_messages(50),
+        summary_store=store,
+        summarizer=summarizer,
+        min_fold_share=0.2,
+    )
+
+    await source.observe(_observe_context(turn=25, memory_budget=200, source_budget=50))
+
+    assert len(summarizer.folded) == 1
+    assert store.stored is not None
+    assert store.stored.covers_through_turn == 10
+
+
+@pytest.mark.asyncio
+async def test_turns_about_to_leave_the_window_are_folded_whatever_the_batch_size() -> None:
+    """The batch waits inside the slack the fold line leaves, never past it.
+
+    Here one turn has already fallen outside the window. Waiting for a fuller batch would
+    lose it, so the pass runs at once.
+    """
+    store = FakeSummaryStore(_stored("They crossed the river.", turn=4))
+    summarizer = FakeSummarizer()
+    source = _source(
+        messages=_messages(30),
+        summary_store=store,
+        summarizer=summarizer,
+        min_fold_share=0.24,
+    )
+
+    await source.observe(_observe_context(turn=15, memory_budget=100, source_budget=25))
+
+    assert len(summarizer.folded) == 1
+    assert store.stored is not None
+    assert store.stored.covers_through_turn == 7
+
+
+def test_a_batch_larger_than_the_slack_is_refused() -> None:
+    # A batch that big would let material wait past the point where the window can still
+    # replay it, which is the loss the fold line exists to prevent.
+    with pytest.raises(ValueError):
+        RollingSummarySource(
+            summary_store=FakeSummaryStore(),
+            conversation_store=FakeConversationStore([]),
+            summarizer=FakeSummarizer(),
+            token_counter=WordTokenCounter(),
+            model_name=MODEL_NAME,
+            high_water_share=0.75,
+            min_fold_share=0.25,
+        )
+
+
+@pytest.mark.asyncio
+async def test_status_reports_the_batch_filling_up() -> None:
+    store = FakeSummaryStore(_stored("They crossed the river.", turn=8))
+    source = _source(
+        messages=_messages(50),
+        summary_store=store,
+        summarizer=FakeSummarizer(),
+        min_fold_share=0.2,
+    )
+
+    status = await source.status(session_id=SESSION_ID, memory_budget=200, source_budget=50)
+
+    # Two turns wait past the fold line: four messages at five tokens each, against a
+    # batch of 40. This is the number that fills and empties.
+    assert status.pending_turns == 2
+    assert status.pending_tokens == 20
+    assert status.fold_batch_tokens == 40
+    assert status.fold_progress == pytest.approx(0.5)
+    assert status.verbatim_turns == 15

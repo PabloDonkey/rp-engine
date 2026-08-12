@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from uuid import UUID, uuid4
 
 import pytest
@@ -5,7 +6,9 @@ import pytest
 from rp_engine.application.services.admin_service import AdminService
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
+from rp_engine.core.memory.context_budget import ContextBudget
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
+from rp_engine.core.memory.rolling_summary_source import RollingSummarySource
 from rp_engine.core.memory.session_summary import SessionSummary
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
@@ -92,6 +95,41 @@ class FakeConversationStore:
         self._messages.pop(memory_key.value, None)
 
 
+MODEL_NAME = "test-model"
+
+
+class WordTokenCounter:
+    async def count_tokens(self, text: str) -> int:
+        return len(text.split())
+
+
+class FixedContextWindow:
+    def __init__(self, tokens: int) -> None:
+        self._tokens = tokens
+
+    async def context_length(self) -> int:
+        return self._tokens
+
+
+class FakeSummarizer:
+    def __init__(self, *, summary: str = "the recap") -> None:
+        self.summary = summary
+        self.calls = 0
+
+    async def summarize_story_so_far(
+        self,
+        *,
+        previous_summary: str,
+        new_messages: Sequence[ConversationMessage],
+        target_words: int,
+    ) -> str:
+        self.calls += 1
+        return self.summary
+
+    async def condense_story_summary(self, *, summary: str, target_words: int) -> str:
+        return summary
+
+
 class FakeSessionSummaryStore:
     def __init__(self, summary: SessionSummary | None = None) -> None:
         self.summary = summary
@@ -151,17 +189,27 @@ def _service(
     conversation_store: FakeConversationStore | None = None,
     trace_store: FakeGenerationTraceStore | None = None,
     scenarios: list[ScenarioDefinition] | None = None,
+    summary: SessionSummary | None = None,
 ) -> tuple[AdminService, FakeScenarioSessionStore, FakeConversationStore, FakeGenerationTraceStore]:
     session_store = FakeScenarioSessionStore(sessions or [])
     convo_store = conversation_store or FakeConversationStore()
     traces = trace_store or FakeGenerationTraceStore()
+    summary_store = FakeSessionSummaryStore(summary)
     service = AdminService(
         user_identity_store=FakeUserIdentityStore(users or []),
         scenario_session_store=session_store,
         conversation_store=convo_store,
         generation_trace_store=traces,
         scenario_definition_store=FakeScenarioDefinitionStore(scenarios),
-        session_summary_store=FakeSessionSummaryStore(),
+        session_summary_store=summary_store,
+        rolling_summary_source=RollingSummarySource(
+            summary_store=summary_store,
+            conversation_store=convo_store,
+            summarizer=FakeSummarizer(),
+            token_counter=WordTokenCounter(),
+            model_name=MODEL_NAME,
+        ),
+        context_budget=ContextBudget(context_window=FixedContextWindow(1000), share=1.0),
     )
     return service, session_store, convo_store, traces
 
@@ -320,22 +368,90 @@ async def test_set_session_memory_source_returns_none_for_an_unknown_session() -
 
 
 @pytest.mark.asyncio
-async def test_get_session_summary_returns_what_layer_01_stored() -> None:
+async def test_get_session_memory_reports_the_recap_and_the_settings() -> None:
     stored = SessionSummary.create(
         session_id=SESSION_ID,
         summary="They crossed the river.",
         covers_through_turn=7,
         tokens=9,
-        model_name="test-model",
+        model_name=MODEL_NAME,
     )
-    session_store = FakeScenarioSessionStore([_session(owner_id=USER_ID)])
-    service = AdminService(
-        user_identity_store=FakeUserIdentityStore([]),
-        scenario_session_store=session_store,
-        conversation_store=FakeConversationStore(),
-        generation_trace_store=FakeGenerationTraceStore(),
-        scenario_definition_store=FakeScenarioDefinitionStore(None),
-        session_summary_store=FakeSessionSummaryStore(stored),
+    service, _, _, _ = _service(sessions=[_session(owner_id=USER_ID)], summary=stored)
+
+    memory = await service.get_session_memory(SESSION_ID)
+
+    assert memory is not None
+    assert memory.summary == stored
+    assert memory.settings.is_enabled("rolling_summary") is True
+    # The recap's share of a 1000-token budget, the same number the worker would use.
+    assert memory.status.summary_budget_tokens == 250
+    assert memory.status.high_water_tokens == 750
+    assert memory.status.covers_through_turn == 7
+
+
+@pytest.mark.asyncio
+async def test_get_session_memory_returns_none_for_an_unknown_session() -> None:
+    service, _, _, _ = _service()
+
+    assert await service.get_session_memory(SESSION_ID) is None
+
+
+@pytest.mark.asyncio
+async def test_the_status_reports_how_full_the_window_is() -> None:
+    # Ten one-word messages cost five tokens each against a fold line of 750, so the story
+    # is nowhere near a recap yet.
+    conversation = FakeConversationStore()
+    for index in range(10):
+        await conversation.save_message(
+            MemoryKey(f"session_{SESSION_ID}"),
+            ConversationMessage(
+                role=ConversationRole.USER if index % 2 == 0 else ConversationRole.CHARACTER,
+                content=f"m{index}",
+            ),
+        )
+    service, _, _, _ = _service(
+        sessions=[_session(owner_id=USER_ID)], conversation_store=conversation
     )
 
-    assert await service.get_session_summary(SESSION_ID) == stored
+    memory = await service.get_session_memory(SESSION_ID)
+
+    assert memory is not None
+    assert memory.status.window_tokens == 50
+    assert memory.status.stored_messages == 10
+    assert memory.status.window_messages == 10
+    assert memory.status.turns_total == 5
+    assert memory.status.pending_turns == 0
+    assert memory.status.behind_turns == 0
+    assert memory.status.fold_progress < 0.1
+
+
+@pytest.mark.asyncio
+async def test_refreshing_the_summary_runs_the_pass_and_returns_the_result() -> None:
+    """The operator button asks the same question the background worker asks."""
+    conversation = FakeConversationStore()
+    for index in range(400):
+        await conversation.save_message(
+            MemoryKey(f"session_{SESSION_ID}"),
+            ConversationMessage(
+                role=ConversationRole.USER if index % 2 == 0 else ConversationRole.CHARACTER,
+                content=f"m{index}",
+            ),
+        )
+    service, _, _, _ = _service(
+        sessions=[_session(owner_id=USER_ID)], conversation_store=conversation
+    )
+
+    memory = await service.refresh_session_summary(SESSION_ID)
+
+    assert memory is not None
+    assert memory.summary is not None
+    assert memory.summary.summary == "the recap"
+    assert memory.summary.covers_through_turn > 0
+    assert memory.status.covers_through_turn == memory.summary.covers_through_turn
+
+
+@pytest.mark.asyncio
+async def test_refreshing_an_unknown_session_returns_none() -> None:
+    service, _, _, _ = _service()
+
+    assert await service.refresh_session_summary(SESSION_ID) is None

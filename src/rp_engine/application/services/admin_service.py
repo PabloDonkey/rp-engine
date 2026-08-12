@@ -3,9 +3,14 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from rp_engine.core.conversation.message import TURN_METADATA_KEY, ConversationMessage
+from rp_engine.core.conversation.role import ConversationRole
+from rp_engine.core.memory.context_budget import ContextBudget
 from rp_engine.core.memory.fragment import ToggleableMemorySystemId
 from rp_engine.core.memory.models import ConversationIdentity
+from rp_engine.core.memory.recall_context import MemoryObserveContext
+from rp_engine.core.memory.rolling_summary_source import RollingSummarySource, RollingSummaryStatus
 from rp_engine.core.memory.session_summary import SessionSummary
+from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.ports.conversation_store import ConversationStore
 from rp_engine.core.ports.generation_trace_store import GenerationTraceStore
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
@@ -23,6 +28,19 @@ logger = logging.getLogger(__name__)
 class AdminUserSummary:
     user: User
     session_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class AdminSessionMemory:
+    """Everything the panel shows about one session's memory, read in one call.
+
+    The three parts answer three different questions: which layers run, how close the story
+    is to its next recap, and what the recap currently says.
+    """
+
+    settings: MemorySettings
+    status: RollingSummaryStatus
+    summary: SessionSummary | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +67,8 @@ class AdminService:
         generation_trace_store: GenerationTraceStore,
         scenario_definition_store: ScenarioDefinitionStore,
         session_summary_store: SessionSummaryStore,
+        rolling_summary_source: RollingSummarySource,
+        context_budget: ContextBudget,
     ) -> None:
         self._user_identity_store = user_identity_store
         self._scenario_session_store = scenario_session_store
@@ -56,6 +76,8 @@ class AdminService:
         self._generation_trace_store = generation_trace_store
         self._scenario_definition_store = scenario_definition_store
         self._session_summary_store = session_summary_store
+        self._rolling_summary_source = rolling_summary_source
+        self._context_budget = context_budget
 
     async def list_users(self) -> list[AdminUserSummary]:
         users = await self._user_identity_store.list_users()
@@ -122,9 +144,55 @@ class AdminService:
         )
         return await self._scenario_session_store.save(session.with_memory(memory))
 
-    async def get_session_summary(self, session_id: UUID) -> SessionSummary | None:
-        """The recap memory layer 01 stores, so an operator can read what the model reads."""
-        return await self._session_summary_store.get(session_id)
+    async def get_session_memory(self, session_id: UUID) -> AdminSessionMemory | None:
+        """What the panel shows for memory; None when the session is missing.
+
+        The status is measured the way the background worker measures it, so the panel and
+        the worker cannot disagree about when the next recap is due.
+        """
+        session = await self._scenario_session_store.get_by_id(session_id)
+        if session is None:
+            return None
+        budget = await self._context_budget.total_tokens()
+        return AdminSessionMemory(
+            settings=session.memory,
+            status=await self._rolling_summary_source.status(
+                session_id=session_id,
+                memory_budget=budget,
+                source_budget=session.memory.budget_for("rolling_summary", budget),
+            ),
+            summary=await self._session_summary_store.get(session_id),
+        )
+
+    async def refresh_session_summary(self, session_id: UUID) -> AdminSessionMemory | None:
+        """Run the rolling-summary pass now and report what it left behind.
+
+        The same question the background worker asks after every turn, asked by a person
+        instead. It runs **inline**, so this call lasts as long as one model call when there
+        is something to fold, and returns at once when there is not.
+
+        It runs even when the session has the layer switched off. An operator who wants to
+        read a recap before deciding whether to switch the layer on should be able to make
+        one.
+        """
+        session = await self._scenario_session_store.get_by_id(session_id)
+        if session is None:
+            return None
+        budget = await self._context_budget.total_tokens()
+        await self._rolling_summary_source.observe(
+            MemoryObserveContext(
+                session_id=session_id,
+                scenario_definition_id=session.scenario_definition_id,
+                turn=self._narrator_turns(await self.get_session_transcript(session_id)),
+                memory_budget=budget,
+                source_budget=session.memory.budget_for("rolling_summary", budget),
+            )
+        )
+        return await self.get_session_memory(session_id)
+
+    @staticmethod
+    def _narrator_turns(transcript: list[ConversationMessage]) -> int:
+        return sum(1 for message in transcript if message.role == ConversationRole.CHARACTER)
 
     async def get_session_transcript(self, session_id: UUID) -> list[ConversationMessage]:
         memory_key = ConversationIdentity.for_session(str(session_id)).to_memory_key()

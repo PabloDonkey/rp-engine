@@ -9,7 +9,7 @@ import type {
   AdminUser,
   ScenarioPayload,
   ScenarioSummary,
-  SessionSummary,
+  SessionMemory,
 } from "@/api";
 
 function toSummary(payload: ScenarioPayload): ScenarioSummary {
@@ -38,9 +38,10 @@ export const useAdminStore = defineStore("admin", {
     // transcript on screen, not blank it.
     actionError: null as string | null,
     traces: [] as AdminTrace[],
-    // The running recap of memory layer 01. Null means the background worker has not
-    // written one for this session yet.
-    sessionSummary: null as SessionSummary | null,
+    // Memory layer state for the open session: which layers run, how close the next
+    // recap is, and what the recap says. Null until the session detail is loaded.
+    sessionMemory: null as SessionMemory | null,
+    memoryBusy: false,
     sessionLoading: false,
     sessionError: null as string | null,
 
@@ -84,16 +85,16 @@ export const useAdminStore = defineStore("admin", {
       // follow the user onto a different session.
       this.actionError = null;
       try {
-        const [session, transcript, traces, summary] = await Promise.all([
+        const [session, transcript, traces, memory] = await Promise.all([
           api.getSession(sessionId),
           api.getSessionTranscript(sessionId),
           api.getSessionTraces(sessionId),
-          api.getSessionSummary(sessionId),
+          api.getSessionMemory(sessionId),
         ]);
         this.session = session;
         this.transcript = transcript;
         this.traces = traces;
-        this.sessionSummary = summary;
+        this.sessionMemory = memory;
       } catch (error) {
         this.sessionError = error instanceof Error ? error.message : String(error);
       } finally {
@@ -143,12 +144,31 @@ export const useAdminStore = defineStore("admin", {
       enabled: boolean,
     ): Promise<boolean> {
       this.actionError = null;
+      this.memoryBusy = true;
       try {
-        this.session = await api.setSessionMemorySource(sessionId, sourceId, enabled);
+        this.sessionMemory = await api.setSessionMemorySource(sessionId, sourceId, enabled);
         return true;
       } catch (error) {
         this.actionError = error instanceof Error ? error.message : String(error);
         return false;
+      } finally {
+        this.memoryBusy = false;
+      }
+    },
+
+    // Runs the summary pass now. It waits for the model, so the caller shows the button as
+    // busy until this resolves.
+    async refreshSessionSummary(sessionId: string): Promise<boolean> {
+      this.actionError = null;
+      this.memoryBusy = true;
+      try {
+        this.sessionMemory = await api.refreshSessionSummary(sessionId);
+        return true;
+      } catch (error) {
+        this.actionError = error instanceof Error ? error.message : String(error);
+        return false;
+      } finally {
+        this.memoryBusy = false;
       }
     },
 

@@ -160,19 +160,23 @@ def build_container(settings: Settings) -> AppContainer:
     session_directive_service = SessionDirectiveService(
         scenario_session_store=scenario_session_store,
     )
+    # Built here rather than inline in the source list: the admin panel reads its status
+    # and can run its pass by hand, so the panel and the pipeline must share one instance.
+    rolling_summary_source = RollingSummarySource(
+        summary_store=session_summary_store,
+        conversation_store=conversation_store,
+        summarizer=LMStudioConversationSummarizer(llm_provider=llm_provider),
+        token_counter=lmstudio_token_counter,
+        model_name=settings.lmstudio_model,
+        high_water_share=settings.memory_summary_high_water_share,
+        min_fold_share=settings.memory_summary_min_fold_share,
+    )
     # The layer list of ADR-026. Layers 02 to 04 append here as they land; nothing else
     # changes when they do.
     memory_pipeline = MemoryPipeline(
         sources=[
             RecentWindowSource(token_counter=lmstudio_token_counter),
-            RollingSummarySource(
-                summary_store=session_summary_store,
-                conversation_store=conversation_store,
-                summarizer=LMStudioConversationSummarizer(llm_provider=llm_provider),
-                token_counter=lmstudio_token_counter,
-                model_name=settings.lmstudio_model,
-                high_water_share=settings.memory_summary_high_water_share,
-            ),
+            rolling_summary_source,
         ],
         context_budget=context_budget,
     )
@@ -197,6 +201,8 @@ def build_container(settings: Settings) -> AppContainer:
         generation_trace_store=generation_trace_store,
         scenario_definition_store=scenario_definition_store,
         session_summary_store=session_summary_store,
+        rolling_summary_source=rolling_summary_source,
+        context_budget=context_budget,
     )
     telegram_authorization = TelegramAuthorization.from_directory(
         settings.telegram_authorization_dir,

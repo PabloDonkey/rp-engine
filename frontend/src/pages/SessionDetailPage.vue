@@ -52,20 +52,60 @@ const MEMORY_LAYERS: { id: string; label: string; hint: string }[] = [
     hint: "Condenses what falls out of the recent window into a running recap.",
   },
 ];
-const memorySaving = ref("");
-
 function memoryEnabled(sourceId: string): boolean {
-  return store.session?.memory.enabled_sources.includes(sourceId) ?? false;
+  return store.sessionMemory?.settings.enabled_sources.includes(sourceId) ?? false;
 }
 
-async function onToggleMemory(sourceId: string): Promise<void> {
-  memorySaving.value = sourceId;
-  try {
-    await store.setSessionMemorySource(props.sessionId, sourceId, !memoryEnabled(sourceId));
-  } finally {
-    memorySaving.value = "";
-  }
+function onToggleMemory(sourceId: string): Promise<boolean> {
+  return store.setSessionMemorySource(props.sessionId, sourceId, !memoryEnabled(sourceId));
 }
+
+function onRunSummary(): Promise<boolean> {
+  return store.refreshSessionSummary(props.sessionId);
+}
+
+const memoryStatus = computed(() => store.sessionMemory?.status ?? null);
+
+// The story, oldest first, as three shares of its turns: in the recap, waiting to be
+// folded, and still replayed word for word. They always add up to the whole story.
+const storyMap = computed(() => {
+  const status = memoryStatus.value;
+  if (!status || status.turns_total === 0) return null;
+  const share = (turns: number) => (turns / status.turns_total) * 100;
+  return {
+    covered: { turns: status.covers_through_turn, percent: share(status.covers_through_turn) },
+    pending: { turns: status.pending_turns, percent: share(status.pending_turns) },
+    verbatim: { turns: status.verbatim_turns, percent: share(status.verbatim_turns) },
+  };
+});
+
+// How full the next batch is. This fills and empties: folding a turn into the recap does
+// not delete it, so the window itself never shrinks.
+const foldPercent = computed(() =>
+  memoryStatus.value ? Math.round(memoryStatus.value.fold_progress * 100) : 0,
+);
+
+// The recap against its own share of the budget. Over 100% means the pass will condense it.
+const recapPercent = computed(() => {
+  const status = memoryStatus.value;
+  if (!status || status.summary_budget_tokens <= 0) return 0;
+  return Math.round((status.summary_tokens / status.summary_budget_tokens) * 100);
+});
+
+const foldState = computed(() => {
+  const status = memoryStatus.value;
+  if (!status) return "";
+  if (status.behind_turns > 0) {
+    return `${status.behind_turns} turn(s) left the window uncovered — the next pass folds them at once`;
+  }
+  if (status.pending_turns === 0) {
+    return "Nothing waiting. The recap covers everything past the fold line.";
+  }
+  if (status.fold_progress >= 1) {
+    return `${status.pending_turns} turn(s) waiting — the next pass folds them`;
+  }
+  return `${status.pending_turns} turn(s) waiting, still under the batch the pass waits for`;
+});
 
 const backTo = computed(() =>
   store.session ? { name: "user-sessions", params: { userId: store.session.owner_id } } : "/users",
@@ -317,8 +357,8 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
         <div v-for="layer in MEMORY_LAYERS" :key="layer.id" class="flex items-start gap-3">
           <button
             type="button"
-            class="rounded border border-black/10 px-2 py-1 text-xs dark:border-white/10"
-            :disabled="memorySaving === layer.id"
+            class="rounded border border-black/10 px-2 py-1 text-xs dark:border-white/10 disabled:opacity-50"
+            :disabled="store.memoryBusy"
             @click="onToggleMemory(layer.id)"
           >
             {{ memoryEnabled(layer.id) ? "On" : "Off" }}
@@ -329,17 +369,143 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           </div>
         </div>
 
-        <div v-if="store.sessionSummary" class="grid gap-1">
-          <div class="text-xs text-neutral-500">
-            Story so far — covers {{ store.sessionSummary.covers_through_turn }} turn(s),
-            {{ store.sessionSummary.tokens }} tokens, written by
-            {{ store.sessionSummary.model_name }} on
-            {{ new Date(store.sessionSummary.updated_at).toLocaleString() }}
+        <!-- The story, split the way memory splits it. The numbers are the ones the
+             background worker itself uses. -->
+        <div v-if="memoryStatus" class="grid gap-3 border-t border-black/10 pt-3 dark:border-white/10">
+          <div v-if="storyMap" class="grid gap-1">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <span class="text-xs uppercase tracking-wide text-neutral-500">
+                The story, oldest first
+              </span>
+              <span class="font-mono text-xs tabular-nums">
+                {{ memoryStatus.turns_total }} turns
+              </span>
+            </div>
+            <div class="flex h-3 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+              <div
+                class="h-full bg-teal-600"
+                :style="{ width: `${storyMap.covered.percent}%` }"
+                :title="`${storyMap.covered.turns} turn(s) in the recap`"
+              ></div>
+              <div
+                class="h-full bg-amber-500"
+                :style="{ width: `${storyMap.pending.percent}%` }"
+                :title="`${storyMap.pending.turns} turn(s) waiting to be folded`"
+              ></div>
+              <div
+                class="h-full bg-sky-600"
+                :style="{ width: `${storyMap.verbatim.percent}%` }"
+                :title="`${storyMap.verbatim.turns} turn(s) replayed word for word`"
+              ></div>
+            </div>
+            <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
+              <span class="flex items-center gap-1.5">
+                <span class="h-2 w-2 rounded-full bg-teal-600"></span>
+                {{ storyMap.covered.turns }} in the recap
+              </span>
+              <span class="flex items-center gap-1.5">
+                <span class="h-2 w-2 rounded-full bg-amber-500"></span>
+                {{ storyMap.pending.turns }} waiting to fold
+              </span>
+              <span class="flex items-center gap-1.5">
+                <span class="h-2 w-2 rounded-full bg-sky-600"></span>
+                {{ storyMap.verbatim.turns }} word for word
+              </span>
+            </div>
+            <div class="text-xs text-neutral-500">
+              <template v-if="memoryStatus.whole_story_fits">
+                Every stored turn still reaches the prompt. Folding does not delete anything —
+                the recap is written ahead of the day the window has to drop them.
+              </template>
+              <template v-else>
+                The window holds {{ memoryStatus.window_messages }} of
+                {{ memoryStatus.stored_messages }} stored messages. The rest reach the model
+                only through the recap.
+              </template>
+            </div>
           </div>
-          <p class="whitespace-pre-wrap">{{ store.sessionSummary.summary }}</p>
+
+          <div class="grid gap-1">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <span class="text-xs uppercase tracking-wide text-neutral-500">
+                Next fold
+              </span>
+              <span class="font-mono text-xs tabular-nums">
+                {{ memoryStatus.pending_tokens }} / {{ memoryStatus.fold_batch_tokens }} tokens
+                ({{ foldPercent }}%)
+              </span>
+            </div>
+            <div class="h-2 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+              <div
+                class="h-full rounded-full transition-[width] duration-300"
+                :class="
+                  memoryStatus.behind_turns > 0
+                    ? 'bg-amber-500'
+                    : foldPercent >= 100
+                      ? 'bg-emerald-600'
+                      : 'bg-sky-600'
+                "
+                :style="{ width: `${Math.min(100, foldPercent)}%` }"
+              ></div>
+            </div>
+            <div class="text-xs text-neutral-500">
+              {{ foldState }} · window budget {{ memoryStatus.budget_tokens }} tokens, fold line
+              at {{ memoryStatus.high_water_tokens }}
+            </div>
+          </div>
+
+          <div class="grid gap-1">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <span class="text-xs uppercase tracking-wide text-neutral-500">
+                Recap against its share
+              </span>
+              <span class="font-mono text-xs tabular-nums">
+                {{ memoryStatus.summary_tokens }} /
+                {{ memoryStatus.summary_budget_tokens }} tokens ({{ recapPercent }}%)
+              </span>
+            </div>
+            <div class="h-2 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+              <div
+                class="h-full rounded-full transition-[width] duration-300"
+                :class="recapPercent > 100 ? 'bg-amber-500' : 'bg-teal-600'"
+                :style="{ width: `${Math.min(100, recapPercent)}%` }"
+              ></div>
+            </div>
+            <div class="text-xs text-neutral-500">
+              Covers turn {{ memoryStatus.covers_through_turn }} of
+              {{ memoryStatus.turns_total }}. Over its share, the next pass condenses it.
+            </div>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2 border-t border-black/10 pt-3 dark:border-white/10">
+          <button
+            type="button"
+            class="rounded border border-black/10 px-2 py-1 text-xs dark:border-white/10 disabled:opacity-50"
+            :disabled="store.memoryBusy"
+            @click="onRunSummary"
+          >
+            {{ store.memoryBusy ? "Running…" : "Run summary now" }}
+          </button>
+          <span class="text-xs text-neutral-500">
+            Runs the same pass the background worker runs after a turn. It waits for the
+            model, so it can take a while.
+          </span>
+        </div>
+
+        <div v-if="store.sessionMemory?.summary" class="grid gap-1">
+          <div class="text-xs text-neutral-500">
+            Story so far — covers {{ store.sessionMemory.summary.covers_through_turn }} turn(s),
+            {{ store.sessionMemory.summary.tokens }} tokens, written by
+            {{ store.sessionMemory.summary.model_name }} on
+            {{ new Date(store.sessionMemory.summary.updated_at).toLocaleString() }}
+          </div>
+          <p class="whitespace-pre-wrap rounded border border-black/10 p-2 dark:border-white/10">
+            {{ store.sessionMemory.summary.summary }}
+          </p>
         </div>
         <p v-else class="text-xs text-neutral-500">
-          No recap yet. It is written in the background, once the story outgrows the window.
+          No recap yet. It is written in the background, once the story passes the fold line.
         </p>
       </div>
 
