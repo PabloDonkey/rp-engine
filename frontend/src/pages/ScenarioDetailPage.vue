@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 
 import ScenarioReadView from "@/components/scenario/ScenarioReadView.vue";
+import { retireMessage } from "@/components/scenario/retirePrompt";
 import { useAdminStore } from "@/stores/admin";
 
 const props = defineProps<{ scenarioId: string }>();
@@ -38,18 +39,8 @@ function onExport(): void {
   URL.revokeObjectURL(url);
 }
 
-// Names the live session count before it asks, because retiring is invisible to the people
-// mid-story: they keep playing, and only /play stops working.
-function retireMessage(): string {
-  const running =
-    sessionCount.value === 0
-      ? "No story is running it."
-      : `${sessionCount.value} running ${sessionCount.value === 1 ? "story keeps" : "stories keep"} playing.`;
-  return `Retire "${store.scenario?.name}"?\n\n${running}\n\nIt leaves the catalog and /play stops offering it. Nothing is deleted, and you can restore it.`;
-}
-
 async function onRetire(): Promise<void> {
-  if (!window.confirm(retireMessage())) return;
+  if (!window.confirm(retireMessage(store.scenario?.name ?? "", sessionCount.value))) return;
   await runLifecycle(() => store.retireScenario(props.scenarioId));
 }
 

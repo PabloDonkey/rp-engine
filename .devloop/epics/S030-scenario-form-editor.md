@@ -1,6 +1,6 @@
 # S030 · Scenario form editor — read and edit a scenario without JSON
 
-**Status:** 🟢 In progress — steps 1-7 of 9 done.
+**Status:** 🟢 In progress — steps 1-8 of 9 done.
 **Depends on:** **S010** — admin scenario catalog management. This epic replaces the raw-JSON
 editor S010 shipped as its own minimum bar.
 **Design source:** [Scenario editing without JSON](https://claude.ai/code/artifact/fda5b259-2e76-4491-8346-79923b0d880d)
@@ -166,11 +166,11 @@ any field without a control is a field the save wipes. That covers `world.metada
 
 ### 8. List page
 
-- [ ] Import button. Pick one or more `.json` files, post each to `POST /admin/scenarios/import`,
+- [x] Import button. Pick one or more `.json` files, post each to `POST /admin/scenarios/import`,
       then show one result line per file.
-- [ ] A "show retired" checkbox, off by default. Retired rows render dimmed, with a Restore button.
-- [ ] The live session count on each row.
-- [ ] The retire dialog names the live session count before it asks.
+- [x] A "show retired" checkbox, off by default. Retired rows render dimmed, with a Restore button.
+- [x] The live session count on each row.
+- [x] The retire dialog names the live session count before it asks.
 
 ### 9. Docs
 
