@@ -67,7 +67,7 @@ the scenario that contains it (see `ScenarioDefinition` and `ScenarioVisibility`
 * `description` (`str`) - high-level identity description.
 * `personality` (`str`) - behavior profile.
 * `greeting` (`str`) - optional opening text.
-* `metadata` (`dict[str, str]`) - optional structured tags.
+* `metadata` (`Metadata`) - optional structured tags. See **Metadata values**.
 
 Character static definition is stored separately from session memory.
 
@@ -153,7 +153,7 @@ Roleplay environments are represented as reusable `World` entities.
 * `name` (`str`) - display name.
 * `description` (`str`) - environment summary.
 * `rules` (`tuple[str, ...]`) - optional world constraints.
-* `metadata` (`dict[str, str]`) - optional world tags.
+* `metadata` (`Metadata`) - optional world tags. See **Metadata values**.
 
 ## Scenario Overview
 
@@ -200,12 +200,59 @@ no runtime state.
 * `visibility` (`ScenarioVisibility`) - `PUBLIC`, `UNLISTED`, or `RESTRICTED`.
 * `allowed_group_chat_ids` (`tuple[str, ...]`) - Telegram chat ids allowed to see/play a
   `RESTRICTED` scenario.
-* `metadata` (`dict[str, str]`) - optional structured tags.
+* `metadata` (`Metadata`) - optional structured tags. See **Metadata values**.
+* `deleted_at` (`datetime | None`) - retirement stamp. `None` means the scenario is
+  active. See **Retiring a scenario**.
 
 Characters are optional. A scenario may define only a world and rules (freeform), or
 bind concrete characters to declared roles (cast), or anything in between. Roles are cast
 to concrete characters directly via a session's `active_participants`; there is no
 abstract role type.
+
+## Metadata values
+
+`core/metadata.py` holds one alias for the whole definition side of the domain:
+
+```python
+MetadataValue = str | list[str]
+Metadata = dict[str, MetadataValue]
+```
+
+A value is one string, or a list of strings. `ScenarioDefinition`, `World`, `Character`,
+`StoryGraph` and `StoryBeat` all use it. Curated scenarios already stored a `tags` array,
+so a plain string map was never the real shape.
+
+Session metadata, message metadata and LLM response metadata stay `dict[str, str]`. The
+engine writes those itself and reads them back as strings. One such read is the switch
+context in `core/conversation/builder.py`.
+
+`metadata_from_payload` in `infrastructure/scenario_serialization.py` normalizes what a
+stored or imported payload holds. A string stays a string. A list of strings stays a list.
+A scalar becomes text, item by item for a list. A null drops its key. A nested object or a
+nested list raises, which fails the whole payload. `docs/SCENARIOS.md` has the full table.
+
+Nothing in the engine reads scenario, world or character metadata while a turn runs.
+
+## Retiring a scenario
+
+`ScenarioDefinition.deleted_at` is a retirement stamp, and `is_active` is `deleted_at is
+None`. A retired scenario keeps its row.
+
+* `/play <id>` refuses it, with the same reply as an unknown id.
+* `list_all()` leaves it out, unless the caller passes `include_inactive=True`.
+* `get_by_id()` still resolves it. Stories already running it keep playing, and an export
+  still works.
+
+Two rules keep this correct.
+
+1. **`save()` never writes `deleted_at`.** Only `delete()` and `restore()` do. The boot
+   import saves every catalog file at every start, so a save that carried the stamp would
+   un-retire a curated scenario at the next restart.
+2. **The transfer payload leaves `deleted_at` out.** A file describes a scenario, not that
+   scenario's life inside one database.
+
+`ScenarioSession` carries the same stamp, for a different reason. There it marks a session
+superseded by `/restart` or `/clear` (ADR-025).
 
 ## StoryGraph
 
@@ -217,14 +264,14 @@ concern.
 
 * `beats` (`dict[str, StoryBeat]`) - narrative checkpoints keyed by beat id.
 * `entry_beat_id` (`str | None`) - starting beat.
-* `metadata` (`dict[str, str]`) - optional tags.
+* `metadata` (`Metadata`) - optional tags.
 
 `StoryBeat` fields:
 
 * `id` (`str`) - beat identifier.
 * `description` (`str`) - what happens at this beat.
 * `transitions` (`dict[str, str]`) - named condition -> next beat id.
-* `metadata` (`dict[str, str]`) - optional tags.
+* `metadata` (`Metadata`) - optional tags.
 
 A scenario with no narrative structure simply omits the story graph.
 

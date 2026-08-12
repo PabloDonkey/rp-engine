@@ -127,14 +127,25 @@ Columns:
 - initial_context (TEXT)
 - visibility (TEXT — PUBLIC, UNLISTED, RESTRICTED)
 - allowed_group_chat_ids (JSONB — list of Telegram chat ids)
-- metadata (JSONB)
+- metadata (JSONB — {key: string or list of strings}; see `DOMAIN_MODEL.md`)
 - created_at (timestamptz)
 - updated_at (timestamptz)
+- deleted_at (timestamptz, NULL — **null = the scenario is active**; set when it is
+  retired. Added by `20260811_0013` (S030))
 
 Nested structures (world, characters, story graph) are stored as JSONB
 rather than normalized into separate tables. The same serialization
 (`infrastructure/scenario_serialization.py`) is shared with `ScenarioTransferService`'s
 JSON import/export, guaranteeing byte-for-byte round-trips (see ADR-024).
+
+`deleted_at` is the one column that serialization does **not** carry. The store stamps it
+after it builds the domain object, and an export leaves it out. A transfer file describes a
+scenario, not that scenario's life inside one database.
+
+Only `delete()` and `restore()` write this column. `save()` never touches it, and the
+insert statement leaves it out of both the values and the conflict update. The reason is
+the boot import: it saves every catalog file at every start, so a save that carried the
+stamp would un-retire a curated scenario at the next restart.
 
 ### scenario_sessions
 

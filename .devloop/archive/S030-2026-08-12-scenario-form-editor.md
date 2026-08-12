@@ -1,6 +1,26 @@
+> 🗄️ **ARCHIVED — COMPLETED 2026-08-12.** Frozen; do not edit. Kept as evolution history.
+> **Result:** a scenario is now a page you read and a form you fill in. The detail page shows one
+> card per part, in the order `ConversationBuilder` assembles the prompt. The edit page is a
+> sectioned form, and the raw-JSON textarea is gone. JSON went back to the two edges it belongs
+> to: an Import button that takes files, and an Export button that writes one. `POST
+> /admin/scenarios/import` had existed since S010 with nothing calling it.
+> **Two problems the review turned up are fixed.** The metadata type was a lie —
+> `ScenarioDefinition`, `World`, `Character`, `StoryGraph` and `StoryBeat` all declared
+> `dict[str, str]` while real scenarios stored a `tags` array. The alias is now
+> `str | list[str]`, in one place, with a normalizer that coerces a scalar and refuses a nested
+> shape. Second, a scenario could not be retired. Soft delete landed with the invariant that
+> makes it safe: **`save()` never writes `deleted_at`**, because the boot import saves every
+> catalog file at every start and would otherwise resurrect what you retired.
+> **The frontend got its first test runner.** Vitest 4 in browser mode, Playwright, headless
+> Chromium. 59 tests. Writing them found two real bugs: `MetadataField` deleted the row you were
+> typing, because its model watcher rebuilt from its own echo, and `ScenarioForm` used
+> `structuredClone`, which throws on a Vue reactive proxy.
+> **⚠️ Four live checks are open** — the browser, Telegram, a restart, and a file round trip.
+> Nothing below was run against a real client.
+
 # S030 · Scenario form editor — read and edit a scenario without JSON
 
-**Status:** 🟢 In progress — steps 1-8 of 9 done.
+**Status:** ✅ COMPLETE — all 9 steps done. Four live checks open, listed under Verification.
 **Depends on:** **S010** — admin scenario catalog management. This epic replaces the raw-JSON
 editor S010 shipped as its own minimum bar.
 **Design source:** [Scenario editing without JSON](https://claude.ai/code/artifact/fda5b259-2e76-4491-8346-79923b0d880d)
@@ -174,10 +194,10 @@ any field without a control is a field the save wipes. That covers `world.metada
 
 ### 9. Docs
 
-- [ ] `docs/SCENARIOS.md`: a section on editing in the panel, the retire rules, and the metadata
+- [x] `docs/SCENARIOS.md`: a section on editing in the panel, the retire rules, and the metadata
       value model. Keep the JSON reference as the transfer format.
-- [ ] `docs/DATABASE_MODEL.md`: the new column.
-- [ ] `docs/DOMAIN_MODEL.md`: the metadata value model and `deleted_at`.
+- [x] `docs/DATABASE_MODEL.md`: the new column.
+- [x] `docs/DOMAIN_MODEL.md`: the metadata value model and `deleted_at`.
 
 ## Order of work
 
@@ -197,14 +217,19 @@ Steps 1 to 4 ship without touching the panel. Step 6 improves the panel on its o
 
 ## Verification
 
-- [ ] `uv run pytest` green, `uv run mypy .` clean, `uv run ruff check .` clean.
-- [ ] `npm run test` and `vue-tsc` green, from step 4 on.
-- [ ] `alembic upgrade head` and `alembic downgrade` both verified against a real Postgres.
+- [x] `uv run pytest` green, `uv run mypy .` clean, `uv run ruff check .` clean.
+- [x] `npm run test` and `vue-tsc` green, from step 4 on.
+- [x] `alembic upgrade head` and `alembic downgrade` both verified against a real Postgres.
+**⚠️ The four live checks below are open.** Everything above ran and passed. Nothing below
+has been run against a real browser, a real Telegram client, or a real restart.
+
 - [ ] Live check in a browser: create a scenario through the form, play it over Telegram.
 - [ ] Live check: retire a scenario with a story running. `/play` refuses it. The running story
       finishes.
 - [ ] Live check: restart the app. The retired curated scenario stays retired.
 - [ ] Round-trip check: export a scenario with a `tags` array, import the file, compare.
+      *(The automated tests cover the serializer round trip and the import button. What is open
+      is the whole path through a browser and a file on disk.)*
 
 ## Tests the epic adds
 

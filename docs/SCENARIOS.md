@@ -55,7 +55,7 @@ domain model (see `DOMAIN_MODEL.md`).
 | `initial_context` | string                   | no       | The opening narration. Sent to the player when the playthrough starts. |
 | `visibility`      | string                   | no       | `PUBLIC` (default), `UNLISTED`, or `RESTRICTED`. See **Access** below. |
 | `allowed_group_chat_ids` | array of strings  | no       | Telegram chat ids allowed to see/play a `RESTRICTED` scenario. Ignored otherwise. |
-| `metadata`        | object (string → string) | no       | Free-form tags (e.g. `{"genre": "heist"}`). |
+| `metadata`        | object (string → string or list of strings) | no | Free-form tags. A value is one string or a list of strings. See **Metadata values** below. |
 
 Omitted optional fields default to empty (`{}` / `[]` / `null` / `""`).
 
@@ -137,6 +137,67 @@ Text fields may use these placeholders, resolved at prompt-build time:
 * `{{char}}` — the active character's name
 * `{{world}}` — the world's name
 
+### Metadata values
+
+`metadata` exists on the scenario, the world, each character, and the story graph. It never
+reaches the prompt. Use it for your own notes.
+
+A value is **one string, or a list of strings**. Nothing deeper.
+
+| You write | The engine stores | Why |
+| --- | --- | --- |
+| `"genre": "heist"` | `"heist"` | A string stays a string. |
+| `"tags": ["noir", "crime"]` | `["noir", "crime"]` | A list of strings stays a list. |
+| `"year": 1987` | `"1987"` | A number becomes text. |
+| `"tags": [1987, "noir"]` | `["1987", "noir"]` | Each item becomes text. |
+| `"note": null` | the key is dropped | A null carries no text to keep. |
+| `"credits": {"writer": "someone"}` | the **whole file is skipped** | A nested object has no meaning here. |
+
+The engine coerces a number rather than refusing the file. Losing a whole scenario over one
+unquoted number in a hand-written file is a poor trade. A nested object is different: there
+is no way to guess what it meant, and the admin panel has no control that can edit it.
+
+---
+
+## Editing in the admin panel
+
+The admin panel is where you author and edit a scenario after it reaches Postgres. Since
+S030 it is a form, not a JSON box.
+
+* **Read view.** The scenario detail page shows one card per part, in the order the prompt
+  is assembled: description, opening scene, world, characters, rules. Access and metadata
+  sit at the bottom, because they never reach the prompt. The raw JSON is still there,
+  collapsed.
+* **Edit form.** The same sections, as fields. The world is a toggle. Characters are role
+  cards. Rules keep their order, and you can move a rule up or down.
+* **The `id` is locked when you edit.** Changing an id would orphan every story already
+  running that scenario. To rename a scenario, change its `name`.
+* **`owner_id` is not on screen.** The panel always writes the system owner.
+* **Import.** The scenario list has an Import button. Pick one or more exported `.json`
+  files. Each file gets its own result line, and one bad file does not stop the rest.
+* **Export.** The detail page has an Export JSON button. The file it writes is a valid
+  import file.
+
+### Retiring a scenario
+
+Retire takes a scenario out of the catalog without deleting anything.
+
+| What happens | What does not happen |
+| --- | --- |
+| It leaves `/scenarios`. | The row stays in the database. |
+| `/play <id>` refuses it, with the same reply as an unknown id. | Stories already running it keep playing. |
+| It leaves the panel's scenario list. | The transcript, the session and the definition all stay readable. |
+
+Turn on **Show retired** to see retired scenarios again. Each one has a Restore button.
+
+Two rules make this safe.
+
+1. **A save never changes the retired state.** Only Retire and Restore do. The engine
+   imports every catalog file at every boot, and each import is a save. Without this rule,
+   a retired curated scenario would come back at the next restart.
+2. **An export leaves the retired state out.** A transfer file describes a scenario. It
+   does not describe that scenario's life inside one database.
+
 ---
 
 ## Full example
@@ -209,3 +270,5 @@ definition is a shared blueprint, but every playthrough has its own session and 
   file with the same `id` overwrites whatever is currently in Postgres.
 * Existing playthroughs pick up an updated definition on their next reply — sessions only
   store the `scenario_definition_id`, not a copy of the definition.
+* Retire a scenario instead of deleting it. Retiring is reversible, and it lets the people
+  who are mid-story finish.
