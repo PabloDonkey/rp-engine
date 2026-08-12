@@ -1,22 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { onBeforeRouteLeave, useRouter } from "vue-router";
 
-import { ScenarioDefinitionSchema, emptyScenario } from "@/api/scenarioSchema";
+import ScenarioForm from "@/components/scenario/ScenarioForm.vue";
+import { emptyScenario } from "@/api/scenarioSchema";
+import type { ScenarioDefinition } from "@/api/scenarioSchema";
 import { useAdminStore } from "@/stores/admin";
+
+const LEAVE_WARNING = "This scenario has unsaved changes. Leave anyway?";
 
 const props = defineProps<{ scenarioId?: string }>();
 const store = useAdminStore();
 const router = useRouter();
 
 const isEdit = computed(() => !!props.scenarioId);
-const text = ref(JSON.stringify(emptyScenario(), null, 2));
+const form = ref<InstanceType<typeof ScenarioForm> | null>(null);
+const initial = ref<ScenarioDefinition>(emptyScenario());
+const dirty = ref(false);
 const submitError = ref<string | null>(null);
 const submitting = ref(false);
 
 function load(): void {
   if (props.scenarioId) {
     store.fetchScenario(props.scenarioId);
+  } else {
+    initial.value = emptyScenario();
   }
 }
 
@@ -25,37 +33,37 @@ watch(
   () => store.scenario,
   (scenario) => {
     if (isEdit.value && scenario) {
-      text.value = JSON.stringify(scenario, null, 2);
+      initial.value = scenario;
     }
   },
 );
 
-async function onSubmit(): Promise<void> {
+// The browser's own guard, for a tab close or a reload. The router guard below covers
+// moving inside the panel; neither can see the other's navigation.
+function onBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!dirty.value) return;
+  event.preventDefault();
+}
+
+onMounted(() => window.addEventListener("beforeunload", onBeforeUnload));
+onBeforeUnmount(() => window.removeEventListener("beforeunload", onBeforeUnload));
+
+onBeforeRouteLeave(() => {
+  if (!dirty.value) return true;
+  return window.confirm(LEAVE_WARNING);
+});
+
+async function onSubmit(payload: ScenarioDefinition): Promise<void> {
   submitError.value = null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text.value);
-  } catch (error) {
-    submitError.value = `Invalid JSON: ${error instanceof Error ? error.message : String(error)}`;
-    return;
-  }
-
-  // Checked here as well as on the server, so a missing field is named before the save
-  // leaves the browser. The server still decides: it answers 422 for anything this misses.
-  const checked = ScenarioDefinitionSchema.safeParse(parsed);
-  if (!checked.success) {
-    submitError.value = checked.error.issues
-      .map((issue) => `${issue.path.join(".") || "payload"}: ${issue.message}`)
-      .join("\n");
-    return;
-  }
-  const payload = checked.data;
-
   submitting.value = true;
   try {
     const saved = props.scenarioId
       ? await store.updateScenario(props.scenarioId, payload)
       : await store.createScenario(payload);
+    // Cleared before the route change, or the leave guard stops the redirect that follows
+    // a successful save.
+    form.value?.markSaved();
+    dirty.value = false;
     router.push({ name: "scenario-detail", params: { scenarioId: saved.id } });
   } catch (error) {
     submitError.value = error instanceof Error ? error.message : String(error);
@@ -74,37 +82,26 @@ async function onSubmit(): Promise<void> {
       &larr; {{ isEdit ? "Scenario" : "Scenarios" }}
     </RouterLink>
 
-    <h1 class="mb-3 mt-1 text-xl font-semibold">
+    <h1 class="mb-4 mt-1 text-xl font-semibold">
       {{ isEdit ? "Edit Scenario" : "New Scenario" }}
     </h1>
 
-    <p v-if="store.scenarioLoading" class="text-sm text-neutral-500">Loading…</p>
+    <p v-if="isEdit && store.scenarioLoading" class="text-sm text-neutral-500">Loading…</p>
+    <p v-else-if="isEdit && store.scenarioError" class="text-sm text-red-600 dark:text-red-400">
+      {{ store.scenarioError }}
+    </p>
     <template v-else>
-      <p class="mb-2 text-xs text-neutral-500">
-        Raw scenario JSON — see docs/SCENARIOS.md for the field reference. Saved through the same
-        validation the curated catalog uses, so an invalid payload is rejected, not persisted.
-      </p>
-      <textarea
-        v-model="text"
-        rows="24"
-        spellcheck="false"
-        class="w-full rounded-lg border border-black/10 bg-white p-3 font-mono text-xs dark:border-white/10 dark:bg-neutral-900"
-      />
-
-      <p v-if="submitError" class="mt-2 text-sm text-red-600 dark:text-red-400">
+      <p v-if="submitError" class="mb-3 whitespace-pre-wrap text-sm text-red-600 dark:text-red-400">
         {{ submitError }}
       </p>
-
-      <div class="mt-3 flex gap-2">
-        <button
-          type="button"
-          class="rounded-md border border-black/10 bg-black px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:border-white/10 dark:bg-white dark:text-black"
-          :disabled="submitting"
-          @click="onSubmit"
-        >
-          {{ submitting ? "Saving…" : "Save" }}
-        </button>
-      </div>
+      <ScenarioForm
+        ref="form"
+        :initial="initial"
+        :mode="isEdit ? 'edit' : 'create'"
+        :busy="submitting"
+        @submit="onSubmit"
+        @dirty="dirty = $event"
+      />
     </template>
   </div>
 </template>

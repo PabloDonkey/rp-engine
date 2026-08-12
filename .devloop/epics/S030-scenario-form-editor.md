@@ -1,6 +1,6 @@
 # S030 · Scenario form editor — read and edit a scenario without JSON
 
-**Status:** 🟢 In progress — steps 1-6 of 9 done.
+**Status:** 🟢 In progress — steps 1-7 of 9 done.
 **Depends on:** **S010** — admin scenario catalog management. This epic replaces the raw-JSON
 editor S010 shipped as its own minimum bar.
 **Design source:** [Scenario editing without JSON](https://claude.ai/code/artifact/fda5b259-2e76-4491-8346-79923b0d880d)
@@ -142,23 +142,23 @@ and metadata sit at the bottom, because they never reach the prompt.
 
 ### 7. The form
 
-- [ ] `frontend/src/components/form/`: `TextField`, `TextAreaField`, `StringListField`,
+- [x] `frontend/src/components/form/`: `TextField`, `TextAreaField`, `StringListField`,
       `MetadataField`, `TagInput`, `OptionCards`, `FormSection`. This creates the first
       `components/` directory in the project.
-- [ ] `frontend/src/components/scenario/`: `ScenarioForm`, `WorldFields`, `CharacterCard`,
+- [x] `frontend/src/components/scenario/`: `ScenarioForm`, `WorldFields`, `CharacterCard`,
       `ScenarioReadView`.
-- [ ] `id` is locked when editing, and slug-checked when creating.
-- [ ] `owner_id` leaves the screen. The form always writes the system owner.
-- [ ] `initial_context` gets chips that insert `{{user}}`, `{{char}}` and `{{world}}`.
-- [ ] World is a toggle plus a field group. Off writes `null`, not an object of empty strings.
-- [ ] Characters are repeating role cards. Role keys must be unique. Zero cards is valid and means
+- [x] `id` is locked when editing, and slug-checked when creating.
+- [x] `owner_id` leaves the screen. The form always writes the system owner.
+- [x] `initial_context` gets chips that insert `{{user}}`, `{{char}}` and `{{world}}`.
+- [x] World is a toggle plus a field group. Off writes `null`, not an object of empty strings.
+- [x] Characters are repeating role cards. Role keys must be unique. Zero cards is valid and means
       a freeform scenario.
-- [ ] Rules use the list editor, with reorder. Order matters, so the control shows it.
-- [ ] Visibility is three option cards, each stating its effect. RESTRICTED reveals the chat id list.
-- [ ] Metadata rows carry a text or list switch. List draws tag chips.
-- [ ] The story graph stays raw JSON under "Advanced". It is inert data and no scenario uses it. A
+- [x] Rules use the list editor, with reorder. Order matters, so the control shows it.
+- [x] Visibility is three option cards, each stating its effect. RESTRICTED reveals the chat id list.
+- [x] Metadata rows carry a text or list switch. List draws tag chips.
+- [x] The story graph stays raw JSON under "Advanced". It is inert data and no scenario uses it. A
       beat editor is not worth building now.
-- [ ] A leave guard for unsaved changes.
+- [x] A leave guard for unsaved changes.
 
 **The form carries every field, on screen or not.** The form builds the whole payload on save, so
 any field without a control is a field the save wipes. That covers `world.metadata`,
