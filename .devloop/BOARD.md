@@ -15,7 +15,7 @@ _(nothing queued)_
 
 ## 🟢 In Progress
 
-_(nothing in flight)_
+### **S030 · Scenario form editor — read and edit a scenario without JSON** — the panel's scenario pages are a `<pre>` dump and a raw-JSON `<textarea>` (S010's own MVP bar). Detail becomes a structured read view, edit becomes one sectioned form in **prompt order** (description → opening → world → character → rules, the order `ConversationBuilder` assembles), and JSON drops back to the two edges: import a file, export a file. `POST /admin/scenarios/import` already exists and **nothing calls it** — the import button closes that gap. Two problems the review turned up, both now in scope: (1) **the metadata type is a lie** — `ScenarioDefinition`/`World`/`Character`/`StoryBeat` declare `dict[str, str]`, real scenarios hold a `tags` array, and it survives only because the loader never checks and the column is JSONB (mypy cannot see it, the payload is `Any`); the alias becomes `str | list[str]`, with a normalizer that coerces scalars and rejects nested shapes. (2) **scenarios cannot be retired** — soft delete lands with the invariant **`save()` never writes `deleted_at`**, because the boot import calls `save()` for every catalog file at every start and would otherwise resurrect what you deleted. `/play` refuses a retired scenario, running stories finish. Also: live session counts, a "show retired" checkbox off by default, and **Vitest in browser mode** (Playwright + Chromium — the frontend has no test runner today). ~3 days, 9 steps, the first four ship without touching the panel. → [epic](epics/S030-scenario-form-editor.md) · [design](https://claude.ai/code/artifact/fda5b259-2e76-4491-8346-79923b0d880d) · [S010](archive/S010-2026-07-26-admin-scenario-catalog-mgmt.md)
 
 ## ✅ Done (recent)
 
