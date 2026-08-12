@@ -1,6 +1,6 @@
 # S030 · Scenario form editor — read and edit a scenario without JSON
 
-**Status:** 🟢 In progress — steps 1-5 of 9 done.
+**Status:** 🟢 In progress — steps 1-6 of 9 done.
 **Depends on:** **S010** — admin scenario catalog management. This epic replaces the raw-JSON
 editor S010 shipped as its own minimum bar.
 **Design source:** [Scenario editing without JSON](https://claude.ai/code/artifact/fda5b259-2e76-4491-8346-79923b0d880d)
@@ -129,12 +129,12 @@ Playwright provider into its own package, `@vitest/browser-playwright`, passed a
 
 ### 6. Read view
 
-- [ ] `ScenarioDetailPage.vue`: one card per part, in prompt order. Overview, opening scene, world,
+- [x] `ScenarioDetailPage.vue`: one card per part, in prompt order. Overview, opening scene, world,
       characters, rules, access, metadata, story graph.
-- [ ] Metadata renders a list value as chips and a string value as text.
-- [ ] Header: the id, the visibility, the live session count, and a retired banner when it applies.
-- [ ] Buttons: Retire or Restore, Export JSON, Edit.
-- [ ] Keep a collapsed raw-JSON block, read only.
+- [x] Metadata renders a list value as chips and a string value as text.
+- [x] Header: the id, the visibility, the live session count, and a retired banner when it applies.
+- [x] Buttons: Retire or Restore, Export JSON, Edit.
+- [x] Keep a collapsed raw-JSON block, read only.
 
 **Section order is not a style choice.** `ConversationBuilder` assembles the prompt as description,
 then initial context, then world, then character, then rules. The page follows that order. Access

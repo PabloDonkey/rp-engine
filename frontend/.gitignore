@@ -3,3 +3,9 @@ dist
 dist-ssr
 *.local
 .vite
+
+# Vitest browser mode writes a screenshot next to a test when it fails.
+__screenshots__
+
+# Vitest browser mode drops run attachments here.
+.vitest-attachments

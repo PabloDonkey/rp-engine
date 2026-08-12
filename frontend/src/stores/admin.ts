@@ -58,6 +58,9 @@ export const useAdminStore = defineStore("admin", {
     scenariosIncludeInactive: false,
 
     scenario: null as ScenarioPayload | null,
+    // The list row for the open scenario. It carries the two facts the transfer payload
+    // deliberately leaves out: whether the scenario is retired, and how many stories run it.
+    scenarioSummary: null as ScenarioSummary | null,
     scenarioLoading: false,
     scenarioError: null as string | null,
   }),
@@ -207,7 +210,16 @@ export const useAdminStore = defineStore("admin", {
       this.scenarioLoading = true;
       this.scenarioError = null;
       try {
-        this.scenario = await api.getScenario(scenarioId);
+        // Two reads: the definition itself, and the list row for the lifecycle and the live
+        // session count. `deleted_at` is not in the definition payload on purpose — that is
+        // a transfer format, and it describes a scenario, not its life in one database.
+        // Asking for retired rows too, or a retired scenario would have no row at all.
+        const [scenario, rows] = await Promise.all([
+          api.getScenario(scenarioId),
+          api.listScenarios(true),
+        ]);
+        this.scenario = scenario;
+        this.scenarioSummary = rows.find((row) => row.id === scenarioId) ?? null;
       } catch (error) {
         this.scenarioError = error instanceof Error ? error.message : String(error);
       } finally {
@@ -243,12 +255,21 @@ export const useAdminStore = defineStore("admin", {
 
     async retireScenario(scenarioId: string): Promise<void> {
       await api.retireScenario(scenarioId);
-      await this.fetchScenarios(this.scenariosIncludeInactive);
+      await this.refreshAfterLifecycleChange(scenarioId);
     },
 
     async restoreScenario(scenarioId: string): Promise<void> {
       await api.restoreScenario(scenarioId);
+      await this.refreshAfterLifecycleChange(scenarioId);
+    },
+
+    // Retire and restore answer 204, so the new state has to be read back. Both the list
+    // and the open detail page show the lifecycle, so both are refreshed.
+    async refreshAfterLifecycleChange(scenarioId: string): Promise<void> {
       await this.fetchScenarios(this.scenariosIncludeInactive);
+      if (this.scenario?.id === scenarioId) {
+        await this.fetchScenario(scenarioId);
+      }
     },
   },
 });
