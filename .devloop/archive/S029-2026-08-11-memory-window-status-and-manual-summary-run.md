@@ -9,6 +9,13 @@
 > new turn pushed one more turn past it, so the worker called the model on nearly every turn.
 > Layer 01 now folds in **batches** (`RP_ENGINE_MEMORY_SUMMARY_MIN_FOLD_SHARE`, 10% of the
 > budget), and the panel shows the story split three ways instead of a gauge that never moves.
+> **A third problem surfaced on the second live run, and it was the worst of the three:** the
+> summarizer's output cap was 750 tokens, and the loaded reasoning model spent all of it thinking,
+> so every pass got an empty reply and wrote nothing. Layer 01 had been silently doing nothing on
+> that model since S023. The cap is now a real setting that covers the thinking as well as the
+> recap, an empty reply is retried once at double the cap, and a pass reports what it did so the
+> panel can say "the model returned no recap" instead of looking successful. **Verified live:**
+> the same session that wrote nothing now folds turns 36 to 40 into a 233-token recap.
 > **Follow-up to S023.** No new table, no migration, no change to the turn path.
 
 # S029 · Memory window status, and running the summary by hand
@@ -97,6 +104,40 @@ Fixed by:
 3. **A next-fold gauge that fills and empties** — waiting tokens against the batch — which is the
    behavior the window bar wrongly implied.
 
+## The second live run: the pass was writing nothing at all
+
+Pablo pressed the button again and reported the gauge still full. Green means turns *are*
+waiting, and a fold empties the gauge, so the pass had to be finding work and then writing
+nothing. Running the same pass against his session and model showed why in one line of log:
+
+```
+LmStudio.generate with config { "maxTokens": 750, ... }
+LLM response content:            ← empty
+WARNING - The summarizer returned nothing; the recap is unchanged.
+```
+
+The cap came from the word target (`target_words * 3`). That covers the recap and nothing else,
+but a reasoning model writes its thinking into the same budget, so the budget was gone before the
+recap started. This is the failure S027 already fixed once on the story path, repeated in the
+summarizer. On that model, layer 01 had been writing nothing since S023 — the recap Pablo saw
+covering 11 turns was the one pass that happened to fit.
+
+Fixed by:
+
+1. **A real output cap.** `RP_ENGINE_MEMORY_SUMMARY_MAX_TOKENS`, 6144 by default, sized for the
+   thinking plus the recap. It is no longer derived from the word target, because the word target
+   describes the recap alone. The default is measured: on the loaded model, folding five turns
+   returned nothing at 3072 and wrote a 233-token recap at 6144. A cap costs nothing when the
+   model stops early, so it is set where the first attempt usually succeeds.
+2. **One retry at double the cap** when the reply carries no text. How much a model spends on
+   reasoning varies with the input, so no single number is safe. The call is in the background,
+   so the retry costs no player time.
+3. **The pass reports what it did.** `RollingSummarySource.fold` returns a `FoldOutcome`
+   (`folded`, `condensed`, `waiting_for_batch`, `up_to_date`, `model_wrote_nothing`,
+   `nothing_to_do`), the panel prints it under the button, and `observe` still discards it.
+   A pass that wrote nothing must never look like one that worked. That is what cost two rounds
+   of "is the button broken?".
+
 ## Verification
 
 - [x] Unit, the status (6 cases): a story with nothing waiting reports zeros for the batch and
@@ -112,8 +153,19 @@ Fixed by:
       `None` on both paths.
 - [x] Unit, the endpoints: the status is served, a toggle returns the refreshed panel, the
       manual run reports the recap, and both paths report 404 for an unknown session.
+- [x] Unit, the summarizer (7 cases, a new file): the configured cap is used; **an empty reply is
+      retried once at double the cap**; two empty replies give up instead of looping; nothing to
+      fold asks the model nothing; the recap comes back as one block of plain text.
+- [x] Unit, the outcomes (6 cases): every `FoldOutcome` is produced by the state that means it,
+      including `model_wrote_nothing` with nothing saved.
 - [x] `uv run pytest` green (764 passed) · `uv run mypy src` clean · `uv run ruff check .`
       clean · the panel type-checks and builds.
-- [x] **Live in the panel, first run (2026-08-11):** found the two problems above.
+- [x] **Live in the panel, first run (2026-08-11):** found the gauge and the per-turn folding.
+- [x] **Live against the real model and database (2026-08-11):** reproduced the empty reply on
+      session `1fb0ea29` (77 turns, 2320 tokens waiting against a 2293 batch), which is what
+      identified the cap. **Then verified the fix end to end on the same session:** the first
+      attempt still came back empty at 3072, the retry at 6144 wrote a 233-token recap, and the
+      watermark moved from turn 35 to turn 40. Two attempts took 331 seconds, which is why the
+      default cap is now 6144 rather than 3072 — one attempt instead of two.
 - [ ] **Live in the panel, second run: open.** Read the story map on the same 41-turn session,
       play a few turns, and watch the next-fold gauge fill and empty instead of sitting at full.

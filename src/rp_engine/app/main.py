@@ -165,7 +165,10 @@ def build_container(settings: Settings) -> AppContainer:
     rolling_summary_source = RollingSummarySource(
         summary_store=session_summary_store,
         conversation_store=conversation_store,
-        summarizer=LMStudioConversationSummarizer(llm_provider=llm_provider),
+        summarizer=LMStudioConversationSummarizer(
+            llm_provider=llm_provider,
+            max_tokens=settings.memory_summary_max_tokens,
+        ),
         token_counter=lmstudio_token_counter,
         model_name=settings.lmstudio_model,
         high_water_share=settings.memory_summary_high_water_share,

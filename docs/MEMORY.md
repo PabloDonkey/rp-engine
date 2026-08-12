@@ -144,6 +144,15 @@ below the slack between the fold line and the window edge, which is 25% of the b
 default marks. Waiting turns therefore sit inside that slack, where the window still replays them
 word for word, so nothing is ever lost while a batch fills.
 
+**The summarizer needs room to think.** The output cap
+(`RP_ENGINE_MEMORY_SUMMARY_MAX_TOKENS`, 6144) has to cover the reasoning the model writes before
+the recap, because both come out of one budget. A cap sized for the recap alone is spent on
+thinking, the reply arrives empty, and the recap silently stops updating — the same failure S027
+fixed on the story path. An empty reply is retried once at double the cap, because how much a
+model spends on reasoning varies with the input. The default is measured rather than guessed:
+on `gemma-4-26b-a4b-it-heretic`, folding five turns returned nothing at 3072 tokens and wrote a
+233-token recap at 6144.
+
 **Folding does not shrink the window.** A folded turn stays in the transcript and keeps its place
 in the prompt until the window can no longer hold it. The recap is written ahead of that day, not
 in exchange for it. This is why the panel shows the batch filling and emptying rather than the
@@ -157,7 +166,8 @@ The panel reads those same marks through `RollingSummarySource.status`, which is
 twin of the first half of `observe`. The panel and the worker therefore cannot disagree about
 what is due. It reports the story as three parts that add up to the whole of it: the turns the
 recap covers, the turns waiting for the next batch, and the turns the prompt still replays word
-for word.
+for word. A pass an operator asks for also reports what it did, so a pass that wrote nothing
+never looks like one that worked.
 
 **The alarm.** Before folding, the worker compares what the recap covered against what the window
 could hold on the turn that just ran. If turns fell outside the window that the recap had not

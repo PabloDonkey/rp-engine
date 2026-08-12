@@ -71,6 +71,8 @@ const SessionMemorySchema = z.object({
   settings: SessionMemoryStateSchema,
   status: MemoryStatusSchema,
   summary: SessionSummarySchema.nullable(),
+  // What the pass did, when the panel asked for one. Null on a plain read.
+  last_pass: z.string().nullable(),
 });
 
 const AdminMessageSchema = z.object({

@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from uuid import UUID
 
 from rp_engine.core.conversation.message import TURN_METADATA_KEY, ConversationMessage
@@ -8,7 +8,11 @@ from rp_engine.core.memory.context_budget import ContextBudget
 from rp_engine.core.memory.fragment import ToggleableMemorySystemId
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.memory.recall_context import MemoryObserveContext
-from rp_engine.core.memory.rolling_summary_source import RollingSummarySource, RollingSummaryStatus
+from rp_engine.core.memory.rolling_summary_source import (
+    FoldOutcome,
+    RollingSummarySource,
+    RollingSummaryStatus,
+)
 from rp_engine.core.memory.session_summary import SessionSummary
 from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.ports.conversation_store import ConversationStore
@@ -41,6 +45,9 @@ class AdminSessionMemory:
     settings: MemorySettings
     status: RollingSummaryStatus
     summary: SessionSummary | None
+    # What the pass an operator just asked for did. `None` on a plain read, because no pass
+    # ran. A pass that wrote nothing must not look like one that worked.
+    last_pass: FoldOutcome | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,7 +186,7 @@ class AdminService:
         if session is None:
             return None
         budget = await self._context_budget.total_tokens()
-        await self._rolling_summary_source.observe(
+        outcome = await self._rolling_summary_source.fold(
             MemoryObserveContext(
                 session_id=session_id,
                 scenario_definition_id=session.scenario_definition_id,
@@ -188,7 +195,8 @@ class AdminService:
                 source_budget=session.memory.budget_for("rolling_summary", budget),
             )
         )
-        return await self.get_session_memory(session_id)
+        memory = await self.get_session_memory(session_id)
+        return None if memory is None else replace(memory, last_pass=outcome)
 
     @staticmethod
     def _narrator_turns(transcript: list[ConversationMessage]) -> int:

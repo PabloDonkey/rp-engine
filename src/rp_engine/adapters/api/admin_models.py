@@ -177,12 +177,15 @@ class AdminSessionMemoryResponse(BaseModel):
     settings: AdminSessionMemoryStateResponse
     status: AdminMemoryStatusResponse
     summary: AdminSessionSummaryResponse | None
+    # What the pass did, when the panel asked for one. Null on a plain read.
+    last_pass: str | None = None
 
     @classmethod
     def from_memory(cls, memory: AdminSessionMemory) -> "AdminSessionMemoryResponse":
         return cls(
             settings=AdminSessionMemoryStateResponse.from_memory(memory.settings),
             status=AdminMemoryStatusResponse.from_status(memory.status),
+            last_pass=memory.last_pass,
             summary=(
                 None
                 if memory.summary is None

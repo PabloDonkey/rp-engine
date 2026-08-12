@@ -64,6 +64,27 @@ function onRunSummary(): Promise<boolean> {
   return store.refreshSessionSummary(props.sessionId);
 }
 
+// What the last pass did, in a sentence. A pass that wrote nothing must not read like one
+// that worked, which is the whole reason the outcome is reported at all.
+const PASS_REPORT: Record<string, string> = {
+  folded: "Recap updated with the turns that were waiting.",
+  condensed: "The recap had outgrown its share, so it was shortened.",
+  waiting_for_batch: "Nothing done — too few turns are waiting to be worth a model call.",
+  up_to_date: "Nothing to do — the recap already covers everything past the fold line.",
+  model_wrote_nothing:
+    "The model returned no recap, so nothing changed. It spent its budget thinking. " +
+    "Press again, or raise RP_ENGINE_MEMORY_SUMMARY_MAX_TOKENS.",
+  nothing_to_do: "Nothing to do — this session has no story yet.",
+};
+
+const passReport = computed(() => {
+  const outcome = store.sessionMemory?.last_pass;
+  if (!outcome) return "";
+  return PASS_REPORT[outcome] ?? outcome;
+});
+
+const passFailed = computed(() => store.sessionMemory?.last_pass === "model_wrote_nothing");
+
 const memoryStatus = computed(() => store.sessionMemory?.status ?? null);
 
 // The story, oldest first, as three shares of its turns: in the recap, waiting to be
@@ -489,9 +510,17 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           </button>
           <span class="text-xs text-neutral-500">
             Runs the same pass the background worker runs after a turn. It waits for the
-            model, so it can take a while.
+            model, so on a reasoning model it can take a few minutes.
           </span>
         </div>
+
+        <p
+          v-if="passReport"
+          class="text-xs"
+          :class="passFailed ? 'text-amber-700 dark:text-amber-400' : 'text-neutral-500'"
+        >
+          {{ passReport }}
+        </p>
 
         <div v-if="store.sessionMemory?.summary" class="grid gap-1">
           <div class="text-xs text-neutral-500">

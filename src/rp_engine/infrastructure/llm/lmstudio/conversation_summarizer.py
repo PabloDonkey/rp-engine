@@ -1,3 +1,4 @@
+import logging
 import re
 from collections.abc import Sequence
 
@@ -8,13 +9,21 @@ from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.ports import LLMProvider
 from rp_engine.core.ports.conversation_summarizer import ConversationSummarizer
 
+logger = logging.getLogger(__name__)
+
 # The recap is a record, not a performance: low temperature, because the one thing this
 # call must not do is write something the transcript does not say.
 SUMMARY_TEMPERATURE = 0.2
 SUMMARY_TOP_P = 0.9
-# Tokens per requested word, with room to spare. The cap is a backstop against a model that
-# ignores the word target; the caller counts the result and condenses it if it must.
-TOKENS_PER_WORD = 3
+# What the summarizer may generate, in tokens. It is not derived from the word target, and
+# that was a real bug: a reasoning model writes its thinking into the same budget, so a cap
+# sized for the recap alone is spent before the recap starts and the reply arrives empty
+# (the same failure S027 fixed on the story path). This covers the thinking and the recap.
+#
+# The number is measured, not guessed. On `gemma-4-26b-a4b-it-heretic`, folding five turns
+# came back empty at 3072 and wrote a 233-token recap at 6144. A cap costs nothing when the
+# model stops early, so it is set where the first attempt usually succeeds.
+DEFAULT_SUMMARY_MAX_TOKENS = 6144
 
 SUMMARY_SYSTEM_PROMPT = (
     "You keep the running record of a roleplay story. You write faithful, compact recaps "
@@ -32,8 +41,14 @@ _RULES = (
 
 
 class LMStudioConversationSummarizer(ConversationSummarizer):
-    def __init__(self, *, llm_provider: LLMProvider) -> None:
+    def __init__(
+        self,
+        *,
+        llm_provider: LLMProvider,
+        max_tokens: int = DEFAULT_SUMMARY_MAX_TOKENS,
+    ) -> None:
         self._llm_provider = llm_provider
+        self._max_tokens = max_tokens
 
     async def summarize_story_so_far(
         self,
@@ -78,6 +93,12 @@ class LMStudioConversationSummarizer(ConversationSummarizer):
         return await self._generate(prompt=prompt, target_words=target_words)
 
     async def _generate(self, *, prompt: str, target_words: int) -> str:
+        """Ask for one recap, and ask twice if the first reply carries no text.
+
+        How much a model spends on reasoning varies with the input, so no single cap is
+        safe. One retry at double the cap costs a background call and turns "the recap
+        silently stopped updating" into "the recap took a little longer".
+        """
         conversation = Conversation(
             messages=[
                 ConversationMessage(
@@ -88,11 +109,24 @@ class LMStudioConversationSummarizer(ConversationSummarizer):
             ],
             metadata={"purpose": "rolling_summary"},
         )
+        summary = await self._attempt(conversation, max_tokens=self._max_tokens)
+        if summary:
+            return summary
+
+        logger.warning(
+            "The summarizer wrote no recap within %d tokens; retrying once at %d.",
+            self._max_tokens,
+            self._max_tokens * 2,
+            extra={"max_tokens": self._max_tokens},
+        )
+        return await self._attempt(conversation, max_tokens=self._max_tokens * 2)
+
+    async def _attempt(self, conversation: Conversation, *, max_tokens: int) -> str:
         response = await self._llm_provider.generate(
             conversation,
             GenerationSettings(
                 temperature=SUMMARY_TEMPERATURE,
-                max_tokens=target_words * TOKENS_PER_WORD,
+                max_tokens=max_tokens,
                 top_p=SUMMARY_TOP_P,
             ),
         )

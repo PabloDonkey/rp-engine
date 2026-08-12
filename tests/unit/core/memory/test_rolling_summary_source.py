@@ -568,3 +568,81 @@ async def test_status_reports_the_batch_filling_up() -> None:
     assert status.fold_batch_tokens == 40
     assert status.fold_progress == pytest.approx(0.5)
     assert status.verbatim_turns == 15
+
+
+@pytest.mark.asyncio
+async def test_a_pass_reports_that_it_folded() -> None:
+    store = FakeSummaryStore()
+    source = _source(messages=_messages(30), summary_store=store, summarizer=FakeSummarizer())
+
+    outcome = await source.fold(_observe_context(turn=15, memory_budget=100, source_budget=25))
+
+    assert outcome == "folded"
+
+
+@pytest.mark.asyncio
+async def test_a_pass_reports_that_the_model_wrote_nothing() -> None:
+    """The failure that reads as "the button does nothing".
+
+    A reasoning model can spend its whole output budget thinking and write no recap. The
+    turns still wait, so the caller has to be told the difference between this and a pass
+    that had nothing to do.
+    """
+    store = FakeSummaryStore()
+    source = _source(
+        messages=_messages(30), summary_store=store, summarizer=FakeSummarizer(summary="")
+    )
+
+    outcome = await source.fold(_observe_context(turn=15, memory_budget=100, source_budget=25))
+
+    assert outcome == "model_wrote_nothing"
+    assert store.saves == 0
+
+
+@pytest.mark.asyncio
+async def test_a_pass_reports_that_it_is_waiting_for_a_batch() -> None:
+    store = FakeSummaryStore(_stored("They crossed the river.", turn=9))
+    source = _source(
+        messages=_messages(50),
+        summary_store=store,
+        summarizer=FakeSummarizer(),
+        min_fold_share=0.2,
+    )
+
+    outcome = await source.fold(_observe_context(turn=25, memory_budget=200, source_budget=50))
+
+    assert outcome == "waiting_for_batch"
+
+
+@pytest.mark.asyncio
+async def test_a_pass_reports_that_there_is_nothing_to_do() -> None:
+    store = FakeSummaryStore()
+    source = _source(messages=_messages(10), summary_store=store, summarizer=FakeSummarizer())
+
+    outcome = await source.fold(_observe_context(turn=5, memory_budget=100, source_budget=25))
+
+    assert outcome == "up_to_date"
+
+
+@pytest.mark.asyncio
+async def test_a_pass_reports_a_recap_it_only_condensed() -> None:
+    store = FakeSummaryStore(_stored("one two three four", turn=7, tokens=4))
+    source = _source(
+        messages=_messages(30),
+        summary_store=store,
+        summarizer=FakeSummarizer(condensed="one two"),
+    )
+
+    outcome = await source.fold(_observe_context(turn=15, memory_budget=100, source_budget=2))
+
+    assert outcome == "condensed"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_session_reports_nothing_to_do() -> None:
+    source = _source(messages=[], summary_store=FakeSummaryStore(), summarizer=FakeSummarizer())
+
+    assert (
+        await source.fold(_observe_context(turn=1, memory_budget=100, source_budget=25))
+        == "nothing_to_do"
+    )

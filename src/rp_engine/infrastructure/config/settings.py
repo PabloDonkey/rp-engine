@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     # which is one model call per turn. It must stay below the slack the high-water share
     # leaves, so waiting material never falls out of the window uncovered.
     memory_summary_min_fold_share: float = Field(default=0.1, ge=0.0, lt=1.0)
+    # What the summarizer may generate, in tokens. It must cover the recap *and* whatever
+    # the model spends on reasoning first, because both come out of the same budget. Too
+    # small and a reasoning model returns an empty recap, which reads as "the recap stopped
+    # updating". The call runs in the background, so a generous cap costs no player time.
+    memory_summary_max_tokens: int = Field(default=6144, ge=1)
 
     debug_status_enabled: bool = False
     debug_generation_trace: Literal["off", "errors", "all"] = "off"

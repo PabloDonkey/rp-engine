@@ -16,6 +16,7 @@ making recaps longer.
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 from uuid import UUID
 
 from rp_engine.core.conversation.message import ConversationMessage
@@ -58,6 +59,25 @@ WORDS_PER_TOKEN = 0.6
 # The recap stays short on purpose: recent, clearly stated detail beats a long buried one.
 MIN_TARGET_WORDS = 50
 MAX_TARGET_WORDS = 250
+
+
+# What one pass did. `observe` throws it away — nothing on the turn path can act on it —
+# but an operator pressing a button has to be told, or a pass that wrote nothing looks
+# exactly like a pass that worked.
+FoldOutcome = Literal[
+    # The recap was rewritten with turns that were not in it before.
+    "folded",
+    # Only the condense step changed it: it had outgrown its share of the budget.
+    "condensed",
+    # Turns are waiting past the fold line, but not enough to be worth a model call.
+    "waiting_for_batch",
+    # Nothing has passed the fold line that the recap does not already cover.
+    "up_to_date",
+    # The model answered with no text. The recap is unchanged and the turns still wait.
+    "model_wrote_nothing",
+    # There was nothing to work with: no budget, or no messages.
+    "nothing_to_do",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,16 +252,24 @@ class RollingSummarySource(MemorySource):
     async def observe(self, context: MemoryObserveContext) -> None:
         """Catch the recap up with the story, if it is behind.
 
+        The write half of the port. It discards what the pass reports, because the pipeline
+        has nothing to do with the answer; `fold` is the same work for a caller that does.
+        """
+        await self.fold(context)
+
+    async def fold(self, context: MemoryObserveContext) -> FoldOutcome:
+        """Run one pass and say what it did.
+
         Everything it needs is re-read here: the job that got it running carried only the
         session id and the turn, so running it late, twice, or not at all all end in the
         same stored state.
         """
         if context.memory_budget <= 0:
-            return
+            return "nothing_to_do"
         memory_key = ConversationIdentity.for_session(str(context.session_id)).to_memory_key()
         messages = await self._conversation_store.load_messages(memory_key)
         if not messages:
-            return
+            return "nothing_to_do"
 
         stored = await self._summary_store.get(context.session_id)
         covered_turn = stored.covers_through_turn if stored is not None else 0
@@ -269,6 +297,9 @@ class RollingSummarySource(MemorySource):
         summary = stored.summary if stored is not None else ""
         tokens = stored.tokens if stored is not None else 0
         covers_through_turn = covered_turn
+        outcome: FoldOutcome = (
+            "waiting_for_batch" if has_new_turns and not fold_now else "up_to_date"
+        )
         if fold_now:
             summary = await self._summarizer.summarize_story_so_far(
                 previous_summary=summary,
@@ -277,20 +308,26 @@ class RollingSummarySource(MemorySource):
             )
             if not summary.strip():
                 logger.warning(
-                    "The summarizer returned nothing for session %s; the recap is unchanged.",
+                    "The summarizer returned nothing for session %s; the recap is unchanged "
+                    "and %d turn(s) still wait to be folded.",
                     context.session_id,
+                    pending_turn - covered_turn,
                     extra={"session_id": str(context.session_id), "turn": context.turn},
                 )
-                return
+                return "model_wrote_nothing"
             covers_through_turn = pending_turn
             tokens = await self._token_counter.count_tokens(summary)
+            outcome = "folded"
 
-        summary, tokens = await self._condensed_to_budget(
+        condensed, tokens = await self._condensed_to_budget(
             summary=summary,
             tokens=tokens,
             budget=context.source_budget,
             session_id=str(context.session_id),
         )
+        if condensed != summary and outcome != "folded":
+            outcome = "condensed"
+        summary = condensed
         unchanged = (
             stored is not None
             and stored.summary == summary
@@ -298,7 +335,7 @@ class RollingSummarySource(MemorySource):
             and stored.model_name == self._model_name
         )
         if unchanged or not summary.strip():
-            return
+            return outcome
 
         await self._summary_store.save(
             stored.rewritten(
@@ -326,6 +363,7 @@ class RollingSummarySource(MemorySource):
                 "summary_tokens": tokens,
             },
         )
+        return outcome
 
     async def _condensed_to_budget(
         self,
