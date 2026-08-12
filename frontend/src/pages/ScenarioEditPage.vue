@@ -2,29 +2,15 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
+import { ScenarioDefinitionSchema, emptyScenario } from "@/api/scenarioSchema";
 import { useAdminStore } from "@/stores/admin";
-
-const NEW_SCENARIO_TEMPLATE = {
-  id: "",
-  owner_id: "00000000-0000-0000-0000-000000000000",
-  name: "",
-  description: "",
-  world: null,
-  characters: {},
-  rules: [],
-  story_graph: null,
-  initial_context: "",
-  visibility: "PUBLIC",
-  allowed_group_chat_ids: [],
-  metadata: {},
-};
 
 const props = defineProps<{ scenarioId?: string }>();
 const store = useAdminStore();
 const router = useRouter();
 
 const isEdit = computed(() => !!props.scenarioId);
-const text = ref(JSON.stringify(NEW_SCENARIO_TEMPLATE, null, 2));
+const text = ref(JSON.stringify(emptyScenario(), null, 2));
 const submitError = ref<string | null>(null);
 const submitting = ref(false);
 
@@ -46,20 +32,31 @@ watch(
 
 async function onSubmit(): Promise<void> {
   submitError.value = null;
-  let payload: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    payload = JSON.parse(text.value);
+    parsed = JSON.parse(text.value);
   } catch (error) {
     submitError.value = `Invalid JSON: ${error instanceof Error ? error.message : String(error)}`;
     return;
   }
+
+  // Checked here as well as on the server, so a missing field is named before the save
+  // leaves the browser. The server still decides: it answers 422 for anything this misses.
+  const checked = ScenarioDefinitionSchema.safeParse(parsed);
+  if (!checked.success) {
+    submitError.value = checked.error.issues
+      .map((issue) => `${issue.path.join(".") || "payload"}: ${issue.message}`)
+      .join("\n");
+    return;
+  }
+  const payload = checked.data;
 
   submitting.value = true;
   try {
     const saved = props.scenarioId
       ? await store.updateScenario(props.scenarioId, payload)
       : await store.createScenario(payload);
-    router.push({ name: "scenario-detail", params: { scenarioId: saved.id as string } });
+    router.push({ name: "scenario-detail", params: { scenarioId: saved.id } });
   } catch (error) {
     submitError.value = error instanceof Error ? error.message : String(error);
   } finally {

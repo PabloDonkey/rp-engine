@@ -24,6 +24,11 @@ export default defineConfig({
       },
     },
   },
+  // Named so the first test run on a clean checkout does not discover zod mid-run and
+  // reload, which Vitest warns is a source of flaky runs.
+  optimizeDeps: {
+    include: ["zod"],
+  },
   // Components are tested in a real browser, not in a simulated DOM. The form controls
   // this panel needs carry real focus, real selection and real file inputs, and a
   // simulated DOM only pretends to have those. There is no continuous integration (CI)

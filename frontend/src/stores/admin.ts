@@ -12,12 +12,17 @@ import type {
   SessionMemory,
 } from "@/api";
 
-function toSummary(payload: ScenarioPayload): ScenarioSummary {
+// A save answers with the scenario, not with a list row, so the row is rebuilt here rather
+// than re-fetching the whole list. `session_count` is not in that answer: a save cannot
+// change how many stories are running, so the existing count is kept.
+function toSummary(payload: ScenarioPayload, sessionCount = 0): ScenarioSummary {
   return {
-    id: String(payload.id ?? ""),
-    name: String(payload.name ?? ""),
-    description: String(payload.description ?? ""),
-    visibility: String(payload.visibility ?? ""),
+    id: payload.id,
+    name: payload.name,
+    description: payload.description,
+    visibility: payload.visibility,
+    session_count: sessionCount,
+    is_active: true,
   };
 }
 
@@ -48,6 +53,9 @@ export const useAdminStore = defineStore("admin", {
     scenarios: [] as ScenarioSummary[],
     scenariosLoading: false,
     scenariosError: null as string | null,
+    // Whether the list on screen includes retired scenarios. Off by default, and kept in
+    // state so a retire or restore can re-read the list the operator is actually looking at.
+    scenariosIncludeInactive: false,
 
     scenario: null as ScenarioPayload | null,
     scenarioLoading: false,
@@ -182,11 +190,12 @@ export const useAdminStore = defineStore("admin", {
       }
     },
 
-    async fetchScenarios(): Promise<void> {
+    async fetchScenarios(includeInactive = false): Promise<void> {
       this.scenariosLoading = true;
       this.scenariosError = null;
       try {
-        this.scenarios = await api.listScenarios();
+        this.scenarios = await api.listScenarios(includeInactive);
+        this.scenariosIncludeInactive = includeInactive;
       } catch (error) {
         this.scenariosError = error instanceof Error ? error.message : String(error);
       } finally {
@@ -217,10 +226,29 @@ export const useAdminStore = defineStore("admin", {
     async updateScenario(scenarioId: string, payload: ScenarioPayload): Promise<ScenarioPayload> {
       const updated = await api.updateScenario(scenarioId, payload);
       const index = this.scenarios.findIndex((s) => s.id === scenarioId);
-      if (index !== -1) {
-        this.scenarios[index] = toSummary(updated);
+      const existing = this.scenarios[index];
+      if (existing) {
+        this.scenarios[index] = toSummary(updated, existing.session_count);
       }
       return updated;
+    },
+
+    // Imports one exported file. It overwrites a scenario that is already there, so the
+    // list is re-read rather than patched: an import can both add and change a row.
+    async importScenario(payload: unknown): Promise<ScenarioPayload> {
+      const imported = await api.importScenario(payload);
+      await this.fetchScenarios(this.scenariosIncludeInactive);
+      return imported;
+    },
+
+    async retireScenario(scenarioId: string): Promise<void> {
+      await api.retireScenario(scenarioId);
+      await this.fetchScenarios(this.scenariosIncludeInactive);
+    },
+
+    async restoreScenario(scenarioId: string): Promise<void> {
+      await api.restoreScenario(scenarioId);
+      await this.fetchScenarios(this.scenariosIncludeInactive);
     },
   },
 });

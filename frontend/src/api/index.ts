@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { ScenarioDefinitionSchema } from "@/api/scenarioSchema";
+import type { ScenarioDefinition } from "@/api/scenarioSchema";
+
 const AdminUserSchema = z.object({
   id: z.string(),
   display_name: z.string(),
@@ -95,13 +98,15 @@ const ScenarioSummarySchema = z.object({
   name: z.string(),
   description: z.string(),
   visibility: z.string(),
+  // Live sessions running this scenario. The retire dialog names it before it asks.
+  session_count: z.number(),
+  is_active: z.boolean(),
 });
 
-// Scenarios are edited as raw JSON (see docs/SCENARIOS.md) — the full payload is a nested
-// document (world/characters/story_graph), so it's kept as a loose record rather than
-// duplicating the whole shape in TS. The backend is the single source of validation truth
-// (`scenario_definition_from_payload`).
-const ScenarioPayloadSchema = z.record(z.string(), z.unknown());
+// The full scenario document, typed against `scenarioSchema.ts`. The server is still the
+// single source of validation truth; this catches a shape mismatch at the boundary instead
+// of letting it reach a component as `unknown`.
+const ScenarioPayloadSchema = ScenarioDefinitionSchema;
 
 const SessionExportSchema = z.object({
   session: z.record(z.string(), z.unknown()),
@@ -117,7 +122,7 @@ export type AdminMessage = z.infer<typeof AdminMessageSchema>;
 export type AdminTrace = z.infer<typeof AdminTraceSchema>;
 export type DeletedMessage = z.infer<typeof DeletedMessageSchema>;
 export type ScenarioSummary = z.infer<typeof ScenarioSummarySchema>;
-export type ScenarioPayload = z.infer<typeof ScenarioPayloadSchema>;
+export type ScenarioPayload = ScenarioDefinition;
 export type SessionExport = z.infer<typeof SessionExportSchema>;
 
 class ApiError extends Error {
@@ -130,11 +135,7 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(
-  path: string,
-  schema: z.ZodType<T>,
-  init?: RequestInit,
-): Promise<T> {
+async function send(path: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(`/admin${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
@@ -147,7 +148,21 @@ async function request<T>(
         : response.statusText;
     throw new ApiError(response.status, message);
   }
+  return response;
+}
+
+async function request<T>(
+  path: string,
+  schema: z.ZodType<T>,
+  init?: RequestInit,
+): Promise<T> {
+  const response = await send(path, init);
   return schema.parse(await response.json());
+}
+
+/** For the routes that answer 204: there is no body to parse, and reading one throws. */
+async function requestVoid(path: string, init?: RequestInit): Promise<void> {
+  await send(path, init);
 }
 
 export function listUsers(): Promise<AdminUser[]> {
@@ -229,8 +244,9 @@ export function unblockUser(userId: string): Promise<AdminUser> {
   return request(`/users/${userId}/unblock`, AdminUserSchema, { method: "POST" });
 }
 
-export function listScenarios(): Promise<ScenarioSummary[]> {
-  return request("/scenarios", z.array(ScenarioSummarySchema));
+export function listScenarios(includeInactive = false): Promise<ScenarioSummary[]> {
+  const query = includeInactive ? "?include_inactive=true" : "";
+  return request(`/scenarios${query}`, z.array(ScenarioSummarySchema));
 }
 
 export function getScenario(scenarioId: string): Promise<ScenarioPayload> {
@@ -252,6 +268,25 @@ export function updateScenario(
     method: "PUT",
     body: JSON.stringify(payload),
   });
+}
+
+// Imports one exported scenario file. Unlike createScenario, it neither requires nor
+// refuses an existing id: an import of a scenario already present overwrites it.
+export function importScenario(payload: unknown): Promise<ScenarioPayload> {
+  return request("/scenarios/import", ScenarioPayloadSchema, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// Retire, not erase. The scenario keeps its row, `/play` stops offering it, and every
+// story already running it keeps playing.
+export function retireScenario(scenarioId: string): Promise<void> {
+  return requestVoid(`/scenarios/${scenarioId}`, { method: "DELETE" });
+}
+
+export function restoreScenario(scenarioId: string): Promise<void> {
+  return requestVoid(`/scenarios/${scenarioId}/restore`, { method: "POST" });
 }
 
 export function exportSession(sessionId: string): Promise<SessionExport> {

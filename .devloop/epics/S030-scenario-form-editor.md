@@ -1,6 +1,6 @@
 # S030 · Scenario form editor — read and edit a scenario without JSON
 
-**Status:** 🟢 In progress — steps 1-4 of 9 done.
+**Status:** 🟢 In progress — steps 1-5 of 9 done.
 **Depends on:** **S010** — admin scenario catalog management. This epic replaces the raw-JSON
 editor S010 shipped as its own minimum bar.
 **Design source:** [Scenario editing without JSON](https://claude.ai/code/artifact/fda5b259-2e76-4491-8346-79923b0d880d)
@@ -119,13 +119,13 @@ Playwright provider into its own package, `@vitest/browser-playwright`, passed a
 
 ### 5. Client schema and typed API
 
-- [ ] `frontend/src/api/scenarioSchema.ts`: `ScenarioDefinitionSchema` mirroring
+- [x] `frontend/src/api/scenarioSchema.ts`: `ScenarioDefinitionSchema` mirroring
       `scenario_definition_from_payload`, plus the empty-scenario factory that today sits in the
       page file.
-- [ ] Metadata in the schema: `z.record(z.string(), z.union([z.string(), z.array(z.string())]))`.
-- [ ] Replace the loose record type in `api/index.ts`. Add `importScenario`, `retireScenario`,
+- [x] Metadata in the schema: `z.record(z.string(), z.union([z.string(), z.array(z.string())]))`.
+- [x] Replace the loose record type in `api/index.ts`. Add `importScenario`, `retireScenario`,
       `restoreScenario`, and the `include_inactive` flag on the list call.
-- [ ] Store actions for the same.
+- [x] Store actions for the same.
 
 ### 6. Read view
 
