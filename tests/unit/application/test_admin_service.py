@@ -21,6 +21,7 @@ from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 OTHER_USER_ID = UUID("00000000-0000-0000-0000-000000000043")
 SESSION_ID = UUID("00000000-0000-0000-0000-000000000999")
+GROUP_ID = UUID("00000000-0000-0000-0000-000000000077")
 
 
 class FakeUserIdentityStore:
@@ -63,6 +64,14 @@ class FakeScenarioSessionStore:
         self, *, owner_kind: str, owner_id: UUID, scenario_definition_id: str
     ) -> ScenarioSession | None:
         raise NotImplementedError
+
+    async def count_live_by_definition(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for stored in self.sessions.values():
+            if not stored.is_deleted:
+                key = stored.scenario_definition_id
+                counts[key] = counts.get(key, 0) + 1
+        return counts
 
     async def save(self, session: ScenarioSession) -> ScenarioSession:
         self.sessions[session.id] = session
@@ -286,9 +295,7 @@ async def test_delete_session_clears_session_and_conversation() -> None:
 
 
 def _scenario(scenario_id: str, *, name: str) -> ScenarioDefinition:
-    return ScenarioDefinition(
-        id=scenario_id, owner_id=SYSTEM_OWNER_ID, name=name, description=""
-    )
+    return ScenarioDefinition(id=scenario_id, owner_id=SYSTEM_OWNER_ID, name=name, description="")
 
 
 @pytest.mark.asyncio
@@ -297,9 +304,52 @@ async def test_list_scenarios_sorted_by_name() -> None:
         scenarios=[_scenario("b", name="Zephyr"), _scenario("a", name="Aurora")]
     )
 
-    scenarios = await service.list_scenarios()
+    summaries = await service.list_scenarios()
 
-    assert [s.name for s in scenarios] == ["Aurora", "Zephyr"]
+    assert [summary.scenario.name for summary in summaries] == ["Aurora", "Zephyr"]
+
+
+@pytest.mark.asyncio
+async def test_list_scenarios_counts_live_sessions_per_scenario() -> None:
+    live = ScenarioSession.create_for_user(scenario_definition_id="a", user_id=USER_ID)
+    superseded = ScenarioSession.create_for_group(
+        scenario_definition_id="a", group_id=GROUP_ID
+    ).mark_deleted()
+    service, _, _, _ = _service(
+        scenarios=[_scenario("a", name="Aurora"), _scenario("b", name="Zephyr")],
+        sessions=[live, superseded],
+    )
+
+    listed = await service.list_scenarios()
+    summaries = {summary.scenario.id: summary.session_count for summary in listed}
+
+    # A superseded story is not somebody playing, and a scenario nobody plays reads zero.
+    assert summaries == {"a": 1, "b": 0}
+
+
+@pytest.mark.asyncio
+async def test_retiring_a_scenario_takes_it_out_of_the_list_until_restored() -> None:
+    service, _, _, _ = _service(scenarios=[_scenario("a", name="Aurora")])
+
+    assert await service.retire_scenario("a") is True
+    assert await service.list_scenarios() == []
+
+    retired = await service.list_scenarios(include_inactive=True)
+    assert [summary.scenario.id for summary in retired] == ["a"]
+    assert retired[0].scenario.is_active is False
+    # It still resolves by id, so a running story and an export both keep working.
+    assert await service.get_scenario("a") is not None
+
+    assert await service.restore_scenario("a") is True
+    assert [summary.scenario.id for summary in await service.list_scenarios()] == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_retiring_or_restoring_an_unknown_scenario_reports_failure() -> None:
+    service, _, _, _ = _service(scenarios=[])
+
+    assert await service.retire_scenario("nope") is False
+    assert await service.restore_scenario("nope") is False
 
 
 @pytest.mark.asyncio

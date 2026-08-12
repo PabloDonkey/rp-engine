@@ -131,3 +131,38 @@ async def assert_scenario_session_store_contract(store: ScenarioSessionStore) ->
 
     await store.delete(session.id)
     assert await store.get_by_id(session.id) is None
+
+
+async def assert_live_session_counts_contract(store: ScenarioSessionStore) -> None:
+    """One grouped count for the whole catalog (S030).
+
+    The admin scenario list shows this number on every row, so it must come from one query,
+    and it must count live sessions only — a superseded story is not somebody playing.
+    """
+    # Scoped to two ids of its own, so this contract can run after another that leaves
+    # sessions behind.
+    async def counts() -> dict[str, int]:
+        every = await store.count_live_by_definition()
+        return {key: value for key, value in every.items() if key in {"count-a", "count-b"}}
+
+    assert await counts() == {}
+
+    first = ScenarioSession.create_for_user(scenario_definition_id="count-a", user_id=USER_ID)
+    second = ScenarioSession.create_for_group(scenario_definition_id="count-a", group_id=GROUP_ID)
+    third = ScenarioSession.create_for_group(scenario_definition_id="count-b", group_id=GROUP_ID)
+    for item in (first, second, third):
+        await store.save(item)
+
+    assert await counts() == {"count-a": 2, "count-b": 1}
+
+    # Superseding a story takes it out of the count; the definition it ran stays, because
+    # another live session still points at it.
+    await store.save(first.mark_deleted())
+    assert await counts() == {"count-a": 1, "count-b": 1}
+
+    # The last live session leaving drops the definition from the map entirely.
+    await store.save(third.mark_deleted())
+    assert await counts() == {"count-a": 1}
+
+    for item in (first, second, third):
+        await store.delete(item.id)

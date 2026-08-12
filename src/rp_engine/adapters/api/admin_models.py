@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from rp_engine.application.services.admin_service import (
     AdminDeletedMessage,
+    AdminScenarioSummary,
     AdminSessionMemory,
     AdminUserSummary,
 )
@@ -13,7 +14,6 @@ from rp_engine.core.memory.fragment import ToggleableMemorySystemId
 from rp_engine.core.memory.rolling_summary_source import RollingSummaryStatus
 from rp_engine.core.memory.session_summary import SessionSummary
 from rp_engine.core.memory.settings import MemorySettings
-from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives
 
@@ -275,12 +275,18 @@ class ScenarioSummaryResponse(BaseModel):
     name: str
     description: str
     visibility: str
+    # Live sessions running this scenario. The retire dialog names it before it asks.
+    session_count: int
+    is_active: bool
 
     @classmethod
-    def from_definition(cls, scenario: ScenarioDefinition) -> "ScenarioSummaryResponse":
+    def from_summary(cls, summary: AdminScenarioSummary) -> "ScenarioSummaryResponse":
+        scenario = summary.scenario
         return cls(
             id=scenario.id,
             name=scenario.name,
             description=scenario.description,
             visibility=scenario.visibility.value,
+            session_count=summary.session_count,
+            is_active=scenario.is_active,
         )

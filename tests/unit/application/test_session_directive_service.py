@@ -45,6 +45,14 @@ class InMemoryScenarioSessionStore(ScenarioSessionStore):
                 return session
         return None
 
+    async def count_live_by_definition(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for stored in self.sessions.values():
+            if not stored.is_deleted:
+                key = stored.scenario_definition_id
+                counts[key] = counts.get(key, 0) + 1
+        return counts
+
     async def save(self, session: ScenarioSession) -> ScenarioSession:
         self.sessions[session.id] = session
         return session

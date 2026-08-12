@@ -42,6 +42,7 @@ from tests.unit.infrastructure.contracts.scenario_definition_store_contract impo
     assert_scenario_retirement_contract,
 )
 from tests.unit.infrastructure.contracts.scenario_session_store_contract import (
+    assert_live_session_counts_contract,
     assert_scenario_session_store_contract,
 )
 from tests.unit.infrastructure.contracts.session_summary_store_contract import (
@@ -147,6 +148,7 @@ async def test_migrate_then_contract_all_stores(migrated_engine: AsyncEngine) ->
     await assert_minimal_scenario_round_trip(PostgresScenarioDefinitionStore(session_factory))
     await assert_scenario_retirement_contract(PostgresScenarioDefinitionStore(session_factory))
     await assert_scenario_session_store_contract(PostgresScenarioSessionStore(session_factory))
+    await assert_live_session_counts_contract(PostgresScenarioSessionStore(session_factory))
     await assert_conversation_store_contract(PostgresConversationStore(session_factory))
     await assert_user_identity_store_contract(PostgresUserIdentityStore(session_factory))
     await assert_group_identity_store_contract(PostgresGroupIdentityStore(session_factory))

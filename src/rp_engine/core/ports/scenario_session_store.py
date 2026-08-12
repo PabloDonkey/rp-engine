@@ -40,6 +40,16 @@ class ScenarioSessionStore(ABC):
         """Find an owner's **live** session running a specific scenario definition, if any."""
 
     @abstractmethod
+    async def count_live_by_definition(self) -> dict[str, int]:
+        """How many live sessions each scenario definition currently has.
+
+        One grouped query for the whole catalog, not one per row: the admin scenario list
+        shows this count on every line, and asking per scenario would turn one page load
+        into as many round trips as there are scenarios. A definition with no live session
+        is simply absent from the map.
+        """
+
+    @abstractmethod
     async def save(self, session: ScenarioSession) -> ScenarioSession:
         """Save or update a scenario session and return the stored value.
 

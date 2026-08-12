@@ -35,6 +35,17 @@ class AdminUserSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class AdminScenarioSummary:
+    """One row of the admin scenario list: the definition, plus how many stories run it.
+
+    The count is live sessions only. It is what the retire dialog names before it asks.
+    """
+
+    scenario: ScenarioDefinition
+    session_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class AdminSessionMemory:
     """Everything the panel shows about one session's memory, read in one call.
 
@@ -247,9 +258,44 @@ class AdminService:
         await self._conversation_store.clear(memory_key)
         await self._scenario_session_store.delete(session_id)
 
-    async def list_scenarios(self) -> list[ScenarioDefinition]:
-        scenarios = await self._scenario_definition_store.list_all()
-        return sorted(scenarios, key=lambda scenario: scenario.name.lower())
+    async def list_scenarios(
+        self, *, include_inactive: bool = False
+    ) -> list[AdminScenarioSummary]:
+        """The scenario catalog, each row carrying how many stories are running it.
+
+        The counts come from one grouped query for the whole list, not one per row.
+        """
+        scenarios = await self._scenario_definition_store.list_all(
+            include_inactive=include_inactive
+        )
+        live_counts = await self._scenario_session_store.count_live_by_definition()
+        return sorted(
+            (
+                AdminScenarioSummary(
+                    scenario=scenario,
+                    session_count=live_counts.get(scenario.id, 0),
+                )
+                for scenario in scenarios
+            ),
+            key=lambda summary: summary.scenario.name.lower(),
+        )
+
+    async def retire_scenario(self, scenario_id: str) -> bool:
+        """Retire a scenario. Returns False when there is no such scenario.
+
+        Stories already running it keep playing — see `ScenarioDefinitionStore`.
+        """
+        if await self._scenario_definition_store.get_by_id(scenario_id) is None:
+            return False
+        await self._scenario_definition_store.delete(scenario_id)
+        return True
+
+    async def restore_scenario(self, scenario_id: str) -> bool:
+        """Bring a retired scenario back. Returns False when there is no such scenario."""
+        if await self._scenario_definition_store.get_by_id(scenario_id) is None:
+            return False
+        await self._scenario_definition_store.restore(scenario_id)
+        return True
 
     async def get_scenario(self, scenario_id: str) -> ScenarioDefinition | None:
         return await self._scenario_definition_store.get_by_id(scenario_id)

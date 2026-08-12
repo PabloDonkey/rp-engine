@@ -2,7 +2,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -76,6 +76,19 @@ class PostgresScenarioSessionStore(ScenarioSessionStore):
         async with self._session_factory() as db_session:
             record = await db_session.scalar(statement)
         return self._to_domain(record)
+
+    async def count_live_by_definition(self) -> dict[str, int]:
+        statement = (
+            select(
+                ScenarioSessionRecord.scenario_definition_id,
+                func.count(ScenarioSessionRecord.id),
+            )
+            .where(ScenarioSessionRecord.deleted_at.is_(None))
+            .group_by(ScenarioSessionRecord.scenario_definition_id)
+        )
+        async with self._session_factory() as db_session:
+            rows = (await db_session.execute(statement)).all()
+        return {definition_id: count for definition_id, count in rows}
 
     async def save(self, session: ScenarioSession) -> ScenarioSession:
         # Stamped here rather than by callers: `save()` is the one place every write passes

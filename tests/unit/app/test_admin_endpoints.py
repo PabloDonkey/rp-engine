@@ -1,3 +1,5 @@
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -10,6 +12,7 @@ from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.app.main import create_app
 from rp_engine.application.services.admin_service import (
     AdminDeletedMessage,
+    AdminScenarioSummary,
     AdminSessionMemory,
     AdminUserSummary,
 )
@@ -394,14 +397,81 @@ def test_unblock_user_restores_access(tmp_path: Path) -> None:
 
 def test_list_scenarios_returns_summaries(tmp_path: Path) -> None:
     client, container = _setup(tmp_path)
-    container.admin_service.list_scenarios = AsyncMock(return_value=[_scenario()])
+    container.admin_service.list_scenarios = AsyncMock(
+        return_value=[AdminScenarioSummary(scenario=_scenario(), session_count=3)]
+    )
 
     response = client.get("/admin/scenarios")
 
     assert response.status_code == 200
     assert response.json() == [
-        {"id": "vault", "name": "Vault", "description": "A vault.", "visibility": "PUBLIC"}
+        {
+            "id": "vault",
+            "name": "Vault",
+            "description": "A vault.",
+            "visibility": "PUBLIC",
+            "session_count": 3,
+            "is_active": True,
+        }
     ]
+
+
+def test_list_scenarios_passes_the_include_inactive_flag_through(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.list_scenarios = AsyncMock(return_value=[])
+
+    assert client.get("/admin/scenarios").status_code == 200
+    container.admin_service.list_scenarios.assert_awaited_with(include_inactive=False)
+
+    assert client.get("/admin/scenarios?include_inactive=true").status_code == 200
+    container.admin_service.list_scenarios.assert_awaited_with(include_inactive=True)
+
+
+def test_list_scenarios_reports_a_retired_scenario_as_inactive(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    retired = replace(_scenario(), deleted_at=datetime(2026, 8, 11, tzinfo=UTC))
+    container.admin_service.list_scenarios = AsyncMock(
+        return_value=[AdminScenarioSummary(scenario=retired, session_count=0)]
+    )
+
+    response = client.get("/admin/scenarios?include_inactive=true")
+
+    assert response.status_code == 200
+    assert response.json()[0]["is_active"] is False
+
+
+def test_retire_scenario_returns_204(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.retire_scenario = AsyncMock(return_value=True)
+
+    response = client.delete("/admin/scenarios/vault")
+
+    assert response.status_code == 204
+    container.admin_service.retire_scenario.assert_awaited_once_with("vault")
+
+
+def test_retire_scenario_404_when_missing(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.retire_scenario = AsyncMock(return_value=False)
+
+    assert client.delete("/admin/scenarios/nope").status_code == 404
+
+
+def test_restore_scenario_returns_204(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.restore_scenario = AsyncMock(return_value=True)
+
+    response = client.post("/admin/scenarios/vault/restore")
+
+    assert response.status_code == 204
+    container.admin_service.restore_scenario.assert_awaited_once_with("vault")
+
+
+def test_restore_scenario_404_when_missing(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.restore_scenario = AsyncMock(return_value=False)
+
+    assert client.post("/admin/scenarios/nope/restore").status_code == 404
 
 
 def test_get_scenario_404_when_missing(tmp_path: Path) -> None:

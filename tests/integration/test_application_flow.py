@@ -204,6 +204,9 @@ class FakeScenarioSessionStore:
         del scenario_definition_id
         return None
 
+    async def count_live_by_definition(self) -> dict[str, int]:
+        return {}
+
     async def save(self, session: ScenarioSession) -> ScenarioSession:
         return session
 

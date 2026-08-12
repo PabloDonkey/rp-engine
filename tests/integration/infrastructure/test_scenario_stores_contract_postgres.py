@@ -19,6 +19,7 @@ from tests.unit.infrastructure.contracts.scenario_definition_store_contract impo
     assert_scenario_retirement_contract,
 )
 from tests.unit.infrastructure.contracts.scenario_session_store_contract import (
+    assert_live_session_counts_contract,
     assert_scenario_session_store_contract,
 )
 from tests.unit.infrastructure.contracts.session_summary_store_contract import (
@@ -74,6 +75,7 @@ async def test_postgres_scenario_session_store_contract(
     postgres_scenario_session_store: PostgresScenarioSessionStore,
 ) -> None:
     await assert_scenario_session_store_contract(postgres_scenario_session_store)
+    await assert_live_session_counts_contract(postgres_scenario_session_store)
 
 
 @pytest_asyncio.fixture

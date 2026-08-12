@@ -1,6 +1,6 @@
 # S030 · Scenario form editor — read and edit a scenario without JSON
 
-**Status:** 🟢 In progress — steps 1-2 of 9 done.
+**Status:** 🟢 In progress — steps 1-3 of 9 done.
 **Depends on:** **S010** — admin scenario catalog management. This epic replaces the raw-JSON
 editor S010 shipped as its own minimum bar.
 **Design source:** [Scenario editing without JSON](https://claude.ai/code/artifact/fda5b259-2e76-4491-8346-79923b0d880d)
@@ -94,11 +94,11 @@ back at the next restart.
 
 ### 3. Session count and the two new routes
 
-- [ ] `ScenarioSessionStore.count_live_by_definition() -> dict[str, int]`. One grouped query on
+- [x] `ScenarioSessionStore.count_live_by_definition() -> dict[str, int]`. One grouped query on
       `scenario_sessions` where `deleted_at IS NULL`. One query for the whole list, not one per row.
-- [ ] `ScenarioSummaryResponse` gains `session_count` and `is_active`.
-- [ ] `DELETE /admin/scenarios/{id}` retires. `POST /admin/scenarios/{id}/restore` brings it back.
-- [ ] `GET /admin/scenarios?include_inactive=true`.
+- [x] `ScenarioSummaryResponse` gains `session_count` and `is_active`.
+- [x] `DELETE /admin/scenarios/{id}` retires. `POST /admin/scenarios/{id}/restore` brings it back.
+- [x] `GET /admin/scenarios?include_inactive=true`.
 
 ### 4. Vitest in browser mode
 

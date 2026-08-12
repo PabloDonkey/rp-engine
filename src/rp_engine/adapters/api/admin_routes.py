@@ -221,9 +221,9 @@ def create_admin_router(
         )
 
     @router.get("/scenarios")
-    async def list_scenarios() -> list[ScenarioSummaryResponse]:
-        scenarios = await admin_service.list_scenarios()
-        return [ScenarioSummaryResponse.from_definition(scenario) for scenario in scenarios]
+    async def list_scenarios(include_inactive: bool = False) -> list[ScenarioSummaryResponse]:
+        summaries = await admin_service.list_scenarios(include_inactive=include_inactive)
+        return [ScenarioSummaryResponse.from_summary(summary) for summary in summaries]
 
     @router.get("/scenarios/{scenario_id}")
     async def get_scenario(scenario_id: str) -> dict[str, Any]:
@@ -254,6 +254,18 @@ def create_admin_router(
         if scenario is None:
             raise HTTPException(status_code=422, detail="Scenario payload failed validation")
         return scenario_definition_to_payload(scenario)
+
+    @router.delete("/scenarios/{scenario_id}", status_code=204)
+    async def retire_scenario(scenario_id: str) -> None:
+        """Retire a scenario. The row stays, `/play` stops offering it, and every story
+        already running it keeps playing."""
+        if not await admin_service.retire_scenario(scenario_id):
+            raise HTTPException(status_code=404, detail="Scenario not found")
+
+    @router.post("/scenarios/{scenario_id}/restore", status_code=204)
+    async def restore_scenario(scenario_id: str) -> None:
+        if not await admin_service.restore_scenario(scenario_id):
+            raise HTTPException(status_code=404, detail="Scenario not found")
 
     @router.post("/scenarios/import")
     async def import_scenario(payload: dict[str, Any]) -> dict[str, Any]:
