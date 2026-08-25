@@ -293,4 +293,27 @@ export function exportSession(sessionId: string): Promise<SessionExport> {
   return request(`/sessions/${sessionId}/export`, SessionExportSchema);
 }
 
+// --- Playing a turn from the panel (S031) ---
+//
+// All three answer with the *stored* narrator message, so the turn number and the finish
+// reason arrive with the text. The finish reason is what decides whether Continue offers to
+// finish a cut-off sentence, and reading it here saves refetching the whole transcript.
+
+export function sendTurn(sessionId: string, message: string): Promise<AdminMessage> {
+  return request(`/sessions/${sessionId}/turn`, AdminMessageSchema, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
+
+/** Advance with no input, or finish a reply the model cut off at the token limit. */
+export function continueStory(sessionId: string): Promise<AdminMessage> {
+  return request(`/sessions/${sessionId}/continue`, AdminMessageSchema, { method: "POST" });
+}
+
+/** Drop the last narrator reply and generate a replacement from the same input. */
+export function retryTurn(sessionId: string): Promise<AdminMessage> {
+  return request(`/sessions/${sessionId}/retry`, AdminMessageSchema, { method: "POST" });
+}
+
 export { ApiError };

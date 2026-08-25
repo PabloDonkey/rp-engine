@@ -4,6 +4,9 @@ import { useRouter } from "vue-router";
 
 import * as api from "@/api";
 import type { AdminMessage, AdminTrace } from "@/api";
+import CollapsiblePanel from "@/components/play/CollapsiblePanel.vue";
+import TurnComposer from "@/components/play/TurnComposer.vue";
+import { useStickToBottom } from "@/composables/useStickToBottom";
 import { useAdminStore } from "@/stores/admin";
 
 const props = defineProps<{ sessionId: string }>();
@@ -15,6 +18,9 @@ interface MessageFilterState {
   trace: boolean;
   systemPrompt: boolean;
   turnMeta: boolean;
+  // Whether the `···` control is open. It sits with the filters it reveals so that clearing
+  // the state on a reload closes the menu too.
+  menuOpen: boolean;
 }
 
 // Keyed by transcript index — each message's filter checkboxes are independent
@@ -24,14 +30,22 @@ const filterState = reactive<Record<number, MessageFilterState>>({});
 function filtersFor(index: number): MessageFilterState {
   let state = filterState[index];
   if (!state) {
-    state = { thinking: false, trace: false, systemPrompt: false, turnMeta: false };
+    state = {
+      thinking: false,
+      trace: false,
+      systemPrompt: false,
+      turnMeta: false,
+      menuOpen: false,
+    };
     filterState[index] = state;
   }
   return state;
 }
 
-function load(): void {
-  store.fetchSessionDetail(props.sessionId);
+async function load(): Promise<void> {
+  await store.fetchSessionDetail(props.sessionId);
+  // Open on the end of the story, not the beginning of it.
+  await scrollToBottom();
 }
 
 onMounted(load);
@@ -243,6 +257,91 @@ function systemPromptFor(turn: string | undefined): string {
   return "";
 }
 
+// --- Playing a turn (S031) ---
+
+const transcriptEl = ref<HTMLElement | null>(null);
+const { unseen, measure, settle, scrollToBottom } = useStickToBottom(transcriptEl);
+const draft = ref("");
+
+const pending = computed(() => store.pendingTurn);
+const generating = computed(() => store.isGenerating);
+const isRetired = computed(() => Boolean(store.session?.deleted_at));
+
+const lastMessage = computed(() => store.transcript[store.transcript.length - 1] ?? null);
+
+// Retry replaces a narrator reply, so there has to be one. The service refuses anything else
+// and says why; this only decides whether to offer the item.
+const canRetry = computed(() => lastMessage.value?.role === "character");
+
+// The last reply stopped at the token cap, so Continue would finish that sentence in place
+// rather than advance. Costs nothing to know: the finish reason is already on the message.
+const finishesReply = computed(
+  () =>
+    lastMessage.value?.role === "character" &&
+    lastMessage.value.metadata.finish_reason === "length",
+);
+
+// What each closed panel says about itself.
+const personaSummary = computed(() => store.session?.user_persona_name ?? "not set");
+
+const memorySummary = computed(() => {
+  const status = memoryStatus.value;
+  if (!status || status.budget_tokens === 0) return "";
+  return `${Math.round((status.window_tokens / status.budget_tokens) * 100)}% of the window`;
+});
+
+const directivesSummary = computed(() => {
+  const directives = store.session?.directives;
+  if (!directives) return "";
+  const parts = [directives.language];
+  if (directives.rules.length > 0) parts.push(`${directives.rules.length} rule(s)`);
+  if (directives.director_instructions.length > 0) {
+    parts.push(`${directives.director_instructions.length} note(s)`);
+  }
+  return parts.join(" · ");
+});
+
+// A new turn arrived. `sync` so this runs before the DOM is patched — the scroll position
+// still describes the transcript as the reader last saw it, which is the only moment the
+// "was I following?" question has a true answer.
+watch(
+  () => store.transcript.length,
+  (next, previous) => {
+    // `previous === 0` is the first load, which `load()` already scrolled. A shorter list is
+    // a delete, not a new turn.
+    if (previous === 0 || next <= previous) return;
+    void settle(measure());
+  },
+  { flush: "sync" },
+);
+
+async function onSend(message: string): Promise<void> {
+  // The player just acted, so they are following by definition.
+  await scrollToBottom();
+  const ok = await store.playTurn(props.sessionId, message);
+  // Only a send that worked clears the box. A refused turn leaves what was typed.
+  if (ok) draft.value = "";
+}
+
+async function onContinue(): Promise<void> {
+  await scrollToBottom();
+  await store.playContinue(props.sessionId);
+}
+
+async function onRetry(): Promise<void> {
+  await scrollToBottom();
+  await store.playRetry(props.sessionId);
+}
+
+function debugOpen(index: number): boolean {
+  return filtersFor(index).menuOpen;
+}
+
+function toggleDebug(index: number): void {
+  const state = filtersFor(index);
+  state.menuOpen = !state.menuOpen;
+}
+
 function turnMetaFor(turn: string | undefined): Record<string, unknown> {
   const trace = latestTraceForTurn(turn);
   if (!trace) return {};
@@ -294,9 +393,10 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
         </span>
       </div>
 
-      <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-        Player persona
-      </h2>
+      <!-- Closed by default. The story is what this page is for; the machinery behind it is
+           one click away, and each closed row still names its current value. -->
+      <div class="mb-4 grid gap-2">
+        <CollapsiblePanel title="Player persona" :summary="personaSummary">
       <div class="mb-6 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10">
         <!-- Editable here, but only here: /clear is still the only way a *player* can change
              their character. An admin sees the whole session, so they can correct one. -->
@@ -367,10 +467,9 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           a prompt.
         </p>
       </div>
+        </CollapsiblePanel>
 
-      <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-        Memory
-      </h2>
+        <CollapsiblePanel title="Memory" :summary="memorySummary">
       <div
         class="mb-6 grid gap-3 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10"
       >
@@ -537,12 +636,11 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           No recap yet. It is written in the background, once the story passes the fold line.
         </p>
       </div>
+        </CollapsiblePanel>
 
-      <!-- Read-only: directives are set by the player over Telegram (/language, /rule,
-           /director), the panel only reflects them. -->
-      <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-        Directives
-      </h2>
+        <!-- Read-only: directives are set by the player over Telegram (/language, /rule,
+             /director), the panel only reflects them. -->
+        <CollapsiblePanel title="Directives" :summary="directivesSummary">
       <dl
         class="mb-6 grid gap-2 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10"
       >
@@ -585,6 +683,8 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           </dd>
         </div>
       </dl>
+        </CollapsiblePanel>
+      </div>
 
       <p
         v-if="store.actionError"
@@ -596,7 +696,15 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
       <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
         Transcript
       </h2>
-      <p v-if="store.transcript.length === 0" class="text-sm text-neutral-500">No messages yet.</p>
+
+      <div class="relative">
+        <div
+          ref="transcriptEl"
+          class="max-h-[55vh] min-h-[14rem] overflow-y-auto rounded-lg border border-black/10 p-2 dark:border-white/10"
+        >
+          <p v-if="store.transcript.length === 0 && !pending" class="p-2 text-sm text-neutral-500">
+            No messages yet.
+          </p>
       <ol class="mb-6 flex flex-col gap-2">
         <li
           v-for="(message, index) in store.transcript"
@@ -627,8 +735,20 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           <div class="whitespace-pre-wrap">{{ message.content }}</div>
 
           <template v-if="message.role === 'character'">
+            <div class="mt-2 flex justify-end border-t border-black/5 pt-2 dark:border-white/5">
+              <button
+                type="button"
+                class="rounded px-2 text-xs tracking-widest text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
+                :aria-expanded="debugOpen(index)"
+                title="Thinking, raw trace, system prompt, turn metadata"
+                @click="toggleDebug(index)"
+              >
+                &middot;&middot;&middot;
+              </button>
+            </div>
             <div
-              class="mt-2 flex flex-wrap gap-3 border-t border-black/5 pt-2 text-xs text-neutral-600 dark:border-white/5 dark:text-neutral-400"
+              v-if="debugOpen(index)"
+              class="mt-2 flex flex-wrap gap-3 pt-1 text-xs text-neutral-600 dark:text-neutral-400"
             >
               <label
                 class="flex items-center gap-1"
@@ -692,6 +812,72 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           </template>
         </li>
       </ol>
+
+          <!-- The turn in flight. It is drawn here rather than pushed into `transcript`,
+               which stays the server's list and nothing else. -->
+          <div v-if="pending" class="mt-2 flex flex-col gap-2">
+            <div
+              v-if="pending.message"
+              class="rounded-lg bg-blue-50 p-3 text-sm dark:bg-blue-950/40"
+            >
+              <div class="mb-1 text-xs font-semibold uppercase text-neutral-500">you</div>
+              <div class="whitespace-pre-wrap">{{ pending.message }}</div>
+            </div>
+            <div
+              class="rounded-lg border p-3 text-sm"
+              :class="
+                pending.error
+                  ? 'border-red-600/40 bg-red-50 dark:bg-red-950/40'
+                  : 'border-black/10 dark:border-white/10'
+              "
+            >
+              <template v-if="pending.error">
+                <div class="mb-1 text-xs font-semibold uppercase text-red-700 dark:text-red-400">
+                  not sent
+                </div>
+                <div class="text-red-700 dark:text-red-400">{{ pending.error }}</div>
+                <button
+                  type="button"
+                  class="mt-2 rounded border border-black/10 px-2 py-0.5 text-xs dark:border-white/10"
+                  @click="store.clearPendingTurn()"
+                >
+                  Dismiss
+                </button>
+              </template>
+              <template v-else>
+                <div class="mb-1 text-xs font-semibold uppercase text-neutral-500">narrator</div>
+                <div class="italic text-neutral-500">The narrator is writing…</div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Only while the reader is away from the newest turn. Following, there is nothing
+             to jump to. -->
+        <div v-if="unseen > 0" class="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+          <button
+            type="button"
+            class="pointer-events-auto rounded-full bg-neutral-900 px-3 py-1 text-xs font-medium text-white shadow-lg dark:bg-white dark:text-neutral-900"
+            @click="scrollToBottom(true)"
+          >
+            &darr; {{ unseen }} new
+          </button>
+        </div>
+      </div>
+
+      <div class="mt-3">
+        <TurnComposer
+          v-model="draft"
+          :generating="generating"
+          :disabled="isRetired"
+          :can-retry="canRetry"
+          :finishes-reply="finishesReply"
+          retry-reason="the last message is not a narrator reply"
+          @send="onSend"
+          @continue-story="onContinue"
+          @retry="onRetry"
+        />
+      </div>
     </template>
   </div>
 </template>

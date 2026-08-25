@@ -126,6 +126,26 @@ The engine and application services never parse Telegram command syntax. Persist
 Telegram message id of the last narrator reply (for in-place `/retry`) is a transport
 concern owned by the adapter, never by the domain or application layers.
 
+Since S031 the admin panel is a second surface that advances a story. It maps three HTTP
+routes onto the same three use cases:
+
+* `POST /admin/sessions/{id}/turn` is translated to `ChatService.send_message(...)`
+* `POST /admin/sessions/{id}/continue` is translated to `ChatService.continue_story(...)`
+* `POST /admin/sessions/{id}/retry` is translated to `ChatService.regenerate_last_response(...)`
+
+Identity is the session id in the path, not a signed-in player. The panel has no
+authentication and reaches a session by operator navigation, so these routes sit on the
+`/admin` prefix — the same operator exception S015 made for `override_persona` — rather than
+adding a second unauthenticated entry point. They answer with the *stored* narrator message
+so the caller receives the turn number and the finish reason without re-reading the
+transcript.
+
+Only one generation may run per session, and `ChatService` owns that guard. Two surfaces
+reaching one story is an application concern, not a transport one; each adapter only
+translates the refusal into its own vocabulary (HTTP 409, or an ordinary Telegram reply).
+The guard is an in-process set of session ids, which is sufficient only while Telegram and
+the HTTP API share a process, as they do today in `app/main.py`.
+
 ---
 
 ## Application
