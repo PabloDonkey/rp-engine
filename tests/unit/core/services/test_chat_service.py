@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, call
 from uuid import UUID
@@ -9,6 +10,7 @@ from rp_engine.application.services.chat_service import (
     FINISH_REASON_METADATA_KEY,
     THINKING_METADATA_KEY,
     ChatService,
+    SessionBusyError,
 )
 from rp_engine.core.character.character import Character
 from rp_engine.core.conversation.conversation import Conversation
@@ -1659,3 +1661,112 @@ async def test_the_submitted_job_runs_the_pipeline_write_half(
     await scheduler.jobs[0]()
 
     assert observed == [1]
+
+
+OTHER_SESSION_ID = UUID("00000000-0000-0000-0000-000000000222")
+
+
+def _blocking_generation(
+    orchestrator: AsyncMock,
+) -> tuple[asyncio.Event, asyncio.Event]:
+    """Hold a generation open so a second turn can be attempted while it runs."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow(_: GenerationRequest) -> LLMResponse:
+        started.set()
+        await release.wait()
+        return LLMResponse(content="held reply", finish_reason="stop", metadata={})
+
+    orchestrator.generate_reply = AsyncMock(side_effect=_slow)
+    return started, release
+
+
+@pytest.mark.asyncio
+async def test_a_second_turn_is_refused_while_the_first_is_generating(
+    scenario_context: ScenarioContext,
+) -> None:
+    """Telegram and the panel both reach one story. Only one of them may generate."""
+    service, orchestrator, _ = _build_service(scenario_context=scenario_context)
+    started, release = _blocking_generation(orchestrator)
+    identity = ConversationIdentity.for_session(str(SESSION_ID))
+
+    first = asyncio.create_task(
+        service.send_message(conversation_identity=identity, message="from telegram")
+    )
+    await started.wait()
+
+    with pytest.raises(SessionBusyError):
+        await service.send_message(conversation_identity=identity, message="from the panel")
+
+    release.set()
+    assert await first == "held reply"
+    # The refused turn never reached the model.
+    assert orchestrator.generate_reply.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_continue_and_retry_are_refused_by_the_same_guard(
+    scenario_context: ScenarioContext,
+) -> None:
+    service, orchestrator, _ = _build_service(scenario_context=scenario_context)
+    started, release = _blocking_generation(orchestrator)
+    identity = ConversationIdentity.for_session(str(SESSION_ID))
+
+    first = asyncio.create_task(
+        service.send_message(conversation_identity=identity, message="from telegram")
+    )
+    await started.wait()
+
+    with pytest.raises(SessionBusyError):
+        await service.continue_story(conversation_identity=identity)
+    with pytest.raises(SessionBusyError):
+        await service.regenerate_last_response(conversation_identity=identity)
+
+    release.set()
+    await first
+
+
+@pytest.mark.asyncio
+async def test_a_different_session_is_not_blocked(scenario_context: ScenarioContext) -> None:
+    """The guard is per story, not global. One busy session must not stall every other."""
+    service, orchestrator, _ = _build_service(scenario_context=scenario_context)
+    started, release = _blocking_generation(orchestrator)
+
+    first = asyncio.create_task(
+        service.send_message(
+            conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
+            message="from telegram",
+        )
+    )
+    await started.wait()
+
+    second = asyncio.create_task(
+        service.send_message(
+            conversation_identity=ConversationIdentity.for_session(str(OTHER_SESSION_ID)),
+            message="a different story",
+        )
+    )
+    await asyncio.sleep(0)
+    release.set()
+
+    assert await first == "held reply"
+    assert await second == "held reply"
+
+
+@pytest.mark.asyncio
+async def test_the_guard_releases_when_a_generation_fails(
+    scenario_context: ScenarioContext,
+) -> None:
+    """A turn that raises must not lock the story out until the process restarts."""
+    service, orchestrator, _ = _build_service(scenario_context=scenario_context)
+    orchestrator.generate_reply = AsyncMock(side_effect=RuntimeError("provider down"))
+    identity = ConversationIdentity.for_session(str(SESSION_ID))
+
+    with pytest.raises(RuntimeError, match="provider down"):
+        await service.send_message(conversation_identity=identity, message="one")
+
+    orchestrator.generate_reply = AsyncMock(
+        return_value=LLMResponse(content="second try", finish_reason="stop", metadata={})
+    )
+    assert await service.send_message(conversation_identity=identity, message="two") == "second try"

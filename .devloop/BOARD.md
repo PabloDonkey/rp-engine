@@ -16,11 +16,11 @@
 
 ## 🟡 Up Next
 
-### **S031** · Play a turn from the session page — the panel can read a story and operate on it, but not advance it; Telegram is the only place to play. Adds a composer to the existing session page: three turn routes on the admin router (thin wrappers over `send_message` / `continue_story` / `regenerate_last_response`, all of which already exist), a per-session generation lock so Telegram and the browser cannot generate into one story at once, and an optimistic transcript that shows your line before the reply lands. The layout work is the other half: the story is currently the **last** thing on a 697-line page, below a memory block larger than the transcript itself, so Persona / Memory / Directives become closed panels and S012's four per-message checkboxes move behind a `···`. Composer is a `[ Send ▾ ]` split button holding Continue and Retry, with room for the commands still on the bench. No login, no new dependency, no migration, no core port change. → [epic](epics/S031-play-from-the-session-page.md) · [design](https://claude.ai/code/artifact/bed99962-de97-4c5b-88d9-302fd4c2a65e)
+_(nothing queued)_
 
 ## 🟢 In Progress
 
-_(nothing in flight)_
+### **S031** · Play a turn from the session page — the panel can read a story and operate on it, but not advance it; Telegram is the only place to play. Adds a composer to the existing session page: three turn routes on the admin router (thin wrappers over `send_message` / `continue_story` / `regenerate_last_response`, all of which already exist), a per-session generation lock so Telegram and the browser cannot generate into one story at once, and an optimistic transcript that shows your line before the reply lands. The layout work is the other half: the story is currently the **last** thing on a 697-line page, below a memory block larger than the transcript itself, so Persona / Memory / Directives become closed panels and S012's four per-message checkboxes move behind a `···`. Composer is a `[ Send ▾ ]` split button holding Continue and Retry, with room for the commands still on the bench. No login, no new dependency, no migration, no core port change. → [epic](epics/S031-play-from-the-session-page.md) · [design](https://claude.ai/code/artifact/bed99962-de97-4c5b-88d9-302fd4c2a65e)
 
 ## ✅ Done (recent)
 

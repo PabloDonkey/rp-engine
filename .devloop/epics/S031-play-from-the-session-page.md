@@ -1,6 +1,8 @@
 # S031 · Play a turn from the session page
 
-**Status:** 🟡 NOT STARTED — written 2026-08-25, nothing built.
+**Status:** 🟢 IN PROGRESS — steps 1 and 2 done on `feat/S031-play-from-session-page`.
+821 tests pass, `mypy src` clean, `ruff check` clean. Steps 3 to 9 (all frontend, plus docs)
+are open.
 **Depends on:** **S009** (the admin panel and its session page), **S012** (the per-message debug
 filters this epic moves), **S029** (the memory block this epic collapses).
 **Design source:** [The Play View](https://claude.ai/code/artifact/bed99962-de97-4c5b-88d9-302fd4c2a65e)
@@ -72,22 +74,27 @@ New file `adapters/api/play_routes.py`, mounted on the existing `/admin` prefix 
 the session id in the path. The panel already knows whose story it is, because you walked
 user → sessions → this one.
 
-- [ ] `POST /admin/sessions/{session_id}/turn` — body `{"message": "..."}` →
+- [x] `POST /admin/sessions/{session_id}/turn` — body `{"message": "..."}` →
       `ChatService.send_message` ([chat_service.py:118](../../src/rp_engine/application/services/chat_service.py#L118)).
-- [ ] `POST /admin/sessions/{session_id}/continue` →
+- [x] `POST /admin/sessions/{session_id}/continue` →
       `ChatService.continue_story` ([:201](../../src/rp_engine/application/services/chat_service.py#L201)).
-- [ ] `POST /admin/sessions/{session_id}/retry` →
+- [x] `POST /admin/sessions/{session_id}/retry` →
       `ChatService.regenerate_last_response` ([:266](../../src/rp_engine/application/services/chat_service.py#L266)).
-- [ ] All three return the stored narrator message, not a bare string. The client needs the turn
+- [x] All three return the stored narrator message, not a bare string. The client needs the turn
       number and the finish reason, and it should not have to refetch the transcript to get them.
-- [ ] `ValueError` from the service becomes a 409 with the service's own text. Retry raises it for
+- [x] `ValueError` from the service becomes a 409 with the service's own text. Retry raises it for
       "last message is not a character reply", and that sentence is the right thing to show.
-- [ ] A retired session (`deleted_at` set, S016) refuses all three with a 409.
+- [x] A retired session (`deleted_at` set, S016) refuses all three with a 409.
 
 **Why on the admin router and not a new `/play` one.** These are operator actions on a chosen
 session, which is what the panel does everywhere else. S015 already set that precedent with
 `override_persona` — "an operator exception the player-facing guard never sees". A separate
 player router would imply a player identity that does not exist here.
+
+**Added beyond the written scope:** `LLMError` becomes a **502**. The epic only named the
+409 cases. Without this arm a model that is down returns a bare 500 with no body, and the
+pending row in the panel has nothing to show the player. Two lines, and it keeps "the model
+failed" separate from "your request was wrong".
 
 **Left alone:** the three existing routes in `routes.py`. They are wired into the composition root
 at [main.py:312](../../src/rp_engine/app/main.py#L312) and nothing in this epic needs them.
@@ -99,12 +106,12 @@ There is no guard today. Nothing stops a turn being sent from Telegram and from 
 the same time, and both would generate against the same session. With a Send button in front of
 you this stops being theoretical.
 
-- [ ] An in-process lock keyed by session id, in `ChatService`. Try to acquire; if it is held,
+- [x] An in-process lock keyed by session id, in `ChatService`. Try to acquire; if it is held,
       raise a "this story is already generating" error rather than waiting.
-- [ ] The three entry points that generate — `send_message`, `continue_story`,
+- [x] The three entry points that generate — `send_message`, `continue_story`,
       `regenerate_last_response` — take it. `clear_conversation` does not generate and does not
       need it.
-- [ ] The adapter turns the busy error into a 409. Telegram shows it as a normal reply.
+- [x] The adapter turns the busy error into a 409. Telegram shows it as a normal reply.
 
 **The assumption this rests on:** Telegram and FastAPI run in one process, wired together in
 [main.py](../../src/rp_engine/app/main.py). An in-process lock is therefore enough. Write that
