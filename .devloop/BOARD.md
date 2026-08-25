@@ -9,9 +9,14 @@
 ### Activate StoryGraph / scenario branching — `StoryGraph`+`StoryBeat` exist as inert data; nothing drives beats yet. _(bare card — gets an S### when promoted to an epic)_ → see `../docs/DOMAIN_MODEL.md`
 
 
+### Stream the reply, and let me stop it — **one card, not two: they are the same change.** Cancel needs the `PredictionStream` handle that only `respond_stream()` returns, and today `provider.py:116` calls `respond()` inside `asyncio.to_thread` — a Python thread nothing can stop from outside, so a browser that gives up leaves the model generating to the end with the next turn queued behind it. Streaming also changes the shape of `LLMProvider.generate`, which promises a *finished* reply, so this needs an **ADR** plus a pass over every reader of that promise: `ChatService`, the memory pipeline, the trace record, and S027 length recovery. S031 deliberately leaves room for it — its pending row is the shape the streamed text will fill, and Cancel becomes Send's state during a generation rather than a fourth control. _(bare card — gets an S### when promoted to an epic)_ → see [S031](epics/S031-play-from-the-session-page.md)
+
+### Start a new story from the panel — S031 plays sessions that already exist; it cannot create one. Needs a scenario picker and the persona form (a web form asks for name and description at once, so none of Telegram's `TelegramPendingPersonaStore` state machine comes along). Clean slice on its own. _(bare card — gets an S### when promoted to an epic)_ → see [S031](epics/S031-play-from-the-session-page.md)
+
+
 ## 🟡 Up Next
 
-_(nothing queued)_
+### **S031** · Play a turn from the session page — the panel can read a story and operate on it, but not advance it; Telegram is the only place to play. Adds a composer to the existing session page: three turn routes on the admin router (thin wrappers over `send_message` / `continue_story` / `regenerate_last_response`, all of which already exist), a per-session generation lock so Telegram and the browser cannot generate into one story at once, and an optimistic transcript that shows your line before the reply lands. The layout work is the other half: the story is currently the **last** thing on a 697-line page, below a memory block larger than the transcript itself, so Persona / Memory / Directives become closed panels and S012's four per-message checkboxes move behind a `···`. Composer is a `[ Send ▾ ]` split button holding Continue and Retry, with room for the commands still on the bench. No login, no new dependency, no migration, no core port change. → [epic](epics/S031-play-from-the-session-page.md) · [design](https://claude.ai/code/artifact/bed99962-de97-4c5b-88d9-302fd4c2a65e)
 
 ## 🟢 In Progress
 
