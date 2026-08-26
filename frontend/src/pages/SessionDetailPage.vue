@@ -797,7 +797,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           class="group"
           :class="
             message.role === 'user'
-              ? 'ml-3 max-w-[72ch] rounded-lg bg-blue-50/70 sm:ml-6 px-4 py-3 dark:bg-blue-950/30'
+              ? 'ml-3 rounded-lg bg-blue-50/70 sm:ml-6 px-4 py-3 dark:bg-blue-950/30'
               : ''
           "
         >
@@ -840,7 +840,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
             </span>
           </div>
           <div
-            class="max-w-[68ch] whitespace-pre-wrap"
+            class="whitespace-pre-wrap"
             :class="
               message.role === 'character'
                 ? 'font-serif text-[15px] leading-[1.55]'
@@ -949,14 +949,14 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           <div v-if="pending" class="mt-5 flex flex-col gap-5">
             <div
               v-if="pending.message"
-              class="ml-3 max-w-[72ch] rounded-lg bg-blue-50/70 sm:ml-6 px-4 py-3 dark:bg-blue-950/30"
+              class="ml-3 rounded-lg bg-blue-50/70 sm:ml-6 px-4 py-3 dark:bg-blue-950/30"
             >
               <div
                 class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400"
               >
                 you
               </div>
-              <div class="max-w-[68ch] whitespace-pre-wrap text-[15px] leading-[1.5]">
+              <div class="whitespace-pre-wrap text-[15px] leading-[1.5]">
                 {{ pending.message }}
               </div>
             </div>
@@ -971,7 +971,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
                 >
                   not sent
                 </div>
-                <div class="max-w-[68ch] text-[15px] text-red-800 dark:text-red-300">
+                <div class="text-[15px] text-red-800 dark:text-red-300">
                   {{ pending.error }}
                 </div>
                 <button
