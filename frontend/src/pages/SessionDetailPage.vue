@@ -785,7 +785,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
       <div class="relative">
         <div
           ref="transcriptEl"
-          class="h-[calc(100vh-24rem)] min-h-[15rem] overflow-y-auto rounded-lg border border-black/10 bg-white px-4 py-4 dark:border-white/10 dark:bg-neutral-900/40"
+          class="h-[calc(100vh-24rem)] min-h-[15rem] overflow-y-auto rounded-lg border border-black/10 bg-neutral-200/60 px-3 py-3 dark:border-white/10 dark:bg-black/30"
         >
           <p v-if="store.transcript.length === 0 && !pending" class="p-2 text-sm text-neutral-500">
             No messages yet.
@@ -794,11 +794,11 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
         <li
           v-for="(message, index) in store.transcript"
           :key="index"
-          class="group"
+          class="group rounded-lg px-4 py-3 shadow-sm ring-1"
           :class="
             message.role === 'user'
-              ? 'ml-3 rounded-lg bg-blue-50/70 sm:ml-6 px-4 py-3 dark:bg-blue-950/30'
-              : ''
+              ? 'ml-3 bg-blue-100 ring-blue-600/15 sm:ml-6 dark:bg-blue-950/70 dark:ring-blue-400/15'
+              : 'mr-3 bg-white ring-black/5 sm:mr-6 dark:bg-neutral-800 dark:ring-white/5'
           "
         >
           <div
@@ -807,26 +807,6 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
             <span>{{ roleLabel(message) }}</span>
             <span v-if="message.metadata.turn">&middot; turn {{ message.metadata.turn }}</span>
             <span class="ml-auto flex items-center gap-2">
-              <!-- The four S012 filters live behind this. It has to stay reachable: Retry
-                   replaces a reply, and the traces here are the only place the discarded
-                   one survives. -->
-              <button
-                v-if="message.role === 'character'"
-                type="button"
-                :disabled="!hasAnyDebug(message)"
-                class="rounded px-2 py-0.5 text-sm leading-none tracking-widest text-neutral-400 enabled:hover:bg-black/5 enabled:hover:text-neutral-700 disabled:opacity-40 dark:enabled:hover:bg-white/10 dark:enabled:hover:text-neutral-200"
-                :class="debugOpen(index) ? 'bg-black/5 text-neutral-600 dark:bg-white/10' : ''"
-                :aria-expanded="debugOpen(index)"
-                aria-label="Debug this turn"
-                :title="
-                  hasAnyDebug(message)
-                    ? 'Thinking, raw trace, system prompt, turn metadata'
-                    : 'Nothing was recorded for this turn — it predates generation traces.'
-                "
-                @click="toggleDebug(index, $event)"
-              >
-                &middot;&middot;&middot;
-              </button>
               <!-- Only the final message is deletable, which is what enforces the ordering. -->
               <button
                 v-if="isLastMessage(index)"
@@ -851,10 +831,24 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           </div>
 
           <template v-if="message.role === 'character'">
+            <!-- Named, and placed where its content will appear. A `···` in the header was
+                 two guesses: what it does, and where the answer will show up. -->
+            <button
+              type="button"
+              :disabled="!hasAnyDebug(message)"
+              class="mt-3 -mb-1 flex items-center gap-1.5 rounded text-[11px] font-medium uppercase tracking-wider text-neutral-400 enabled:hover:text-neutral-700 disabled:cursor-default disabled:opacity-60 dark:enabled:hover:text-neutral-200"
+              :aria-expanded="debugOpen(index)"
+              @click="toggleDebug(index, $event)"
+            >
+              <span aria-hidden="true" class="text-[9px]">{{ debugOpen(index) ? "▾" : "▸" }}</span>
+              <span v-if="!hasAnyDebug(message)">No admin data for this turn</span>
+              <span v-else>{{ debugOpen(index) ? "Hide" : "Show" }} admin actions</span>
+            </button>
+
             <div
               v-if="debugOpen(index)"
               data-debug-row
-              class="mt-2 flex scroll-mb-24 flex-wrap gap-3 border-t border-black/5 pt-2 text-xs text-neutral-600 dark:border-white/5 dark:text-neutral-400"
+              class="mt-2 flex scroll-mb-24 flex-wrap gap-3 border-t border-black/10 pt-2 text-xs text-neutral-600 dark:border-white/10 dark:text-neutral-400"
             >
               <label
                 class="flex items-center gap-1"
@@ -949,7 +943,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           <div v-if="pending" class="mt-5 flex flex-col gap-5">
             <div
               v-if="pending.message"
-              class="ml-3 rounded-lg bg-blue-50/70 sm:ml-6 px-4 py-3 dark:bg-blue-950/30"
+              class="ml-3 rounded-lg bg-blue-100 px-4 py-3 shadow-sm ring-1 ring-blue-600/15 sm:ml-6 dark:bg-blue-950/70 dark:ring-blue-400/15"
             >
               <div
                 class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400"
@@ -961,8 +955,11 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
               </div>
             </div>
             <div
+              class="mr-3 rounded-lg px-4 py-3 shadow-sm ring-1 sm:mr-6"
               :class="
-                pending.error ? 'rounded-lg bg-red-50 px-4 py-3 dark:bg-red-950/30' : ''
+                pending.error
+                  ? 'bg-red-50 ring-red-600/20 dark:bg-red-950/50 dark:ring-red-400/15'
+                  : 'bg-white ring-black/5 dark:bg-neutral-800 dark:ring-white/5'
               "
             >
               <template v-if="pending.error">
