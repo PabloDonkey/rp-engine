@@ -170,6 +170,13 @@ function isLastMessage(index: number): boolean {
   return index === store.transcript.length - 1;
 }
 
+/** What the reader calls each side. `user` / `character` are storage words, not reading ones. */
+function roleLabel(message: AdminMessage): string {
+  if (message.role === "user") return "you";
+  if (message.role === "character") return "narrator";
+  return message.role;
+}
+
 function messageLabel(message: AdminMessage): string {
   const turn = message.metadata.turn;
   return turn ? `turn ${turn}` : message.role;
@@ -700,55 +707,70 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
       <div class="relative">
         <div
           ref="transcriptEl"
-          class="max-h-[55vh] min-h-[14rem] overflow-y-auto rounded-lg border border-black/10 p-2 dark:border-white/10"
+          class="h-[calc(100vh-28rem)] min-h-[15rem] overflow-y-auto rounded-lg border border-black/10 bg-white px-4 py-4 dark:border-white/10 dark:bg-neutral-900/40"
         >
           <p v-if="store.transcript.length === 0 && !pending" class="p-2 text-sm text-neutral-500">
             No messages yet.
           </p>
-      <ol class="mb-6 flex flex-col gap-2">
+      <ol class="flex flex-col gap-5">
         <li
           v-for="(message, index) in store.transcript"
           :key="index"
-          class="rounded-lg border border-black/10 p-3 text-sm dark:border-white/10"
+          class="group"
           :class="
             message.role === 'user'
-              ? 'bg-blue-50 dark:bg-blue-950/40'
-              : 'bg-white dark:bg-neutral-900'
+              ? 'ml-3 max-w-[72ch] rounded-lg bg-blue-50/70 sm:ml-6 px-4 py-3 dark:bg-blue-950/30'
+              : ''
           "
         >
           <div
-            class="mb-1 flex items-center gap-2 text-xs font-semibold uppercase text-neutral-500"
+            class="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-400"
           >
-            <span>{{ message.role }}</span>
-            <span v-if="message.metadata.turn">&middot; Turn {{ message.metadata.turn }}</span>
-            <!-- Only the final message is deletable, which is what enforces the ordering. -->
-            <button
-              v-if="isLastMessage(index)"
-              type="button"
-              class="ml-auto rounded border border-red-600/40 px-2 py-0.5 text-[11px] font-medium normal-case text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
-              title="Delete this message. Only the last message can be deleted."
-              @click="onDeleteLastMessage(message)"
-            >
-              Delete last
-            </button>
-          </div>
-          <div class="whitespace-pre-wrap">{{ message.content }}</div>
-
-          <template v-if="message.role === 'character'">
-            <div class="mt-2 flex justify-end border-t border-black/5 pt-2 dark:border-white/5">
+            <span>{{ roleLabel(message) }}</span>
+            <span v-if="message.metadata.turn">&middot; turn {{ message.metadata.turn }}</span>
+            <span class="ml-auto flex items-center gap-2">
+              <!-- The four S012 filters live behind this. It has to stay reachable: Retry
+                   replaces a reply, and the traces here are the only place the discarded
+                   one survives. -->
               <button
+                v-if="message.role === 'character'"
                 type="button"
-                class="rounded px-2 text-xs tracking-widest text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10"
+                class="rounded px-2 py-0.5 text-sm leading-none tracking-widest text-neutral-400 hover:bg-black/5 hover:text-neutral-700 dark:hover:bg-white/10 dark:hover:text-neutral-200"
+                :class="debugOpen(index) ? 'bg-black/5 text-neutral-600 dark:bg-white/10' : ''"
                 :aria-expanded="debugOpen(index)"
+                aria-label="Debug this turn"
                 title="Thinking, raw trace, system prompt, turn metadata"
                 @click="toggleDebug(index)"
               >
                 &middot;&middot;&middot;
               </button>
-            </div>
+              <!-- Only the final message is deletable, which is what enforces the ordering. -->
+              <button
+                v-if="isLastMessage(index)"
+                type="button"
+                class="rounded border border-red-600/40 px-2 py-0.5 text-[11px] font-medium normal-case text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                title="Delete this message. Only the last message can be deleted."
+                @click="onDeleteLastMessage(message)"
+              >
+                Delete last
+              </button>
+            </span>
+          </div>
+          <div
+            class="max-w-[68ch] whitespace-pre-wrap"
+            :class="
+              message.role === 'character'
+                ? 'font-serif text-[15px] leading-[1.55]'
+                : 'text-[15px] leading-[1.5]'
+            "
+          >
+            {{ message.content }}
+          </div>
+
+          <template v-if="message.role === 'character'">
             <div
               v-if="debugOpen(index)"
-              class="mt-2 flex flex-wrap gap-3 pt-1 text-xs text-neutral-600 dark:text-neutral-400"
+              class="mt-2 flex flex-wrap gap-3 border-t border-black/5 pt-2 text-xs text-neutral-600 dark:border-white/5 dark:text-neutral-400"
             >
               <label
                 class="flex items-center gap-1"
@@ -815,27 +837,34 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
 
           <!-- The turn in flight. It is drawn here rather than pushed into `transcript`,
                which stays the server's list and nothing else. -->
-          <div v-if="pending" class="mt-2 flex flex-col gap-2">
+          <div v-if="pending" class="mt-5 flex flex-col gap-5">
             <div
               v-if="pending.message"
-              class="rounded-lg bg-blue-50 p-3 text-sm dark:bg-blue-950/40"
+              class="ml-3 max-w-[72ch] rounded-lg bg-blue-50/70 sm:ml-6 px-4 py-3 dark:bg-blue-950/30"
             >
-              <div class="mb-1 text-xs font-semibold uppercase text-neutral-500">you</div>
-              <div class="whitespace-pre-wrap">{{ pending.message }}</div>
+              <div
+                class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400"
+              >
+                you
+              </div>
+              <div class="max-w-[68ch] whitespace-pre-wrap text-[15px] leading-[1.5]">
+                {{ pending.message }}
+              </div>
             </div>
             <div
-              class="rounded-lg border p-3 text-sm"
               :class="
-                pending.error
-                  ? 'border-red-600/40 bg-red-50 dark:bg-red-950/40'
-                  : 'border-black/10 dark:border-white/10'
+                pending.error ? 'rounded-lg bg-red-50 px-4 py-3 dark:bg-red-950/30' : ''
               "
             >
               <template v-if="pending.error">
-                <div class="mb-1 text-xs font-semibold uppercase text-red-700 dark:text-red-400">
+                <div
+                  class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-red-700 dark:text-red-400"
+                >
                   not sent
                 </div>
-                <div class="text-red-700 dark:text-red-400">{{ pending.error }}</div>
+                <div class="max-w-[68ch] text-[15px] text-red-800 dark:text-red-300">
+                  {{ pending.error }}
+                </div>
                 <button
                   type="button"
                   class="mt-2 rounded border border-black/10 px-2 py-0.5 text-xs dark:border-white/10"
@@ -845,8 +874,17 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
                 </button>
               </template>
               <template v-else>
-                <div class="mb-1 text-xs font-semibold uppercase text-neutral-500">narrator</div>
-                <div class="italic text-neutral-500">The narrator is writing…</div>
+                <div
+                  class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400"
+                >
+                  narrator
+                </div>
+                <div class="flex items-center gap-2 font-serif text-[15px] italic text-neutral-400">
+                  <span
+                    class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-neutral-400"
+                  ></span>
+                  writing…
+                </div>
               </template>
             </div>
           </div>

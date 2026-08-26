@@ -150,7 +150,7 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocumentPoin
       <button
         type="button"
         :disabled="!canSend"
-        class="rounded-l-md border border-blue-600 bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+        class="rounded-l-md border border-neutral-900 bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40 dark:border-white dark:bg-white dark:text-neutral-900"
         @click="onSend"
       >
         {{ generating ? "Writing…" : "Send" }}
@@ -162,7 +162,7 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", onDocumentPoin
         aria-haspopup="menu"
         :aria-expanded="menuOpen"
         aria-label="More turn actions"
-        class="rounded-r-md border border-l-0 border-blue-600 bg-blue-600 px-2 py-2 text-xs text-white disabled:opacity-50"
+        class="rounded-r-md border border-l border-neutral-900 border-l-white/25 bg-neutral-900 px-2 py-2 text-xs text-white disabled:opacity-40 dark:border-white dark:border-l-black/20 dark:bg-white dark:text-neutral-900"
         @click="menuOpen ? closeMenu(false) : openMenu()"
         @keydown="onToggleKeydown"
       >
