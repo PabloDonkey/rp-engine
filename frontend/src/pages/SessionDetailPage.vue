@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
 import * as api from "@/api";
 import type { AdminMessage, AdminTrace } from "@/api";
-import CollapsiblePanel from "@/components/play/CollapsiblePanel.vue";
 import TurnComposer from "@/components/play/TurnComposer.vue";
 import { useStickToBottom } from "@/composables/useStickToBottom";
 import { useAdminStore } from "@/stores/admin";
@@ -289,6 +288,21 @@ const finishesReply = computed(
 );
 
 // What each closed panel says about itself.
+type PanelId = "persona" | "memory" | "directives";
+
+/** One panel open at a time. They are reference, not things to read side by side. */
+const openPanel = ref<PanelId | null>(null);
+
+function togglePanel(id: PanelId): void {
+  openPanel.value = openPanel.value === id ? null : id;
+}
+
+const PANELS = computed<{ id: PanelId; title: string; summary: string }[]>(() => [
+  { id: "persona", title: "Persona", summary: personaSummary.value },
+  { id: "memory", title: "Memory", summary: memorySummary.value },
+  { id: "directives", title: "Directives", summary: directivesSummary.value },
+]);
+
 const personaSummary = computed(() => store.session?.user_persona_name ?? "not set");
 
 const memorySummary = computed(() => {
@@ -340,13 +354,47 @@ async function onRetry(): Promise<void> {
   await store.playRetry(props.sessionId);
 }
 
+/** Whether this turn recorded anything the `···` could show.
+ *
+ * Turns written before S012/S022 carry no `turn` in their metadata, and the trace lookup is
+ * by turn number — so for those the drawer opens onto four checkboxes that each answer
+ * "nothing recorded". Say that on the control instead of behind it.
+ */
+function hasThinking(message: AdminMessage): boolean {
+  return Boolean(message.metadata.thinking);
+}
+
+function hasTrace(message: AdminMessage): boolean {
+  return tracesForTurn(message.metadata.turn).length > 0;
+}
+
+function hasSystemPrompt(message: AdminMessage): boolean {
+  return systemPromptFor(message.metadata.turn) !== "";
+}
+
+function hasAnyDebug(message: AdminMessage): boolean {
+  return hasThinking(message) || hasTrace(message);
+}
+
 function debugOpen(index: number): boolean {
   return filtersFor(index).menuOpen;
 }
 
-function toggleDebug(index: number): void {
+async function toggleDebug(index: number, event: MouseEvent): Promise<void> {
   const state = filtersFor(index);
   state.menuOpen = !state.menuOpen;
+  if (!state.menuOpen) return;
+  // The row opens *below* the message, and the message is usually the last one in a short
+  // scroll box — so the thing that just appeared is off-screen and the click reads as doing
+  // nothing. Bring it back into view once it exists.
+  await nextTick();
+  // Target the revealed row, not the message. A long narrator turn is taller than the scroll
+  // box, so the browser already counts the `li` as "in view" and `nearest` moves nothing —
+  // which is exactly the bug: the options open 500px below the fold and the click looks dead.
+  const row = (event.currentTarget as HTMLElement | null)
+    ?.closest("li")
+    ?.querySelector("[data-debug-row]");
+  row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 function turnMetaFor(turn: string | undefined): Record<string, unknown> {
@@ -400,10 +448,41 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
         </span>
       </div>
 
-      <!-- Closed by default. The story is what this page is for; the machinery behind it is
-           one click away, and each closed row still names its current value. -->
-      <div class="mb-4 grid gap-2">
-        <CollapsiblePanel title="Player persona" :summary="personaSummary">
+      <!-- One compact row, one open panel. Three stacked full-width cards cost the story
+           about 180px of height before it started, and only one of them is ever read at a
+           time. -->
+      <div class="mb-4">
+        <div class="flex flex-wrap gap-1.5">
+          <button
+            v-for="panel in PANELS"
+            :key="panel.id"
+            type="button"
+            class="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors"
+            :class="
+              openPanel === panel.id
+                ? 'border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900'
+                : 'border-black/10 bg-white text-neutral-600 hover:border-black/25 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-300'
+            "
+            :aria-expanded="openPanel === panel.id"
+            @click="togglePanel(panel.id)"
+          >
+            <span class="font-semibold">{{ panel.title }}</span>
+            <span
+              class="max-w-[13rem] truncate"
+              :class="openPanel === panel.id ? 'opacity-70' : 'text-neutral-400'"
+            >
+              {{ panel.summary }}
+            </span>
+          </button>
+        </div>
+
+        <!-- `v-show` inside, not `v-if`: the persona draft is edit state and must survive
+             opening a different panel. -->
+        <div
+          v-if="openPanel"
+          class="mt-2 max-h-[50vh] overflow-y-auto rounded-lg border border-black/10 bg-white p-3 text-sm dark:border-white/10 dark:bg-neutral-900/40"
+        >
+          <div v-show="openPanel === 'persona'">
       <div class="mb-6 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10">
         <!-- Editable here, but only here: /clear is still the only way a *player* can change
              their character. An admin sees the whole session, so they can correct one. -->
@@ -474,9 +553,8 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           a prompt.
         </p>
       </div>
-        </CollapsiblePanel>
-
-        <CollapsiblePanel title="Memory" :summary="memorySummary">
+          </div>
+          <div v-show="openPanel === 'memory'">
       <div
         class="mb-6 grid gap-3 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10"
       >
@@ -643,11 +721,10 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           No recap yet. It is written in the background, once the story passes the fold line.
         </p>
       </div>
-        </CollapsiblePanel>
-
-        <!-- Read-only: directives are set by the player over Telegram (/language, /rule,
-             /director), the panel only reflects them. -->
-        <CollapsiblePanel title="Directives" :summary="directivesSummary">
+          </div>
+          <!-- Read-only: directives are set by the player over Telegram (/language, /rule,
+               /director), the panel only reflects them. -->
+          <div v-show="openPanel === 'directives'">
       <dl
         class="mb-6 grid gap-2 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10"
       >
@@ -690,7 +767,8 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           </dd>
         </div>
       </dl>
-        </CollapsiblePanel>
+          </div>
+        </div>
       </div>
 
       <p
@@ -707,7 +785,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
       <div class="relative">
         <div
           ref="transcriptEl"
-          class="h-[calc(100vh-28rem)] min-h-[15rem] overflow-y-auto rounded-lg border border-black/10 bg-white px-4 py-4 dark:border-white/10 dark:bg-neutral-900/40"
+          class="h-[calc(100vh-24rem)] min-h-[15rem] overflow-y-auto rounded-lg border border-black/10 bg-white px-4 py-4 dark:border-white/10 dark:bg-neutral-900/40"
         >
           <p v-if="store.transcript.length === 0 && !pending" class="p-2 text-sm text-neutral-500">
             No messages yet.
@@ -735,12 +813,17 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
               <button
                 v-if="message.role === 'character'"
                 type="button"
-                class="rounded px-2 py-0.5 text-sm leading-none tracking-widest text-neutral-400 hover:bg-black/5 hover:text-neutral-700 dark:hover:bg-white/10 dark:hover:text-neutral-200"
+                :disabled="!hasAnyDebug(message)"
+                class="rounded px-2 py-0.5 text-sm leading-none tracking-widest text-neutral-400 enabled:hover:bg-black/5 enabled:hover:text-neutral-700 disabled:opacity-40 dark:enabled:hover:bg-white/10 dark:enabled:hover:text-neutral-200"
                 :class="debugOpen(index) ? 'bg-black/5 text-neutral-600 dark:bg-white/10' : ''"
                 :aria-expanded="debugOpen(index)"
                 aria-label="Debug this turn"
-                title="Thinking, raw trace, system prompt, turn metadata"
-                @click="toggleDebug(index)"
+                :title="
+                  hasAnyDebug(message)
+                    ? 'Thinking, raw trace, system prompt, turn metadata'
+                    : 'Nothing was recorded for this turn — it predates generation traces.'
+                "
+                @click="toggleDebug(index, $event)"
               >
                 &middot;&middot;&middot;
               </button>
@@ -770,29 +853,55 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           <template v-if="message.role === 'character'">
             <div
               v-if="debugOpen(index)"
-              class="mt-2 flex flex-wrap gap-3 border-t border-black/5 pt-2 text-xs text-neutral-600 dark:border-white/5 dark:text-neutral-400"
+              data-debug-row
+              class="mt-2 flex scroll-mb-24 flex-wrap gap-3 border-t border-black/5 pt-2 text-xs text-neutral-600 dark:border-white/5 dark:text-neutral-400"
             >
               <label
                 class="flex items-center gap-1"
-                :class="{ 'opacity-40': !message.metadata.thinking }"
+                :class="{ 'opacity-40': !hasThinking(message) }"
+                :title="hasThinking(message) ? '' : 'No thinking captured for this turn.'"
               >
                 <input
                   v-model="filtersFor(index).thinking"
                   type="checkbox"
-                  :disabled="!message.metadata.thinking"
+                  :disabled="!hasThinking(message)"
                 />
                 Thinking
               </label>
-              <label class="flex items-center gap-1">
-                <input v-model="filtersFor(index).trace" type="checkbox" />
+              <label
+                class="flex items-center gap-1"
+                :class="{ 'opacity-40': !hasTrace(message) }"
+                :title="hasTrace(message) ? '' : 'No trace recorded for this turn.'"
+              >
+                <input
+                  v-model="filtersFor(index).trace"
+                  type="checkbox"
+                  :disabled="!hasTrace(message)"
+                />
                 Raw trace
               </label>
-              <label class="flex items-center gap-1">
-                <input v-model="filtersFor(index).systemPrompt" type="checkbox" />
+              <label
+                class="flex items-center gap-1"
+                :class="{ 'opacity-40': !hasSystemPrompt(message) }"
+                :title="hasSystemPrompt(message) ? '' : 'No system prompt recorded for this turn.'"
+              >
+                <input
+                  v-model="filtersFor(index).systemPrompt"
+                  type="checkbox"
+                  :disabled="!hasSystemPrompt(message)"
+                />
                 System prompt
               </label>
-              <label class="flex items-center gap-1">
-                <input v-model="filtersFor(index).turnMeta" type="checkbox" />
+              <label
+                class="flex items-center gap-1"
+                :class="{ 'opacity-40': !hasTrace(message) }"
+                :title="hasTrace(message) ? '' : 'No trace recorded for this turn.'"
+              >
+                <input
+                  v-model="filtersFor(index).turnMeta"
+                  type="checkbox"
+                  :disabled="!hasTrace(message)"
+                />
                 Turn metadata
               </label>
             </div>
