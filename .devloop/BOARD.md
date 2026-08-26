@@ -16,7 +16,7 @@
 
 ## 🟡 Up Next
 
-_(nothing queued)_
+### **S032** · A design system for the admin panel — the panel has no design system; it has defaults and six pages that each guessed. Counted: **32 `<button>` elements and no button component** (eight distinct hand-rolled class strings for the same control), **33 colour literals** across seven hues with no token layer, **no `@font-face` anywhere**, and a `style.css` that is **13 lines** — a Tailwind import, `system-ui`, and two colours. S031 exposed it: that page now sets narrator prose in a serif at a chosen size and groups its controls into chips, and the other five pages read as a different application. Scope is tokens in Tailwind 4's `@theme`, three typefaces (self-hosted via `@fontsource` — **needs a yes before installing**, with system stacks as the no-dependency fallback), four primitives in `components/ui/`, then one route per commit. Verification is **36 renders** — six routes × three widths × two themes — because S031 proved that a page nobody looks at ships broken. No behaviour changes, no component library. → [epic](epics/S032-admin-panel-design-system.md) · [design](https://claude.ai/code/artifact/bed99962-de97-4c5b-88d9-302fd4c2a65e)
 
 ## 🟢 In Progress
 
