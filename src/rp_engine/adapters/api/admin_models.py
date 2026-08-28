@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from rp_engine.application.services.admin_service import (
     AdminDeletedMessage,
@@ -250,6 +250,24 @@ class AdminMessageResponse(BaseModel):
     @classmethod
     def from_message(cls, message: ConversationMessage) -> "AdminMessageResponse":
         return cls(role=message.role.value, content=message.content, metadata=message.metadata)
+
+
+class AdminPlayTurnRequest(BaseModel):
+    """One turn typed into the panel.
+
+    Mirrors the Telegram path: an empty message is refused before the model is ever asked,
+    because a blank turn costs a generation and teaches the story nothing.
+    """
+
+    message: str = Field(min_length=1)
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("message must not be empty")
+        return cleaned
 
 
 class AdminDeletedMessageResponse(BaseModel):

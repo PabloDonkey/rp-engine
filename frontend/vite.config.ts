@@ -24,10 +24,12 @@ export default defineConfig({
       },
     },
   },
-  // Named so the first test run on a clean checkout does not discover zod mid-run and
-  // reload, which Vitest warns is a source of flaky runs.
+  // Named so the first test run on a clean checkout does not discover these mid-run and
+  // reload, which Vitest warns is a source of flaky runs. `pinia` joined the list with S031,
+  // the first test to build a store: discovering it mid-run drops the active Pinia and every
+  // test in the file fails with "getActivePinia() was called but there was no active Pinia".
   optimizeDeps: {
-    include: ["zod"],
+    include: ["zod", "pinia"],
   },
   // Components are tested in a real browser, not in a simulated DOM. The form controls
   // this panel needs carry real focus, real selection and real file inputs, and a

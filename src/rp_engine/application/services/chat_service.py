@@ -1,4 +1,6 @@
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from time import perf_counter
@@ -59,6 +61,17 @@ logger = logging.getLogger(__name__)
 # The user turn sent when the player asks for more story without writing anything.
 CONTINUE_MESSAGE = "continue"
 
+
+class SessionBusyError(RuntimeError):
+    """A generation is already running for this session.
+
+    Two surfaces reach the same story: Telegram and the admin panel. Both call this
+    service, in the same process, so one set of session ids is enough to keep them apart.
+    That stops being true the moment the two surfaces run as separate processes — then this
+    has to move into Postgres, and the failure it prevents comes back silently until it does.
+    """
+
+
 # Metadata keys live in the core (`core/conversation/message.py`) and are re-exported here
 # so existing importers of `chat_service.FINISH_REASON_METADATA_KEY` keep working.
 __all__ = [
@@ -113,7 +126,28 @@ class ChatService:
         # Where the memory layers' write half runs. `None` means nothing observes turns,
         # which is what every caller that only reads memory gets.
         self._task_scheduler = task_scheduler
+        # Sessions with a generation in flight. Refusing beats queueing: a second turn
+        # started while the first is running would build its prompt from a history that is
+        # about to change under it, and the player who sent it is owed an answer, not a
+        # wait for a reply they did not ask for.
+        self._generating_sessions: set[UUID] = set()
         self._conversation_builder = ConversationBuilder()
+
+    @contextmanager
+    def _one_generation_per_session(self, session_id: UUID) -> Iterator[None]:
+        """Hold the right to generate for `session_id`, or refuse.
+
+        There is no await between the check and the add, so a second coroutine cannot slip
+        between them. `finally` matters more than it looks: a generation that raises must
+        release, or the story is locked out until the process restarts.
+        """
+        if session_id in self._generating_sessions:
+            raise SessionBusyError("This story is already writing a reply. Wait for it to finish.")
+        self._generating_sessions.add(session_id)
+        try:
+            yield
+        finally:
+            self._generating_sessions.discard(session_id)
 
     async def send_message(
         self,
@@ -126,77 +160,78 @@ class ChatService:
         processing_feedback: ProcessingFeedback | None = None,
     ) -> str:
         session_id = self._require_session_identity(conversation_identity)
-        memory_key = conversation_identity.to_memory_key()
-        logger.info(
-            "ChatService called",
-            extra={"memory_key": memory_key.value, "session_id": str(session_id)},
-        )
-        cleaned_message = message.strip()
-        if not cleaned_message:
-            raise ValueError("Message must not be empty.")
+        with self._one_generation_per_session(session_id):
+            memory_key = conversation_identity.to_memory_key()
+            logger.info(
+                "ChatService called",
+                extra={"memory_key": memory_key.value, "session_id": str(session_id)},
+            )
+            cleaned_message = message.strip()
+            if not cleaned_message:
+                raise ValueError("Message must not be empty.")
 
-        context = await self._load_scenario_context(session_id=session_id)
-        session = context.session
-        feedback = processing_feedback or NoOpProcessingFeedback()
-        async with processing_feedback_scope(feedback, context=self._feedback_context(context)):
-            history = await self._conversation_store.load_messages(memory_key)
-            recall = await self._recall(context, history=history, user_message=cleaned_message)
-            context_messages = list(recall.messages)
-            builder_input = self._build_input(
-                context,
-                recall=recall,
-                user_message=cleaned_message,
-            )
-            conversation = self._conversation_builder.build(builder_input)
-            request = GenerationRequest(
-                memory_key=memory_key,
-                conversation=conversation,
-                settings=self._generation_settings,
-            )
-            turn = self._resolve_turn(history)
-            resume_prefix, prefill_text = self._resume_anchor(
-                conversation=conversation,
-                context_messages=context_messages,
-                resumed=False,
-            )
+            context = await self._load_scenario_context(session_id=session_id)
+            session = context.session
+            feedback = processing_feedback or NoOpProcessingFeedback()
+            async with processing_feedback_scope(feedback, context=self._feedback_context(context)):
+                history = await self._conversation_store.load_messages(memory_key)
+                recall = await self._recall(context, history=history, user_message=cleaned_message)
+                context_messages = list(recall.messages)
+                builder_input = self._build_input(
+                    context,
+                    recall=recall,
+                    user_message=cleaned_message,
+                )
+                conversation = self._conversation_builder.build(builder_input)
+                request = GenerationRequest(
+                    memory_key=memory_key,
+                    conversation=conversation,
+                    settings=self._generation_settings,
+                )
+                turn = self._resolve_turn(history)
+                resume_prefix, prefill_text = self._resume_anchor(
+                    conversation=conversation,
+                    context_messages=context_messages,
+                    resumed=False,
+                )
 
-            llm_response = await self._generate_recovering_length(
-                request=request,
-                builder_input=builder_input,
-                resume_prefix=resume_prefix,
-                prefill_text=prefill_text,
-                session_id=session.id,
-                turn=turn,
-                memory_recall=recall,
+                llm_response = await self._generate_recovering_length(
+                    request=request,
+                    builder_input=builder_input,
+                    resume_prefix=resume_prefix,
+                    prefill_text=prefill_text,
+                    session_id=session.id,
+                    turn=turn,
+                    memory_recall=recall,
+                )
+                # Guard before the trace-adjacent work below: the trace is already recorded (an
+                # empty generation is exactly what you want a trace for), but nothing has been
+                # persisted to the conversation and the director note is still unconsumed.
+                self._require_content(llm_response)
+                character_response = llm_response.content
+            await self._consume_director_instruction(session)
+            await self._conversation_store.save_message(
+                memory_key,
+                ConversationMessage(
+                    role=ConversationRole.USER,
+                    content=cleaned_message,
+                    metadata={
+                        key: value
+                        for key, value in {
+                            "user_id": user_id,
+                            "username": username,
+                            "display_name": display_name,
+                        }.items()
+                        if value is not None
+                    },
+                ),
             )
-            # Guard before the trace-adjacent work below: the trace is already recorded (an
-            # empty generation is exactly what you want a trace for), but nothing has been
-            # persisted to the conversation and the director note is still unconsumed.
-            self._require_content(llm_response)
-            character_response = llm_response.content
-        await self._consume_director_instruction(session)
-        await self._conversation_store.save_message(
-            memory_key,
-            ConversationMessage(
-                role=ConversationRole.USER,
-                content=cleaned_message,
-                metadata={
-                    key: value
-                    for key, value in {
-                        "user_id": user_id,
-                        "username": username,
-                        "display_name": display_name,
-                    }.items()
-                    if value is not None
-                },
-            ),
-        )
-        await self._conversation_store.save_message(
-            memory_key,
-            self._narrator_message(llm_response, turn),
-        )
-        self._observe_turn(context, turn=turn)
-        return character_response
+            await self._conversation_store.save_message(
+                memory_key,
+                self._narrator_message(llm_response, turn),
+            )
+            self._observe_turn(context, turn=turn)
+            return character_response
 
     async def continue_story(
         self,
@@ -205,63 +240,64 @@ class ChatService:
         processing_feedback: ProcessingFeedback | None = None,
     ) -> str:
         session_id = self._require_session_identity(conversation_identity)
-        memory_key = conversation_identity.to_memory_key()
-        logger.info(
-            "ChatService continue called",
-            extra={"memory_key": memory_key.value, "session_id": str(session_id)},
-        )
-        context = await self._load_scenario_context(session_id=session_id)
-        session = context.session
-        feedback = processing_feedback or NoOpProcessingFeedback()
-        async with processing_feedback_scope(feedback, context=self._feedback_context(context)):
-            history = await self._conversation_store.load_messages(memory_key)
-            recall = await self._recall(context, history=history, user_message=CONTINUE_MESSAGE)
-            context_messages = list(recall.messages)
-            builder_input = self._build_input(
-                context,
-                recall=recall,
-                user_message=CONTINUE_MESSAGE,
+        with self._one_generation_per_session(session_id):
+            memory_key = conversation_identity.to_memory_key()
+            logger.info(
+                "ChatService continue called",
+                extra={"memory_key": memory_key.value, "session_id": str(session_id)},
             )
-            # If the last narrator reply was cut off at the token limit, resume it
-            # in place; otherwise advance the story with no player input.
-            resumed = self._should_resume(history)
-            if resumed:
-                conversation = self._conversation_builder.build_resume(builder_input)
-            else:
-                conversation = self._conversation_builder.build_continue(builder_input)
-            request = GenerationRequest(
-                memory_key=memory_key,
-                conversation=conversation,
-                settings=self._generation_settings,
-            )
-            turn = self._resolve_turn(history)
-            resume_prefix, prefill_text = self._resume_anchor(
-                conversation=conversation,
-                context_messages=context_messages,
-                resumed=resumed,
-            )
+            context = await self._load_scenario_context(session_id=session_id)
+            session = context.session
+            feedback = processing_feedback or NoOpProcessingFeedback()
+            async with processing_feedback_scope(feedback, context=self._feedback_context(context)):
+                history = await self._conversation_store.load_messages(memory_key)
+                recall = await self._recall(context, history=history, user_message=CONTINUE_MESSAGE)
+                context_messages = list(recall.messages)
+                builder_input = self._build_input(
+                    context,
+                    recall=recall,
+                    user_message=CONTINUE_MESSAGE,
+                )
+                # If the last narrator reply was cut off at the token limit, resume it
+                # in place; otherwise advance the story with no player input.
+                resumed = self._should_resume(history)
+                if resumed:
+                    conversation = self._conversation_builder.build_resume(builder_input)
+                else:
+                    conversation = self._conversation_builder.build_continue(builder_input)
+                request = GenerationRequest(
+                    memory_key=memory_key,
+                    conversation=conversation,
+                    settings=self._generation_settings,
+                )
+                turn = self._resolve_turn(history)
+                resume_prefix, prefill_text = self._resume_anchor(
+                    conversation=conversation,
+                    context_messages=context_messages,
+                    resumed=resumed,
+                )
 
-            llm_response = await self._generate_recovering_length(
-                request=request,
-                builder_input=builder_input,
-                resume_prefix=resume_prefix,
-                prefill_text=prefill_text,
-                session_id=session.id,
-                turn=turn,
-                memory_recall=recall,
+                llm_response = await self._generate_recovering_length(
+                    request=request,
+                    builder_input=builder_input,
+                    resume_prefix=resume_prefix,
+                    prefill_text=prefill_text,
+                    session_id=session.id,
+                    turn=turn,
+                    memory_recall=recall,
+                )
+                # Guard before the trace-adjacent work below: the trace is already recorded (an
+                # empty generation is exactly what you want a trace for), but nothing has been
+                # persisted to the conversation and the director note is still unconsumed.
+                self._require_content(llm_response)
+                character_response = llm_response.content
+            await self._consume_director_instruction(session)
+            await self._conversation_store.save_message(
+                memory_key,
+                self._narrator_message(llm_response, turn),
             )
-            # Guard before the trace-adjacent work below: the trace is already recorded (an
-            # empty generation is exactly what you want a trace for), but nothing has been
-            # persisted to the conversation and the director note is still unconsumed.
-            self._require_content(llm_response)
-            character_response = llm_response.content
-        await self._consume_director_instruction(session)
-        await self._conversation_store.save_message(
-            memory_key,
-            self._narrator_message(llm_response, turn),
-        )
-        self._observe_turn(context, turn=turn)
-        return character_response
+            self._observe_turn(context, turn=turn)
+            return character_response
 
     async def regenerate_last_response(
         self,
@@ -270,103 +306,104 @@ class ChatService:
         processing_feedback: ProcessingFeedback | None = None,
     ) -> str:
         session_id = self._require_session_identity(conversation_identity)
-        memory_key = conversation_identity.to_memory_key()
-        logger.info(
-            "ChatService regenerate called",
-            extra={"memory_key": memory_key.value, "session_id": str(session_id)},
-        )
-        context = await self._load_scenario_context(session_id=session_id)
-        session = context.session
-        feedback = processing_feedback or NoOpProcessingFeedback()
-        async with processing_feedback_scope(feedback, context=self._feedback_context(context)):
-            history = await self._conversation_store.load_messages(memory_key)
-            if not history:
-                raise ValueError("Conversation is empty. Nothing to regenerate.")
-            if history[-1].role != ConversationRole.CHARACTER:
-                raise ValueError(
-                    "Last message is not a character reply. Regenerate is not available yet."
-                )
+        with self._one_generation_per_session(session_id):
+            memory_key = conversation_identity.to_memory_key()
+            logger.info(
+                "ChatService regenerate called",
+                extra={"memory_key": memory_key.value, "session_id": str(session_id)},
+            )
+            context = await self._load_scenario_context(session_id=session_id)
+            session = context.session
+            feedback = processing_feedback or NoOpProcessingFeedback()
+            async with processing_feedback_scope(feedback, context=self._feedback_context(context)):
+                history = await self._conversation_store.load_messages(memory_key)
+                if not history:
+                    raise ValueError("Conversation is empty. Nothing to regenerate.")
+                if history[-1].role != ConversationRole.CHARACTER:
+                    raise ValueError(
+                        "Last message is not a character reply. Regenerate is not available yet."
+                    )
 
-            trimmed_history = history[:-1]
-            if not trimmed_history:
-                raise ValueError("Conversation has no user message to regenerate from.")
-
-            latest_context_message = trimmed_history[-1]
-            resumed = False
-            if latest_context_message.role == ConversationRole.USER:
-                latest_user_index = self._find_latest_user_index(trimmed_history)
-                if latest_user_index is None:
+                trimmed_history = history[:-1]
+                if not trimmed_history:
                     raise ValueError("Conversation has no user message to regenerate from.")
 
-                last_user = trimmed_history[latest_user_index]
-                prior_history = trimmed_history[:latest_user_index]
-                recall = await self._recall(
-                    context, history=prior_history, user_message=last_user.content
-                )
-                context_messages = list(recall.messages)
-                builder_input = self._build_input(
-                    context,
-                    recall=recall,
-                    user_message=last_user.content,
-                )
-                conversation = self._conversation_builder.build(builder_input)
-            elif latest_context_message.role == ConversationRole.CHARACTER:
-                recall = await self._recall(
-                    context, history=trimmed_history, user_message=CONTINUE_MESSAGE
-                )
-                context_messages = list(recall.messages)
-                builder_input = self._build_input(
-                    context,
-                    recall=recall,
-                    user_message=CONTINUE_MESSAGE,
-                )
-                # Mirror `continue_story`: once the failed turn is dropped, whatever is now
-                # last decides the mode. Retrying a resume must resume again — advancing
-                # instead would strand the cut-off sentence permanently, since the turn that
-                # would have finished it is the one being replaced.
-                resumed = self._should_resume(trimmed_history)
-                if resumed:
-                    conversation = self._conversation_builder.build_resume(builder_input)
+                latest_context_message = trimmed_history[-1]
+                resumed = False
+                if latest_context_message.role == ConversationRole.USER:
+                    latest_user_index = self._find_latest_user_index(trimmed_history)
+                    if latest_user_index is None:
+                        raise ValueError("Conversation has no user message to regenerate from.")
+
+                    last_user = trimmed_history[latest_user_index]
+                    prior_history = trimmed_history[:latest_user_index]
+                    recall = await self._recall(
+                        context, history=prior_history, user_message=last_user.content
+                    )
+                    context_messages = list(recall.messages)
+                    builder_input = self._build_input(
+                        context,
+                        recall=recall,
+                        user_message=last_user.content,
+                    )
+                    conversation = self._conversation_builder.build(builder_input)
+                elif latest_context_message.role == ConversationRole.CHARACTER:
+                    recall = await self._recall(
+                        context, history=trimmed_history, user_message=CONTINUE_MESSAGE
+                    )
+                    context_messages = list(recall.messages)
+                    builder_input = self._build_input(
+                        context,
+                        recall=recall,
+                        user_message=CONTINUE_MESSAGE,
+                    )
+                    # Mirror `continue_story`: once the failed turn is dropped, whatever is now
+                    # last decides the mode. Retrying a resume must resume again — advancing
+                    # instead would strand the cut-off sentence permanently, since the turn that
+                    # would have finished it is the one being replaced.
+                    resumed = self._should_resume(trimmed_history)
+                    if resumed:
+                        conversation = self._conversation_builder.build_resume(builder_input)
+                    else:
+                        conversation = self._conversation_builder.build_continue(builder_input)
                 else:
-                    conversation = self._conversation_builder.build_continue(builder_input)
-            else:
-                raise ValueError("Conversation has no valid context to regenerate from.")
-            request = GenerationRequest(
-                memory_key=memory_key,
-                conversation=conversation,
-                settings=self._generation_settings,
-            )
-            turn = self._resolve_turn(trimmed_history)
-            resume_prefix, prefill_text = self._resume_anchor(
-                conversation=conversation,
-                context_messages=context_messages,
-                resumed=resumed,
-            )
+                    raise ValueError("Conversation has no valid context to regenerate from.")
+                request = GenerationRequest(
+                    memory_key=memory_key,
+                    conversation=conversation,
+                    settings=self._generation_settings,
+                )
+                turn = self._resolve_turn(trimmed_history)
+                resume_prefix, prefill_text = self._resume_anchor(
+                    conversation=conversation,
+                    context_messages=context_messages,
+                    resumed=resumed,
+                )
 
-            llm_response = await self._generate_recovering_length(
-                request=request,
-                builder_input=builder_input,
-                resume_prefix=resume_prefix,
-                prefill_text=prefill_text,
-                session_id=session.id,
-                turn=turn,
-                memory_recall=recall,
-            )
-            # Must precede the `clear()` below — a retry that came back empty must not cost
-            # the player the history it was regenerating from.
-            self._require_content(llm_response)
-            character_response = llm_response.content
+                llm_response = await self._generate_recovering_length(
+                    request=request,
+                    builder_input=builder_input,
+                    resume_prefix=resume_prefix,
+                    prefill_text=prefill_text,
+                    session_id=session.id,
+                    turn=turn,
+                    memory_recall=recall,
+                )
+                # Must precede the `clear()` below — a retry that came back empty must not cost
+                # the player the history it was regenerating from.
+                self._require_content(llm_response)
+                character_response = llm_response.content
 
-        await self._consume_director_instruction(session)
-        await self._conversation_store.clear(memory_key)
-        for message in trimmed_history:
-            await self._conversation_store.save_message(memory_key, message)
-        await self._conversation_store.save_message(
-            memory_key,
-            self._narrator_message(llm_response, turn),
-        )
-        self._observe_turn(context, turn=turn)
-        return character_response
+            await self._consume_director_instruction(session)
+            await self._conversation_store.clear(memory_key)
+            for message in trimmed_history:
+                await self._conversation_store.save_message(memory_key, message)
+            await self._conversation_store.save_message(
+                memory_key,
+                self._narrator_message(llm_response, turn),
+            )
+            self._observe_turn(context, turn=turn)
+            return character_response
 
     async def _generate_traced(
         self,

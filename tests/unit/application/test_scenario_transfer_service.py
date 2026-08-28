@@ -9,6 +9,8 @@ from rp_engine.application.services.scenario_transfer_service import ScenarioTra
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import MemoryKey
+from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
+from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.infrastructure.scenario_serialization import scenario_definition_to_payload
@@ -17,7 +19,7 @@ from rp_engine.infrastructure.scenario_transfer import SYSTEM_OWNER_ID
 USER_ID = UUID("00000000-0000-0000-0000-000000000042")
 
 
-class FakeScenarioDefinitionStore:
+class FakeScenarioDefinitionStore(ScenarioDefinitionStore):
     def __init__(self) -> None:
         self.items: dict[str, ScenarioDefinition] = {}
 
@@ -47,7 +49,7 @@ class FakeScenarioDefinitionStore:
             self.items[scenario_id] = replace(stored, deleted_at=None)
 
 
-class FakeScenarioSessionStore:
+class FakeScenarioSessionStore(ScenarioSessionStore):
     def __init__(self) -> None:
         self.sessions: dict[UUID, ScenarioSession] = {}
 
@@ -109,9 +111,17 @@ class FakeConversationStore:
     async def clear(self, memory_key: MemoryKey) -> None:
         self.messages.pop(memory_key.value, None)
 
+    async def delete_last_message(self, memory_key: MemoryKey) -> ConversationMessage | None:
+        stored = self.messages.get(memory_key.value)
+        if not stored:
+            return None
+        return stored.pop()
+
 
 def _service() -> tuple[
-    ScenarioTransferService, FakeScenarioDefinitionStore, FakeScenarioSessionStore,
+    ScenarioTransferService,
+    FakeScenarioDefinitionStore,
+    FakeScenarioSessionStore,
     FakeConversationStore,
 ]:
     definition_store = FakeScenarioDefinitionStore()
@@ -197,9 +207,7 @@ async def test_export_scenario_missing_returns_none() -> None:
 @pytest.mark.asyncio
 async def test_session_export_import_round_trips_transcript() -> None:
     service, _, session_store, conversation_store = _service()
-    session = ScenarioSession.create_for_user(
-        scenario_definition_id="vault", user_id=USER_ID
-    )
+    session = ScenarioSession.create_for_user(scenario_definition_id="vault", user_id=USER_ID)
     await session_store.save(session)
     memory_key = MemoryKey(f"session_{session.id}")
     await conversation_store.save_message(
@@ -208,9 +216,7 @@ async def test_session_export_import_round_trips_transcript() -> None:
 
     exported = await service.export_session(session.id)
     assert exported is not None
-    assert exported["transcript"] == [
-        {"role": "character", "content": "Opening.", "metadata": {}}
-    ]
+    assert exported["transcript"] == [{"role": "character", "content": "Opening.", "metadata": {}}]
 
     other_session_store = FakeScenarioSessionStore()
     other_conversation_store = FakeConversationStore()

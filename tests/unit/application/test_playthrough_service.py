@@ -8,6 +8,8 @@ from rp_engine.application.services.playthrough_service import PlaythroughServic
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
+from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
+from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives
@@ -27,7 +29,7 @@ def _scenario(scenario_id: str, *, name: str, opening: str) -> ScenarioDefinitio
     )
 
 
-class FakeScenarioDefinitionStore:
+class FakeScenarioDefinitionStore(ScenarioDefinitionStore):
     def __init__(self) -> None:
         self.items: dict[str, ScenarioDefinition] = {}
 
@@ -57,7 +59,7 @@ class FakeScenarioDefinitionStore:
             self.items[scenario_id] = replace(stored, deleted_at=None)
 
 
-class FakeScenarioSessionStore:
+class FakeScenarioSessionStore(ScenarioSessionStore):
     def __init__(self) -> None:
         self.sessions: dict[UUID, ScenarioSession] = {}
         self.active: dict[tuple[str, UUID], UUID] = {}
@@ -134,6 +136,12 @@ class FakeConversationStore:
 
     async def clear(self, memory_key: MemoryKey) -> None:
         self.messages.pop(memory_key.value, None)
+
+    async def delete_last_message(self, memory_key: MemoryKey) -> ConversationMessage | None:
+        stored = self.messages.get(memory_key.value)
+        if not stored:
+            return None
+        return stored.pop()
 
 
 def _service(

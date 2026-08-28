@@ -20,7 +20,7 @@ from rp_engine.adapters.telegram.models import TelegramCommand
 from rp_engine.adapters.telegram.narrator_store import TelegramNarratorStore
 from rp_engine.adapters.telegram.pending_persona_store import TelegramPendingPersonaStore
 from rp_engine.adapters.telegram.splitter import split_message
-from rp_engine.application.services.chat_service import ChatService
+from rp_engine.application.services.chat_service import ChatService, SessionBusyError
 from rp_engine.application.services.playthrough_service import PlaythroughStart
 from rp_engine.core.conversation.builder import ConversationBuilder
 from rp_engine.core.group.group import Group
@@ -612,6 +612,16 @@ class TelegramAdapter:
             )
             error_text = str(exc).strip() or "Please send a non-empty message."
             await self._reply_with_split(message=message, text=error_text)
+            return
+        except SessionBusyError as exc:
+            # Deliberately not "failure", and deliberately not `logger.exception`. The panel
+            # and Telegram both reach one story, so losing the race is ordinary and carries
+            # no stack worth keeping. The service already wrote the sentence for the player.
+            logger.info(
+                "Telegram turn refused: session_busy",
+                extra={"reason": "session_busy", "user_id": user_id},
+            )
+            await self._reply_with_split(message=message, text=str(exc))
             return
         except LLMConnectionError:
             logger.exception(

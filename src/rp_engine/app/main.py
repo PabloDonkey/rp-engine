@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from rp_engine.adapters.api import create_admin_router
+from rp_engine.adapters.api import create_admin_router, create_play_router
 from rp_engine.adapters.api import create_router as create_api_router
 from rp_engine.adapters.telegram.adapter import (
     TelegramAdapter,
@@ -317,6 +317,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             container.scenario_transfer_service,
         )
     )
+    app.include_router(create_play_router(container.admin_service, container.chat_service))
 
     @app.get("/health")
     async def health() -> dict[str, object]:

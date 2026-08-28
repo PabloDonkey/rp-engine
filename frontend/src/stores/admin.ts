@@ -26,6 +26,21 @@ function toSummary(payload: ScenarioPayload, sessionCount = 0): ScenarioSummary 
   };
 }
 
+/** What the panel asked the story to do, while it is still asking.
+ *
+ * This rides *beside* `transcript` rather than inside it. `transcript` is the server's list
+ * and everything that reads it — the delete-last button, the per-turn trace lookup — treats
+ * every entry as real and stored. Slipping a not-yet-real row in means teaching all of them
+ * to tell the difference, which is a worse trade than one extra field.
+ */
+export type PendingTurn = {
+  action: "turn" | "continue" | "retry";
+  /** What the player typed. Null for continue and retry, which send no text. */
+  message: string | null;
+  /** Set when the turn came back refused or failed. The typed text stays on screen with it. */
+  error: string | null;
+};
+
 export const useAdminStore = defineStore("admin", {
   state: () => ({
     users: [] as AdminUser[],
@@ -47,6 +62,8 @@ export const useAdminStore = defineStore("admin", {
     // recap is, and what the recap says. Null until the session detail is loaded.
     sessionMemory: null as SessionMemory | null,
     memoryBusy: false,
+    // The turn in flight, or the one that just failed. Null when the story is idle.
+    pendingTurn: null as PendingTurn | null,
     sessionLoading: false,
     sessionError: null as string | null,
 
@@ -64,6 +81,12 @@ export const useAdminStore = defineStore("admin", {
     scenarioLoading: false,
     scenarioError: null as string | null,
   }),
+  getters: {
+    /** A turn is in flight. A pending row that carries an error is finished, not running. */
+    isGenerating(state): boolean {
+      return state.pendingTurn !== null && state.pendingTurn.error === null;
+    },
+  },
   actions: {
     async fetchUsers(): Promise<void> {
       this.usersLoading = true;
@@ -270,6 +293,66 @@ export const useAdminStore = defineStore("admin", {
       if (this.scenario?.id === scenarioId) {
         await this.fetchScenario(scenarioId);
       }
+    },
+
+    // --- Playing a turn (S031) ---
+
+    async playTurn(sessionId: string, message: string): Promise<boolean> {
+      return this.runTurn(sessionId, "turn", message, () => api.sendTurn(sessionId, message));
+    },
+
+    async playContinue(sessionId: string): Promise<boolean> {
+      return this.runTurn(sessionId, "continue", null, () => api.continueStory(sessionId));
+    },
+
+    async playRetry(sessionId: string): Promise<boolean> {
+      return this.runTurn(sessionId, "retry", null, () => api.retryTurn(sessionId));
+    },
+
+    /** One turn, start to finish.
+     *
+     * The pending row is set before the request goes out, which is the whole point: a reply
+     * takes tens of seconds and a page with no visible pending state reads as broken.
+     *
+     * On success the session is re-read rather than the reply appended. The server is the
+     * authority on what the transcript now holds — Retry in particular *replaces* a message
+     * rather than adding one — and the same read refreshes the memory bars and the traces
+     * the new turn produced.
+     */
+    async runTurn(
+      sessionId: string,
+      action: PendingTurn["action"],
+      message: string | null,
+      run: () => Promise<unknown>,
+    ): Promise<boolean> {
+      if (this.isGenerating) {
+        return false;
+      }
+      this.actionError = null;
+      this.pendingTurn = { action, message, error: null };
+      try {
+        await run();
+        // Cleared only once the refetched transcript is in. Clearing it first drops
+        // `isGenerating` while the old transcript is still on screen, which re-enables Send
+        // and lets a second turn go out against a story the operator cannot see yet.
+        await this.fetchSessionDetail(sessionId);
+        this.pendingTurn = null;
+        return true;
+      } catch (error) {
+        // Keep the pending row and put the reason in it. The typed text lives there, so
+        // failing this way is what stops a refused turn eating what the player wrote.
+        this.pendingTurn = {
+          action,
+          message,
+          error: error instanceof Error ? error.message : String(error),
+        };
+        return false;
+      }
+    },
+
+    /** Drop a failed turn: the player has read the reason, or is retyping. */
+    clearPendingTurn(): void {
+      this.pendingTurn = null;
     },
   },
 });
