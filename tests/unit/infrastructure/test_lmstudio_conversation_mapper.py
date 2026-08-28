@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 
 from rp_engine.core.conversation.conversation import Conversation
@@ -26,9 +28,7 @@ class FakeChat:
         # The real SDK rejects this outright; a double that allows it let a live crash
         # through once already. Mirror the constraint so it cannot happen again.
         if self.entries and self.entries[-1][0] == "assistant":
-            raise RuntimeError(
-                "Multi-part or consecutive assistant responses are not supported."
-            )
+            raise RuntimeError("Multi-part or consecutive assistant responses are not supported.")
         self.entries.append(("assistant", message))
 
 
@@ -50,7 +50,7 @@ def test_mapper_maps_character_role_to_assistant() -> None:
         ]
     )
 
-    mapped = LMStudioConversationMapper().map_conversation(conversation)
+    mapped = cast(FakeChat, LMStudioConversationMapper().map_conversation(conversation))
 
     assert mapped.system_prompt == "system context"
     assert mapped.entries == [("user", "hello"), ("assistant", "hi there")]
@@ -70,7 +70,7 @@ def test_multi_turn_history_alternates_roles() -> None:
         ]
     )
 
-    mapped = LMStudioConversationMapper().map_conversation(conversation)
+    mapped = cast(FakeChat, LMStudioConversationMapper().map_conversation(conversation))
 
     assert [role for role, _ in mapped.entries] == ["user", "assistant", "user", "assistant"]
     assert [content for _, content in mapped.entries] == ["u1", "a1", "u2", "a2"]
@@ -86,7 +86,7 @@ def test_system_messages_are_merged_into_the_system_prompt() -> None:
         ]
     )
 
-    mapped = LMStudioConversationMapper().map_conversation(conversation)
+    mapped = cast(FakeChat, LMStudioConversationMapper().map_conversation(conversation))
 
     assert mapped.system_prompt == "first\n\nsecond"
     assert mapped.entries == [("user", "hello")]
@@ -117,7 +117,7 @@ def test_resume_conversation_maps_to_an_assistant_final_chat() -> None:
         continue_final_message=True,
     )
 
-    mapped = LMStudioConversationMapper().map_conversation(conversation)
+    mapped = cast(FakeChat, LMStudioConversationMapper().map_conversation(conversation))
 
     assert mapped.entries[-1] == ("assistant", "She reached for the door and")
 
@@ -158,7 +158,7 @@ def test_consecutive_narrator_turns_are_merged_into_one_assistant_message() -> N
         ]
     )
 
-    mapped = LMStudioConversationMapper().map_conversation(conversation)
+    mapped = cast(FakeChat, LMStudioConversationMapper().map_conversation(conversation))
 
     assert mapped.entries == [
         ("assistant", "The opening."),
@@ -187,7 +187,7 @@ def test_a_truncated_turn_is_rejoined_without_a_paragraph_break() -> None:
         ]
     )
 
-    mapped = LMStudioConversationMapper().map_conversation(conversation)
+    mapped = cast(FakeChat, LMStudioConversationMapper().map_conversation(conversation))
 
     assert mapped.entries[-1] == (
         "assistant",
@@ -214,7 +214,7 @@ def test_merging_preserves_the_prefill_shape_for_a_resume() -> None:
     )
 
     mapper = LMStudioConversationMapper()
-    mapped = mapper.map_conversation(conversation)
+    mapped = cast(FakeChat, mapper.map_conversation(conversation))
 
     assert mapper.is_prefill(conversation)
     assert mapped.entries[-1] == (
@@ -234,6 +234,6 @@ def test_a_run_of_three_narrator_turns_collapses_to_one_entry() -> None:
         ]
     )
 
-    mapped = LMStudioConversationMapper().map_conversation(conversation)
+    mapped = cast(FakeChat, LMStudioConversationMapper().map_conversation(conversation))
 
     assert mapped.entries == [("assistant", "one\n\ntwo\n\nthree")]

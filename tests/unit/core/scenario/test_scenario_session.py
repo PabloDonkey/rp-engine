@@ -16,7 +16,7 @@ def sample_group_id() -> UUID:
     return UUID("87654321-4321-8765-4321-876543218765")
 
 
-def test_scenario_session_creation(sample_user_id: UUID):
+def test_scenario_session_creation(sample_user_id: UUID) -> None:
     session = ScenarioSession(
         id=UUID("11111111-1111-1111-1111-111111111111"),
         scenario_definition_id="scenario_1",
@@ -33,7 +33,7 @@ def test_scenario_session_creation(sample_user_id: UUID):
     assert session.metadata == {}
 
 
-def test_scenario_session_with_participants(sample_user_id: UUID):
+def test_scenario_session_with_participants(sample_user_id: UUID) -> None:
     participants = {"protagonist": "char_1", "antagonist": "char_2"}
     session = ScenarioSession(
         id=UUID("11111111-1111-1111-1111-111111111111"),
@@ -46,7 +46,7 @@ def test_scenario_session_with_participants(sample_user_id: UUID):
     assert session.active_participants == participants
 
 
-def test_scenario_session_with_world_state(sample_user_id: UUID):
+def test_scenario_session_with_world_state(sample_user_id: UUID) -> None:
     world_state = {"location": "forest", "time": "night", "weather": "rainy"}
     session = ScenarioSession(
         id=UUID("11111111-1111-1111-1111-111111111111"),
@@ -59,7 +59,7 @@ def test_scenario_session_with_world_state(sample_user_id: UUID):
     assert session.world_state == world_state
 
 
-def test_scenario_session_with_story_progress(sample_user_id: UUID):
+def test_scenario_session_with_story_progress(sample_user_id: UUID) -> None:
     story_progress = {
         "act": 1,
         "current_quest": "rescue_princess",
@@ -76,7 +76,7 @@ def test_scenario_session_with_story_progress(sample_user_id: UUID):
     assert session.story_progress == story_progress
 
 
-def test_scenario_session_with_metadata(sample_user_id: UUID):
+def test_scenario_session_with_metadata(sample_user_id: UUID) -> None:
     metadata = {"difficulty": "hard", "mode": "hardcore"}
     session = ScenarioSession(
         id=UUID("11111111-1111-1111-1111-111111111111"),
@@ -89,7 +89,7 @@ def test_scenario_session_with_metadata(sample_user_id: UUID):
     assert session.metadata == metadata
 
 
-def test_scenario_session_has_timestamp(sample_user_id: UUID):
+def test_scenario_session_has_timestamp(sample_user_id: UUID) -> None:
     before = datetime.now(UTC)
     session = ScenarioSession(
         id=UUID("11111111-1111-1111-1111-111111111111"),
@@ -102,7 +102,7 @@ def test_scenario_session_has_timestamp(sample_user_id: UUID):
     assert before <= session.created_at <= after
 
 
-def test_scenario_session_immutability(sample_user_id: UUID):
+def test_scenario_session_immutability(sample_user_id: UUID) -> None:
     session = ScenarioSession(
         id=UUID("11111111-1111-1111-1111-111111111111"),
         scenario_definition_id="scenario_1",
@@ -114,7 +114,7 @@ def test_scenario_session_immutability(sample_user_id: UUID):
         session.scenario_definition_id = "scenario_2"  # type: ignore
 
 
-def test_scenario_session_create_for_user(sample_user_id: UUID):
+def test_scenario_session_create_for_user(sample_user_id: UUID) -> None:
     session = ScenarioSession.create_for_user(
         scenario_definition_id="scenario_1",
         user_id=sample_user_id,
@@ -129,7 +129,7 @@ def test_scenario_session_create_for_user(sample_user_id: UUID):
     assert session.metadata == {}
 
 
-def test_scenario_session_create_for_user_with_full_context(sample_user_id: UUID):
+def test_scenario_session_create_for_user_with_full_context(sample_user_id: UUID) -> None:
     participants = {"protagonist": "char_1"}
     world_state = {"location": "castle"}
     story_progress = {"chapter": 1}
@@ -152,7 +152,7 @@ def test_scenario_session_create_for_user_with_full_context(sample_user_id: UUID
     assert session.metadata == metadata
 
 
-def test_scenario_session_create_for_group(sample_group_id: UUID):
+def test_scenario_session_create_for_group(sample_group_id: UUID) -> None:
     session = ScenarioSession.create_for_group(
         scenario_definition_id="scenario_1",
         group_id=sample_group_id,
@@ -167,7 +167,7 @@ def test_scenario_session_create_for_group(sample_group_id: UUID):
     assert session.metadata == {}
 
 
-def test_scenario_session_create_for_group_with_full_context(sample_group_id: UUID):
+def test_scenario_session_create_for_group_with_full_context(sample_group_id: UUID) -> None:
     participants = {"protagonist": "char_1", "narrator": "char_2"}
     world_state = {"location": "tavern"}
     story_progress = {"scene": 2}
@@ -190,7 +190,7 @@ def test_scenario_session_create_for_group_with_full_context(sample_group_id: UU
     assert session.metadata == metadata
 
 
-def test_scenario_session_has_unique_ids():
+def test_scenario_session_has_unique_ids() -> None:
     user_id = UUID("12345678-1234-5678-1234-567812345678")
     session1 = ScenarioSession.create_for_user(
         scenario_definition_id="scenario_1",
@@ -204,7 +204,7 @@ def test_scenario_session_has_unique_ids():
     assert session1.id != session2.id
 
 
-def test_with_persona_sets_name_and_description(sample_user_id: UUID):
+def test_with_persona_sets_name_and_description(sample_user_id: UUID) -> None:
     session = ScenarioSession.create_for_user(
         scenario_definition_id="scenario_1", user_id=sample_user_id
     )
@@ -218,7 +218,7 @@ def test_with_persona_sets_name_and_description(sample_user_id: UUID):
     assert session.has_persona is False
 
 
-def test_with_persona_stores_a_missing_description_as_none(sample_user_id: UUID):
+def test_with_persona_stores_a_missing_description_as_none(sample_user_id: UUID) -> None:
     session = ScenarioSession.create_for_user(
         scenario_definition_id="scenario_1", user_id=sample_user_id
     ).with_persona(name="Kes")
@@ -226,7 +226,7 @@ def test_with_persona_stores_a_missing_description_as_none(sample_user_id: UUID)
     assert session.user_persona_description is None
 
 
-def test_with_persona_rejects_a_second_persona(sample_user_id: UUID):
+def test_with_persona_rejects_a_second_persona(sample_user_id: UUID) -> None:
     """Immutable once set: the name is substituted into every prompt and into the
     transcript already written, so changing it would rewrite history."""
     session = ScenarioSession.create_for_user(
@@ -237,7 +237,7 @@ def test_with_persona_rejects_a_second_persona(sample_user_id: UUID):
         session.with_persona(name="Someone Else")
 
 
-def test_with_persona_rejects_a_blank_name(sample_user_id: UUID):
+def test_with_persona_rejects_a_blank_name(sample_user_id: UUID) -> None:
     session = ScenarioSession.create_for_user(
         scenario_definition_id="scenario_1", user_id=sample_user_id
     )
@@ -246,7 +246,7 @@ def test_with_persona_rejects_a_blank_name(sample_user_id: UUID):
         session.with_persona(name="   ")
 
 
-def test_resolve_user_name_prefers_the_persona_over_the_fallback(sample_user_id: UUID):
+def test_resolve_user_name_prefers_the_persona_over_the_fallback(sample_user_id: UUID) -> None:
     session = ScenarioSession.create_for_user(
         scenario_definition_id="scenario_1", user_id=sample_user_id
     )
@@ -255,7 +255,7 @@ def test_resolve_user_name_prefers_the_persona_over_the_fallback(sample_user_id:
     assert session.with_persona(name="Sera Vane").resolve_user_name("Pablo") == "Sera Vane"
 
 
-def test_mark_deleted_stamps_a_live_session(sample_user_id: UUID):
+def test_mark_deleted_stamps_a_live_session(sample_user_id: UUID) -> None:
     session = ScenarioSession.create_for_user(
         scenario_definition_id="scenario_1", user_id=sample_user_id
     )
@@ -267,7 +267,7 @@ def test_mark_deleted_stamps_a_live_session(sample_user_id: UUID):
     assert superseded.deleted_at == datetime(2026, 7, 27, tzinfo=UTC)
 
 
-def test_mark_deleted_keeps_the_original_timestamp(sample_user_id: UUID):
+def test_mark_deleted_keeps_the_original_timestamp(sample_user_id: UUID) -> None:
     # Idempotent, so re-superseding never falsifies *when* a session actually ended.
     first = ScenarioSession.create_for_user(
         scenario_definition_id="scenario_1", user_id=sample_user_id
@@ -276,7 +276,7 @@ def test_mark_deleted_keeps_the_original_timestamp(sample_user_id: UUID):
     assert first.mark_deleted(at=datetime(2026, 7, 28, tzinfo=UTC)) is first
 
 
-def test_override_persona_replaces_an_existing_one(sample_user_id: UUID):
+def test_override_persona_replaces_an_existing_one(sample_user_id: UUID) -> None:
     """The operator escape hatch. Kept separate from `with_persona` so the set-once guard
     keeps protecting every path a player can reach."""
     session = ScenarioSession.create_for_user(
@@ -289,7 +289,7 @@ def test_override_persona_replaces_an_existing_one(sample_user_id: UUID):
     assert corrected.user_persona_description == "A wary courier."
 
 
-def test_override_persona_also_sets_a_first_one(sample_user_id: UUID):
+def test_override_persona_also_sets_a_first_one(sample_user_id: UUID) -> None:
     session = ScenarioSession.create_for_user(
         scenario_definition_id="scenario_1", user_id=sample_user_id
     ).override_persona(name="Kes")
@@ -298,7 +298,7 @@ def test_override_persona_also_sets_a_first_one(sample_user_id: UUID):
     assert session.user_persona_description is None
 
 
-def test_override_persona_still_rejects_a_blank_name(sample_user_id: UUID):
+def test_override_persona_still_rejects_a_blank_name(sample_user_id: UUID) -> None:
     session = ScenarioSession.create_for_user(
         scenario_definition_id="scenario_1", user_id=sample_user_id
     ).with_persona(name="Sera Vane")

@@ -24,8 +24,10 @@ from rp_engine.core.memory.context_budget import ContextBudget
 from rp_engine.core.memory.models import MemoryKey
 from rp_engine.core.memory.pipeline import MemoryPipeline
 from rp_engine.core.memory.recent_window_source import RecentWindowSource
+from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
+from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
-from rp_engine.core.scenario.scenario_session import ScenarioSession
+from rp_engine.core.scenario.scenario_session import ScenarioSession, SessionOwnerKind
 from rp_engine.core.user.identity import UserIdentity
 from rp_engine.core.user.user import User
 from rp_engine.core.world.world import World
@@ -67,11 +69,13 @@ def _default_definition() -> ScenarioDefinition:
     )
 
 
-def _fixed_session(*, owner_kind: str = "user", owner_id: UUID = FIXED_USER_ID) -> ScenarioSession:
+def _fixed_session(
+    *, owner_kind: SessionOwnerKind = "user", owner_id: UUID = FIXED_USER_ID
+) -> ScenarioSession:
     return ScenarioSession(
         id=FIXED_SESSION_ID,
         scenario_definition_id=DEFAULT_DEFINITION_ID,
-        owner_kind=owner_kind,  # type: ignore[arg-type]
+        owner_kind=owner_kind,
         owner_id=owner_id,
         active_participants={ROLE: "default"},
         created_at=datetime.now(UTC),
@@ -99,27 +103,51 @@ class FakePlaythroughService:
     def __init__(self, *, active: ScenarioSession | None = None) -> None:
         self._active = active if active is not None else _fixed_session()
 
-    async def list_scenarios(self) -> list[ScenarioDefinition]:
+    async def list_scenarios(
+        self, *, caller_group_chat_id: str | None = None
+    ) -> list[ScenarioDefinition]:
+        del caller_group_chat_id
         return [_default_definition()]
 
-    async def get_active(self, *, owner_kind: str, owner_id: UUID) -> ScenarioSession | None:
+    async def get_active(
+        self, *, owner_kind: SessionOwnerKind, owner_id: Any
+    ) -> ScenarioSession | None:
         del owner_id
         if owner_kind == "group":
             return _fixed_session(owner_kind="group", owner_id=FIXED_GROUP_ID)
         return self._active
 
     async def start(
-        self, *, owner_kind: str, owner_id: UUID, scenario_id: str
+        self,
+        *,
+        owner_kind: SessionOwnerKind,
+        owner_id: Any,
+        scenario_id: str,
+        caller_group_chat_id: str | None = None,
     ) -> PlaythroughStart | None:
-        del owner_id, scenario_id
+        del owner_id, scenario_id, caller_group_chat_id
         session = _fixed_session(owner_kind=owner_kind, owner_id=FIXED_USER_ID)
         return PlaythroughStart(session=session, scenario=_default_definition(), opening="Opening.")
 
-    async def restart(self, *, owner_kind: str, owner_id: UUID) -> PlaythroughStart | None:
+    async def restart(
+        self, *, owner_kind: SessionOwnerKind, owner_id: Any
+    ) -> PlaythroughStart | None:
         del owner_kind, owner_id
         return PlaythroughStart(
             session=_fixed_session(), scenario=_default_definition(), opening="Opening."
         )
+
+    async def clear(
+        self, *, owner_kind: SessionOwnerKind, owner_id: Any
+    ) -> PlaythroughStart | None:
+        del owner_kind, owner_id
+        return None
+
+    async def set_persona(
+        self, *, session_id: UUID, name: str, description: str = ""
+    ) -> PlaythroughStart | None:
+        del session_id, name, description
+        return None
 
     async def resume_text(self, *, session: ScenarioSession) -> str | None:
         del session
@@ -177,8 +205,14 @@ class InMemoryConversationStore:
     async def clear(self, memory_key: MemoryKey) -> None:
         self._messages.pop(memory_key.value, None)
 
+    async def delete_last_message(self, memory_key: MemoryKey) -> ConversationMessage | None:
+        stored = self._messages.get(memory_key.value)
+        if not stored:
+            return None
+        return stored.pop()
 
-class FakeScenarioSessionStore:
+
+class FakeScenarioSessionStore(ScenarioSessionStore):
     async def get_by_id(self, session_id: UUID) -> ScenarioSession | None:
         if session_id != FIXED_SESSION_ID:
             return None
@@ -232,7 +266,7 @@ class FakeScenarioSessionStore:
         return None
 
 
-class FakeScenarioDefinitionStore:
+class FakeScenarioDefinitionStore(ScenarioDefinitionStore):
     async def get_by_id(self, scenario_id: str) -> ScenarioDefinition | None:
         if scenario_id != DEFAULT_DEFINITION_ID:
             return None

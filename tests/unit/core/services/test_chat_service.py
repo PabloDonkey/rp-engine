@@ -1,5 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
+from typing import cast
 from unittest.mock import AsyncMock, call
 from uuid import UUID
 
@@ -23,6 +24,7 @@ from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.llm.response import LLMResponse
 from rp_engine.core.memory.character_ratio_token_counter import CharacterRatioTokenCounter
 from rp_engine.core.memory.context_budget import ContextBudget
+from rp_engine.core.memory.fragment import MemorySystemId
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
 from rp_engine.core.memory.pipeline import MemoryPipeline
 from rp_engine.core.memory.recall_context import MemoryObserveContext
@@ -537,7 +539,7 @@ async def test_chat_service_clear_conversation_uses_store_clear() -> None:
         scenario_definition_store=AsyncMock(),
         generation_settings=GENERATION_SETTINGS,
     )
-    conversation_store = service._conversation_store  # type: ignore[attr-defined]
+    conversation_store = cast(AsyncMock, service._conversation_store)
 
     await service.clear_conversation(
         conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
@@ -994,7 +996,7 @@ async def test_empty_reply_is_still_traced_for_debugging() -> None:
 async def test_empty_reply_does_not_burn_the_director_instruction() -> None:
     """The note was aimed at a reply the player never saw, so it must survive for the retry."""
     service, _, _ = _empty_reply_service()
-    session_store = service._scenario_session_store  # type: ignore[attr-defined]
+    session_store = cast(AsyncMock, service._scenario_session_store)
 
     with pytest.raises(EmptyGenerationError):
         await service.send_message(
@@ -1428,8 +1430,8 @@ async def test_each_recovery_attempt_is_traced_separately() -> None:
         ]
     )
     trace_store = AsyncMock()
-    service._generation_trace_store = trace_store  # type: ignore[attr-defined]
-    service._generation_trace_mode = "all"  # type: ignore[attr-defined]
+    service._generation_trace_store = trace_store
+    service._generation_trace_mode = "all"
 
     await service.send_message(
         conversation_identity=ConversationIdentity.for_session(str(SESSION_ID)),
@@ -1637,7 +1639,7 @@ async def test_the_submitted_job_runs_the_pipeline_write_half(
     observed: list[int] = []
 
     class RecordingSource:
-        id = "rolling_summary"
+        id: MemorySystemId = "rolling_summary"
 
         async def recall(self, context: object) -> tuple[()]:
             return ()
