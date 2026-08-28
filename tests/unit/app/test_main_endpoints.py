@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -8,17 +8,30 @@ from rp_engine.app.main import create_app
 from rp_engine.infrastructure.config.settings import Settings
 from rp_engine.infrastructure.postgres import PostgresConfig
 
+
+class _UnreachablePostgresSettings(TypedDict):
+    postgres_host: str
+    postgres_port: int
+
+
+class _UnreachablePostgresNoFailFastSettings(_UnreachablePostgresSettings):
+    postgres_startup_check_fail_fast: bool
+
+
 # Nothing listens on port 1 (a reserved/privileged port), so connecting here fails fast
 # with "connection refused" instead of hanging or requiring a real Postgres in unit tests.
-_UNREACHABLE_POSTGRES_SETTINGS = {
+_UNREACHABLE_POSTGRES_SETTINGS: _UnreachablePostgresSettings = {
     "postgres_host": "127.0.0.1",
     "postgres_port": 1,
 }
 
 # Same, but with fail-fast disabled — for tests below that don't care about DB status at
 # all, so they stay fast, pure unit tests rather than needing the testcontainers fixture.
-_UNREACHABLE_POSTGRES_NO_FAIL_FAST_SETTINGS = {
-    **_UNREACHABLE_POSTGRES_SETTINGS,
+# Spelled out rather than spread from the dict above: a TypedDict literal cannot be built
+# by unpacking another one.
+_UNREACHABLE_POSTGRES_NO_FAIL_FAST_SETTINGS: _UnreachablePostgresNoFailFastSettings = {
+    "postgres_host": "127.0.0.1",
+    "postgres_port": 1,
     "postgres_startup_check_fail_fast": False,
 }
 

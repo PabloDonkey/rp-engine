@@ -428,7 +428,7 @@ def test_builder_applies_directives_to_continue_and_resume() -> None:
         assert any("Raise the stakes." in message for message in _system_contents(conversation))
 
 
-def _resume_conversation(memory: list[ConversationMessage]) -> object:
+def _resume_conversation(memory: list[ConversationMessage]) -> Conversation:
     builder = ConversationBuilder()
     return builder.build_resume(
         ScenarioConversationInput(
@@ -453,9 +453,7 @@ def test_resume_is_built_as_an_assistant_prefill() -> None:
     assert conversation.continue_final_message is True
     assert conversation.messages[-1].role == ConversationRole.CHARACTER
     assert conversation.messages[-1].content == "She reached for the door and"
-    assert not any(
-        "cut off" in message.content for message in conversation.messages
-    )
+    assert not any("cut off" in message.content for message in conversation.messages)
 
 
 def test_resume_still_carries_the_system_prompt() -> None:
@@ -463,9 +461,7 @@ def test_resume_still_carries_the_system_prompt() -> None:
         [ConversationMessage(role=ConversationRole.CHARACTER, content="partial")]
     )
 
-    assert any(
-        message.role == ConversationRole.SYSTEM for message in conversation.messages
-    )
+    assert any(message.role == ConversationRole.SYSTEM for message in conversation.messages)
 
 
 def test_continue_is_not_a_prefill() -> None:

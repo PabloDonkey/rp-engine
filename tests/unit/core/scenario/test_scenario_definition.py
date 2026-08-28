@@ -15,7 +15,7 @@ def sample_world() -> World:
         id="test_world",
         name="Test World",
         description="A world for testing",
-        rules=["No violence", "Be respectful"],
+        rules=("No violence", "Be respectful"),
         metadata={},
     )
 
@@ -32,7 +32,7 @@ def sample_character() -> Character:
     )
 
 
-def test_scenario_definition_creation():
+def test_scenario_definition_creation() -> None:
     owner_id = UUID("12345678-1234-5678-1234-567812345678")
     scenario = ScenarioDefinition(
         id="scenario_1",
@@ -52,7 +52,7 @@ def test_scenario_definition_creation():
     assert scenario.metadata == {}
 
 
-def test_scenario_definition_with_world(sample_world: World):
+def test_scenario_definition_with_world(sample_world: World) -> None:
     owner_id = UUID("12345678-1234-5678-1234-567812345678")
     scenario = ScenarioDefinition(
         id="scenario_1",
@@ -65,7 +65,7 @@ def test_scenario_definition_with_world(sample_world: World):
     assert scenario.world is sample_world
 
 
-def test_scenario_definition_with_characters(sample_character: Character):
+def test_scenario_definition_with_characters(sample_character: Character) -> None:
     owner_id = UUID("12345678-1234-5678-1234-567812345678")
     characters = {"protagonist": sample_character}
     scenario = ScenarioDefinition(
@@ -80,7 +80,7 @@ def test_scenario_definition_with_characters(sample_character: Character):
     assert scenario.characters["protagonist"] == sample_character
 
 
-def test_scenario_definition_with_rules():
+def test_scenario_definition_with_rules() -> None:
     owner_id = UUID("12345678-1234-5678-1234-567812345678")
     rules = ["Be respectful", "No violence", "Stay in character"]
     scenario = ScenarioDefinition(
@@ -94,7 +94,7 @@ def test_scenario_definition_with_rules():
     assert scenario.rules == rules
 
 
-def test_scenario_definition_with_initial_context():
+def test_scenario_definition_with_initial_context() -> None:
     owner_id = UUID("12345678-1234-5678-1234-567812345678")
     context = "It is a dark and stormy night..."
     scenario = ScenarioDefinition(
@@ -108,7 +108,7 @@ def test_scenario_definition_with_initial_context():
     assert scenario.initial_context == context
 
 
-def test_scenario_definition_with_metadata():
+def test_scenario_definition_with_metadata() -> None:
     owner_id = UUID("12345678-1234-5678-1234-567812345678")
     metadata: Metadata = {"genre": "fantasy", "difficulty": "hard"}
     scenario = ScenarioDefinition(
@@ -122,7 +122,7 @@ def test_scenario_definition_with_metadata():
     assert scenario.metadata == metadata
 
 
-def test_scenario_definition_immutability():
+def test_scenario_definition_immutability() -> None:
     owner_id = UUID("12345678-1234-5678-1234-567812345678")
     scenario = ScenarioDefinition(
         id="scenario_1",
@@ -135,7 +135,9 @@ def test_scenario_definition_immutability():
         scenario.name = "Different Name"  # type: ignore
 
 
-def test_scenario_definition_factory_method(sample_world: World, sample_character: Character):
+def test_scenario_definition_factory_method(
+    sample_world: World, sample_character: Character
+) -> None:
     owner_id = UUID("12345678-1234-5678-1234-567812345678")
     characters = {"protagonist": sample_character}
     rules = ["Be respectful"]
@@ -163,7 +165,7 @@ def test_scenario_definition_factory_method(sample_world: World, sample_characte
     assert scenario.metadata == metadata
 
 
-def test_scenario_definition_factory_with_defaults():
+def test_scenario_definition_factory_with_defaults() -> None:
     owner_id = UUID("12345678-1234-5678-1234-567812345678")
     scenario = ScenarioDefinition.create(
         scenario_id="scenario_1",
@@ -192,7 +194,7 @@ def _scenario(**overrides: object) -> ScenarioDefinition:
     return ScenarioDefinition(**base)  # type: ignore[arg-type]
 
 
-def test_public_scenario_is_listed_and_playable_for_everyone():
+def test_public_scenario_is_listed_and_playable_for_everyone() -> None:
     scenario = _scenario(visibility=ScenarioVisibility.PUBLIC)
 
     assert scenario.is_listed_for(None) is True
@@ -200,7 +202,7 @@ def test_public_scenario_is_listed_and_playable_for_everyone():
     assert scenario.is_playable_by(None) is True
 
 
-def test_unlisted_scenario_is_hidden_but_playable():
+def test_unlisted_scenario_is_hidden_but_playable() -> None:
     scenario = _scenario(visibility=ScenarioVisibility.UNLISTED)
 
     assert scenario.is_listed_for(None) is False
@@ -208,7 +210,7 @@ def test_unlisted_scenario_is_hidden_but_playable():
     assert scenario.is_playable_by(None) is True
 
 
-def test_restricted_scenario_only_for_allowed_group():
+def test_restricted_scenario_only_for_allowed_group() -> None:
     scenario = _scenario(
         visibility=ScenarioVisibility.RESTRICTED,
         allowed_group_chat_ids=("g1",),

@@ -12,6 +12,8 @@ from rp_engine.core.memory.context_budget import ContextBudget
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
 from rp_engine.core.memory.rolling_summary_source import RollingSummarySource
 from rp_engine.core.memory.session_summary import SessionSummary
+from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
+from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.identity import UserIdentity
@@ -41,7 +43,7 @@ class FakeUserIdentityStore:
         raise NotImplementedError
 
 
-class FakeScenarioSessionStore:
+class FakeScenarioSessionStore(ScenarioSessionStore):
     def __init__(self, sessions: list[ScenarioSession]) -> None:
         self.sessions = {session.id: session for session in sessions}
         self.deleted: list[UUID] = []
@@ -105,6 +107,12 @@ class FakeConversationStore:
     async def clear(self, memory_key: MemoryKey) -> None:
         self._messages.pop(memory_key.value, None)
 
+    async def delete_last_message(self, memory_key: MemoryKey) -> ConversationMessage | None:
+        stored = self._messages.get(memory_key.value)
+        if not stored:
+            return None
+        return stored.pop()
+
 
 MODEL_NAME = "test-model"
 
@@ -163,8 +171,16 @@ class FakeGenerationTraceStore:
     async def list_for_session(self, session_id: UUID) -> list[dict[str, object]]:
         return list(self._records.get(session_id, []))
 
+    async def delete_for_turn(self, *, session_id: UUID, turn: int) -> int:
+        stored = self._records.get(session_id)
+        if not stored:
+            return 0
+        kept = [record for record in stored if record.get("turn") != turn]
+        self._records[session_id] = kept
+        return len(stored) - len(kept)
 
-class FakeScenarioDefinitionStore:
+
+class FakeScenarioDefinitionStore(ScenarioDefinitionStore):
     def __init__(self, scenarios: list[ScenarioDefinition] | None = None) -> None:
         self.items = {scenario.id: scenario for scenario in scenarios or []}
 

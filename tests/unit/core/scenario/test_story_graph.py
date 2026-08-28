@@ -3,7 +3,7 @@ import pytest
 from rp_engine.core.scenario.story_graph import StoryBeat, StoryGraph
 
 
-def test_story_beat_minimal():
+def test_story_beat_minimal() -> None:
     beat = StoryBeat(id="opening", description="The story begins")
 
     assert beat.id == "opening"
@@ -12,7 +12,7 @@ def test_story_beat_minimal():
     assert beat.metadata == {}
 
 
-def test_story_beat_with_transitions():
+def test_story_beat_with_transitions() -> None:
     beat = StoryBeat(
         id="crossroads",
         description="A fork in the road",
@@ -22,7 +22,7 @@ def test_story_beat_with_transitions():
     assert beat.transitions == {"go_left": "forest", "go_right": "village"}
 
 
-def test_story_graph_empty():
+def test_story_graph_empty() -> None:
     graph = StoryGraph()
 
     assert graph.beats == {}
@@ -30,7 +30,7 @@ def test_story_graph_empty():
     assert graph.metadata == {}
 
 
-def test_story_graph_with_beats():
+def test_story_graph_with_beats() -> None:
     opening = StoryBeat(id="opening", description="Start", transitions={"next": "end"})
     end = StoryBeat(id="end", description="Finish")
     graph = StoryGraph(
@@ -43,7 +43,7 @@ def test_story_graph_with_beats():
     assert graph.beats["opening"].transitions["next"] == "end"
 
 
-def test_story_graph_immutability():
+def test_story_graph_immutability() -> None:
     graph = StoryGraph(entry_beat_id="start")
 
     with pytest.raises(AttributeError):
