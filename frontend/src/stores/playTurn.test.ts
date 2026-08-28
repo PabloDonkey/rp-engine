@@ -104,6 +104,29 @@ test("a second turn is not sent while one is running", async () => {
   await inFlight;
 });
 
+test("a second turn is refused while the transcript is still being re-read", async () => {
+  // The reply has landed but the re-read has not. Until it does, the page still shows the
+  // transcript from before the turn. Unlocking Send here would let a second turn go out
+  // against a story the operator cannot see, and the server lock is already released.
+  const store = useAdminStore();
+  sendTurn.mockResolvedValue({ role: "character", content: "…", metadata: {} });
+  const refetch = deferred<never[]>();
+  getSessionTranscript.mockReturnValue(refetch.promise);
+
+  const inFlight = store.playTurn("s1", "first");
+  await vi.waitFor(() => expect(getSessionTranscript).toHaveBeenCalledOnce());
+
+  expect(store.isGenerating).toBe(true);
+  expect(await store.playTurn("s1", "second")).toBe(false);
+  expect(sendTurn).toHaveBeenCalledOnce();
+
+  refetch.resolve([]);
+  await inFlight;
+
+  expect(store.isGenerating).toBe(false);
+  expect(store.pendingTurn).toBeNull();
+});
+
 test("continue and retry send no message of their own", async () => {
   const store = useAdminStore();
   const pending = deferred<unknown>();

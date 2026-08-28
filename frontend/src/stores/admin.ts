@@ -332,8 +332,11 @@ export const useAdminStore = defineStore("admin", {
       this.pendingTurn = { action, message, error: null };
       try {
         await run();
-        this.pendingTurn = null;
+        // Cleared only once the refetched transcript is in. Clearing it first drops
+        // `isGenerating` while the old transcript is still on screen, which re-enables Send
+        // and lets a second turn go out against a story the operator cannot see yet.
         await this.fetchSessionDetail(sessionId);
+        this.pendingTurn = null;
         return true;
       } catch (error) {
         // Keep the pending row and put the reason in it. The typed text lives there, so
