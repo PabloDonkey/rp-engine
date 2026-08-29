@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import { PTabs } from "pablo-design-system";
 
 import * as api from "@/api";
 import type { AdminMessage, AdminTrace } from "@/api";
@@ -293,14 +294,16 @@ type PanelId = "persona" | "memory" | "directives";
 /** One panel open at a time. They are reference, not things to read side by side. */
 const openPanel = ref<PanelId | null>(null);
 
-function togglePanel(id: PanelId): void {
-  openPanel.value = openPanel.value === id ? null : id;
+/** PTabs emits a plain string (it doesn't know about PanelId) — the cast is safe because
+ *  the ids it can emit are exactly the ones PANELS below hands it. */
+function togglePanel(id: string): void {
+  openPanel.value = openPanel.value === id ? null : (id as PanelId);
 }
 
-const PANELS = computed<{ id: PanelId; title: string; summary: string }[]>(() => [
-  { id: "persona", title: "Persona", summary: personaSummary.value },
-  { id: "memory", title: "Memory", summary: memorySummary.value },
-  { id: "directives", title: "Directives", summary: directivesSummary.value },
+const PANELS = computed<{ id: PanelId; label: string; summary: string }[]>(() => [
+  { id: "persona", label: "Persona", summary: personaSummary.value },
+  { id: "memory", label: "Memory", summary: memorySummary.value },
+  { id: "directives", label: "Directives", summary: directivesSummary.value },
 ]);
 
 const personaSummary = computed(() => store.session?.user_persona_name ?? "not set");
@@ -452,29 +455,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
            about 180px of height before it started, and only one of them is ever read at a
            time. -->
       <div class="mb-4">
-        <div class="flex flex-wrap gap-1.5">
-          <button
-            v-for="panel in PANELS"
-            :key="panel.id"
-            type="button"
-            class="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors"
-            :class="
-              openPanel === panel.id
-                ? 'border-neutral-900 bg-neutral-900 text-white dark:border-white dark:bg-white dark:text-neutral-900'
-                : 'border-black/10 bg-white text-neutral-600 hover:border-black/25 dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-300'
-            "
-            :aria-expanded="openPanel === panel.id"
-            @click="togglePanel(panel.id)"
-          >
-            <span class="font-semibold">{{ panel.title }}</span>
-            <span
-              class="max-w-[13rem] truncate"
-              :class="openPanel === panel.id ? 'opacity-70' : 'text-neutral-400'"
-            >
-              {{ panel.summary }}
-            </span>
-          </button>
-        </div>
+        <PTabs :tabs="PANELS" :model-value="openPanel" @update:model-value="togglePanel" />
 
         <!-- `v-show` inside, not `v-if`: the persona draft is edit state and must survive
              opening a different panel. -->
