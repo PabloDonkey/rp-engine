@@ -29,7 +29,7 @@ export default defineConfig({
   // the first test to build a store: discovering it mid-run drops the active Pinia and every
   // test in the file fails with "getActivePinia() was called but there was no active Pinia".
   optimizeDeps: {
-    include: ["zod", "pinia"],
+    include: ["zod", "pinia", "reka-ui"],
   },
   // Components are tested in a real browser, not in a simulated DOM. The form controls
   // this panel needs carry real focus, real selection and real file inputs, and a
