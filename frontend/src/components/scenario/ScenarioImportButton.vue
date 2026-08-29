@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
+import { PButton } from "pablo-design-system";
+
 /**
  * Imports one or more exported scenario files.
  *
@@ -63,9 +65,7 @@ async function importOne(file: File): Promise<Result> {
 
 <template>
   <div class="grid gap-1">
-    <label
-      class="cursor-pointer rounded-md border border-black/10 px-3 py-1.5 text-sm font-medium dark:border-white/10"
-    >
+    <PButton as="label" :disabled="busy">
       {{ busy ? "Importing…" : "Import JSON" }}
       <input
         ref="input"
@@ -77,12 +77,12 @@ async function importOne(file: File): Promise<Result> {
         :disabled="busy"
         @change="onFiles"
       />
-    </label>
-    <ul v-if="results.length" class="grid gap-0.5 text-xs">
+    </PButton>
+    <ul v-if="results.length" class="grid gap-0.5 text-micro">
       <li
         v-for="result in results"
         :key="result.file"
-        :class="result.ok ? 'text-neutral-500' : 'text-red-600 dark:text-red-400'"
+        :class="result.ok ? 'text-muted' : 'text-danger'"
       >
         <span class="font-mono">{{ result.file }}</span> — {{ result.message }}
       </li>
