@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted } from "vue";
 
+import { PButton, PPanel } from "pablo-design-system";
+
 import { useAdminStore } from "@/stores/admin";
 import type { AdminUser } from "@/api";
 
@@ -21,42 +23,33 @@ async function onToggleBlock(user: AdminUser): Promise<void> {
   <div>
     <h1 class="mb-3 text-xl font-semibold">Users</h1>
 
-    <p v-if="store.usersLoading" class="text-sm text-neutral-500">Loading…</p>
-    <p v-else-if="store.usersError" class="text-sm text-red-600 dark:text-red-400">
+    <p v-if="store.usersLoading" class="text-body text-muted">Loading…</p>
+    <p v-else-if="store.usersError" class="text-body text-danger">
       {{ store.usersError }}
     </p>
-    <p v-else-if="store.users.length === 0" class="text-sm text-neutral-500">No users yet.</p>
+    <p v-else-if="store.users.length === 0" class="text-body text-muted">No users yet.</p>
 
     <ul class="flex flex-col gap-2">
-      <li
-        v-for="user in store.users"
-        :key="user.id"
-        class="flex items-center justify-between gap-3 rounded-lg border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-neutral-900"
-      >
-        <RouterLink
-          :to="{ name: 'user-sessions', params: { userId: user.id } }"
-          class="min-w-0 flex-1"
-        >
-          <div class="truncate font-medium">{{ user.display_name }}</div>
-          <div class="text-xs text-neutral-500">
-            {{ user.session_count }} session{{ user.session_count === 1 ? "" : "s" }}
-            <span v-if="user.is_blocked" class="ml-2 text-red-600 dark:text-red-400"
-              >blocked</span
-            >
-          </div>
-        </RouterLink>
-        <button
-          type="button"
-          class="shrink-0 rounded-md border px-3 py-1.5 text-sm font-medium"
-          :class="
-            user.is_blocked
-              ? 'border-green-600 text-green-700 dark:text-green-400'
-              : 'border-red-600 text-red-700 dark:text-red-400'
-          "
-          @click="onToggleBlock(user)"
-        >
-          {{ user.is_blocked ? "Unblock" : "Block" }}
-        </button>
+      <li v-for="user in store.users" :key="user.id">
+        <PPanel class="flex items-center justify-between gap-3 p-3">
+          <RouterLink
+            :to="{ name: 'user-sessions', params: { userId: user.id } }"
+            class="min-w-0 flex-1"
+          >
+            <div class="truncate font-medium">{{ user.display_name }}</div>
+            <div class="text-micro text-muted">
+              {{ user.session_count }} session{{ user.session_count === 1 ? "" : "s" }}
+              <span v-if="user.is_blocked" class="ml-2 text-danger">blocked</span>
+            </div>
+          </RouterLink>
+          <PButton
+            :variant="user.is_blocked ? 'secondary' : 'danger'"
+            class="shrink-0"
+            @click="onToggleBlock(user)"
+          >
+            {{ user.is_blocked ? "Unblock" : "Block" }}
+          </PButton>
+        </PPanel>
       </li>
     </ul>
   </div>
