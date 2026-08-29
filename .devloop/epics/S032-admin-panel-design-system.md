@@ -87,27 +87,108 @@ Not a local `components/ui/`. `pablo-design-system` ships `PButton`, `PChip`, `P
 local versions would mean maintaining two component sets for the same job — see
 `pablo-design-system-workspace/AGENDA.md` for the cross-repo reasoning.
 
-- [ ] Route audit (in progress) against the 4 existing primitives — every hand-rolled button,
-      chip, panel and section-label across the 6 routes, mapped to what the primitive already
-      covers vs. what it's missing.
+- [x] Route audit, done 2026-08-29 — every hand-rolled button, chip, panel and section-label
+      across the 6 routes, read in full and mapped against `PButton`/`PChip`/`PPanel`/
+      `PSectionLabel`'s actual props (not guessed from names).
+
+  **Buttons.** `rounded-md border border-black/10 px-3 py-1.5 text-sm font-medium
+  dark:border-white/10` (Export, Restore, Retire, Set/Update persona) is `PButton` default
+  (`variant="secondary" size="md"`), exactly. The red destructive pattern (Delete, and
+  UserSessionsPage/SessionDetailPage's Delete) is `variant="danger"` — `PButton`'s danger has
+  no explicit background, which already matches. The small `px-2 py-1 text-xs` variants
+  (ScenariosPage's Retire/Restore, the memory On/Off toggle, Dismiss, Delete last) are
+  `size="sm"`, close enough that the convergence is the point of a shared scale rather than a
+  regression. The debug-toggle "Show admin actions" text button (no border) matches
+  `variant="ghost"` well.
+
+  **Three real gaps**, none of which fit hacking around the existing four:
+  1. `PButton` has no `as` prop, so `ScenarioImportButton`'s file-picker trigger (must be a
+     `<label>`, not a `<button>`, to work as a native file input) can't become one — same
+     shape problem `PSectionLabel` already solved with its own `as` prop. Cheapest fix:
+     add `as?: "button" | "label"` to `PButton`, mirroring `PSectionLabel`.
+  2. The Persona/Memory/Directives selector row (`SessionDetailPage`, `rounded-full` pills
+     with a filled active/inactive state) fits neither `PButton` (no toggle/"selected" state)
+     nor `PChip` (`rounded-control`, not `rounded-full`, and `font-mono` — wrong for a
+     human-facing tab label, not an id). This is a **tab bar**, a pattern none of the four
+     primitives cover. Needs either a `selected` prop added to `PChip` plus a shape
+     exception, or a fifth primitive — a real design decision, not a mechanical mapping,
+     flagged for Pablo before Section 4 reaches `SessionDetailPage`.
+  3. `UsersPage`'s Unblock button is green — no `success`/`good` tone exists anywhere in the
+     package (Section 1 already flagged this from the token side). It is used **exactly
+     once**. Recommendation: drop the green and render Unblock as `variant="secondary"` like
+     every other reversible toggle (Retire/Restore) already does, rather than add a token
+     for a single caller — matches the epic's own "don't invent a token nothing uses" rule
+     in Section 1.
+
+  **Chips.** The scenario visibility/retired pill and the session "superseded" pill are both
+  `PChip` `tone="neutral"` (non-interactive — they report a fact, they don't do anything),
+  and the shape matches: `PChip`'s own radius is `rounded-control`, not `rounded-full`,
+  which is what these already look like.
+
+  **Panels.** Every `rounded-lg border border-black/10 bg-white p-3 dark:...` card (the
+  list rows on `UsersPage`/`UserSessionsPage`/`ScenariosPage`, and the Persona/Memory/
+  Directives detail boxes) is `PPanel` + a spacing class, per its own doc comment. Three
+  things are deliberately **not** `PPanel`: the transcript scroll container (a scroll
+  region with a distinct tint, not a content card), the chat message bubbles (`ring`-based,
+  role-coloured — a bubble is not a panel), and the raw-JSON/trace code blocks (monospace
+  data display, no existing primitive covers this shape — leave as token-driven utilities,
+  don't force a primitive that doesn't fit).
+
+  **Section labels.** "Transcript", "The story, oldest first", "Next fold", "Recap against
+  its share", and the "Raw JSON" `<summary>` are all `PSectionLabel` — `size="sm"`/`"md"`
+  covers both the `text-xs` and `text-sm` variants in use.
+
+  **Colour literals**, grouped by what they mean, not by hue:
+  - `red-*` (many) → `text-danger`/`border-danger`/`bg-danger-soft`.
+  - `amber-*` (retired-scenario banner, memory pass-failed text) → `text-warning`/
+    `bg-warning-soft`. The "thinking" debug block's amber background is decorative rather
+    than semantic — lower-priority, case-by-case.
+  - `green-*` (Unblock only) → no token; see gap 3 above.
+  - `teal-600`/`sky-600`/`emerald-600` (the memory story-map's three-way recap/pending/
+    verbatim split, and the fold-progress states) → **no categorical data-colour token
+    exists in the package**, and this is the one place the panel does data visualisation.
+    Recommend leaving these as raw Tailwind literals rather than forcing them into
+    accent/warning/danger, which would claim a meaning ("destructive", "the primary
+    action") none of the three segments actually has.
+  - `neutral-*`/`black/*`/`white/*` (the majority) → `border-hairline`, `bg-surface`,
+    `bg-raised`, `text-muted`, `text-ink` per context.
+  - `blue-100`/`blue-950` (the user's own turns, tinted, from S031) → candidate for
+    `bg-accent-soft`, but the package's actual accent is teal (`#16645f` light /
+    `#57bbb3` dark), not blue — adopting the token would visibly change the tint's hue.
+    Confirm against the mockup before applying, don't assume.
+
+  **Route order, corrected with evidence rather than guessed:** the epic's original guess
+  (`UsersPage` first) holds — 63 lines, one button, one card pattern, two colour groups.
+  `ScenarioEditPage` is a closer second than its 108 lines suggest: nearly all of it
+  delegates to `ScenarioForm`, which is out of scope, so its own touched surface is a
+  `RouterLink`, an `h1`, and two loading/error lines. Order: `UsersPage` →
+  `UserSessionsPage` → `ScenarioEditPage` → `ScenariosPage` → `ScenarioDetailPage` →
+  `SessionDetailPage` last, both because S031 already moved it closest to the target and
+  because it's the one route carrying gaps 2 and the data-colour question above.
+
 - [ ] **Anything missing gets added to `pablo-design-system`, not hacked around locally** —
-      same workflow as S033: fix upstream, test there, build, then consume. A variant
-      `PButton` doesn't have yet is a `pablo-design-system` commit, not a one-off class string
-      in `rp-engine`.
+      same workflow as S033: fix upstream, test there, build, then consume. Gap 1 (`PButton`
+      `as` prop) is small enough to fold into whichever route needs it first
+      (`ScenariosPage`, via `ScenarioImportButton`). Gap 2 (the tab bar) needs Pablo's call
+      before `SessionDetailPage`. Gap 3 (green Unblock) is a "don't add it" recommendation,
+      not a package change.
 - [ ] The existing `components/form/` controls adopt the tokens. They do **not** get rewritten:
       `MetadataField` and `StringListField` carry tests and two bug fixes from S030, and this
       epic has no business touching that behaviour.
 
 ### 4. Apply, one route at a time
 
-Each is its own commit, so a regression is bisectable.
+Each is its own commit, so a regression is bisectable. Order corrected by the primitive
+audit above (Section 3) — by actual touched-surface size, not raw line count.
 
-- [ ] `UsersPage`
+- [x] `UsersPage` — 2026-08-29, `S032-design-system` (`PPanel`, `PButton`; Unblock's green
+      dropped per the audit's gap-3 recommendation)
 - [ ] `UserSessionsPage`
-- [ ] `ScenariosPage`
+- [ ] `ScenarioEditPage` — mostly `ScenarioForm` (out of scope); own surface is small
+- [ ] `ScenariosPage` — needs `PButton`'s `as` prop first (gap 1, `ScenarioImportButton`)
 - [ ] `ScenarioDetailPage`
-- [ ] `ScenarioEditPage`
-- [ ] `SessionDetailPage` — last, because S031 already moved it closest to the target.
+- [ ] `SessionDetailPage` — last: closest to the target already (S031), and carries gap 2
+      (the tab bar, needs Pablo's call) and the data-colour question.
 
 ### 5. Dark mode gets the same care as light
 
