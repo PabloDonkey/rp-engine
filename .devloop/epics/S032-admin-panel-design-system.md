@@ -1,6 +1,15 @@
 # S032 · A design system for the admin panel
 
-**Status:** 🟡 NOT STARTED — written 2026-08-25, nothing built.
+> **Rescoped 2026-08-29.** Written before `pablo-design-system` existed as an option; S033
+> (2026-08-28) proved it out in `TurnComposer`. Two decisions, both Pablo's, both made:
+> **adopt `pablo-design-system`'s tokens and primitives** rather than hand-build a parallel
+> `components/ui/` (Scope sections 1 and 3 below are rewritten accordingly — extend the
+> shared package where it's missing something, don't duplicate what it already has), and
+> **self-host fonts via `@fontsource`**, landed already in `S032-design-system` (fonts wired
+> through the package's `styles.css`, not a separate local install — see Scope section 2).
+> Sections 4–6 (apply per route, dark mode, reading measure) are unchanged by the rescope.
+
+**Status:** 🟡 IN PROGRESS — rescoped 2026-08-29, tokens+fonts wired, primitive audit underway.
 **Depends on:** **S031**, which made the gap visible. Its session page is the only page with
 deliberate typography, and it now looks foreign beside the other five.
 **Design source:** [The Play View](https://claude.ai/code/artifact/bed99962-de97-4c5b-88d9-302fd4c2a65e)
@@ -41,43 +50,50 @@ assembled from parts rather than described in Tailwind strings.
 
 ## Scope
 
-### 1. Tokens, in `@theme`
+### 1. Tokens, in `@theme` — ✅ done, via adoption not authorship
 
-Tailwind 4 takes design tokens in CSS, so they belong in `style.css` rather than a config file.
+`pablo-design-system/tokens.css` already defines everything this section asked for: ground /
+surface / raised / hairline / muted / ink, one accent, semantic colours kept separate
+(warning, danger — deliberately not "success", see gap below), a named type scale, two radii,
+two shadows, all doubled for light and dark. Written once, in the package, not per-consumer —
+which is the point of a shared design system. No local `@theme` block needed.
 
-- [ ] Neutrals biased slightly toward the accent, so the greys read as chosen rather than
-      inherited. Ground, surface, raised surface, hairline, muted text, body text.
-- [ ] One accent, used for the primary action and nothing else.
-- [ ] Semantic colours kept **separate from the accent**: destructive, warning, good. Red is
-      already destructive by accident across the panel; this makes it a rule.
-- [ ] A type scale with named steps, and a spacing scale. Both small enough to memorise.
-- [ ] Radii and one shadow. The panel currently mixes `rounded`, `rounded-md`, `rounded-lg`
-      and `rounded-full` with no logic.
+- [x] Neutrals, accent, semantic colours, type scale, radii, shadow — all present in
+      `pablo-design-system/styles.css` (imported in `S032-design-system`, commit `91b5f44`).
+- [ ] **Gap to confirm during the route audit:** the epic asked for "good" as a semantic
+      colour; the package has `warning` and `danger` but no `success`/`good`. Check whether
+      any of the 6 routes actually need one before adding it — don't invent a token nothing
+      uses.
+- [ ] **Gap:** no spacing scale in the package (only type scale + radii). Confirm during the
+      audit whether the routes' current spacing is inconsistent enough to need one, or
+      whether Tailwind's default scale is fine to keep using as-is.
 
-### 2. Typefaces
+### 2. Typefaces — ✅ done
 
-Three roles: a display face with restraint, a body face, and a mono for labels, ids and
-numbers. The panel already leans on `font-mono` for ids and `tabular-nums` for the memory
-figures, so the third role exists whether or not it is named.
+Self-host via `@fontsource`, approved 2026-08-29. Landed as part of adopting the package's
+full `styles.css` (`S032-design-system`, commit `91b5f44`) rather than a separate local
+install — `pablo-design-system` already declares `@fontsource-variable/ibm-plex-sans`,
+`@fontsource-variable/newsreader`, and `@fontsource/ibm-plex-mono` as real dependencies, and
+importing its stylesheet pulls them in built.
 
-- [ ] Decide how they are served. **Recommendation: self-host through `@fontsource` packages.**
-      The panel is reached over Tailscale and is often the only thing running; a Google Fonts
-      link means an external request on every load, and a slow or blocked one leaves the page
-      in a fallback face. Self-hosting costs three small dependencies. It **needs Pablo's yes**
-      before anything is installed.
-- [ ] The alternative, if that yes does not come: system stacks only. A system serif for
-      prose, `system-ui` for the interface, `ui-monospace` for data. Free, no dependency, and
-      it will not match the mockup exactly. Say so rather than pretending otherwise.
-- [ ] Whatever is chosen, every face declares a real fallback stack.
+- [x] Self-hosted, three faces, real fallback stacks — inherited from the package, not
+      re-decided here.
+- [ ] ~~System stacks only~~ — not needed, the yes came through.
 
-### 3. Primitives in `components/ui/`
+### 3. Primitives — adopt from pablo-design-system, extend it where something is missing
 
-- [ ] `BaseButton` — variants primary, secondary, danger and ghost, sizes small and normal,
-      disabled handled once. This alone replaces the eight class strings.
-- [ ] `BaseChip` — the S031 panel chips, and the status pills on the session and scenario
-      lists, are the same thing.
-- [ ] `BasePanel` — the bordered card used for every block on every page.
-- [ ] `SectionLabel` — the uppercase eyebrow above each section.
+Not a local `components/ui/`. `pablo-design-system` ships `PButton`, `PChip`, `PPanel`,
+`PSectionLabel` already (built for S010/S031, hardened for S033's `PMenu`). Building parallel
+local versions would mean maintaining two component sets for the same job — see
+`pablo-design-system-workspace/AGENDA.md` for the cross-repo reasoning.
+
+- [ ] Route audit (in progress) against the 4 existing primitives — every hand-rolled button,
+      chip, panel and section-label across the 6 routes, mapped to what the primitive already
+      covers vs. what it's missing.
+- [ ] **Anything missing gets added to `pablo-design-system`, not hacked around locally** —
+      same workflow as S033: fix upstream, test there, build, then consume. A variant
+      `PButton` doesn't have yet is a `pablo-design-system` commit, not a one-off class string
+      in `rp-engine`.
 - [ ] The existing `components/form/` controls adopt the tokens. They do **not** get rewritten:
       `MetadataField` and `StringListField` carry tests and two bug fixes from S030, and this
       epic has no business touching that behaviour.
