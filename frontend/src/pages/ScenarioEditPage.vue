@@ -77,7 +77,7 @@ async function onSubmit(payload: ScenarioDefinition): Promise<void> {
   <div>
     <RouterLink
       :to="isEdit ? { name: 'scenario-detail', params: { scenarioId } } : { name: 'scenarios' }"
-      class="text-sm text-neutral-500"
+      class="text-body text-muted"
     >
       &larr; {{ isEdit ? "Scenario" : "Scenarios" }}
     </RouterLink>
@@ -86,12 +86,12 @@ async function onSubmit(payload: ScenarioDefinition): Promise<void> {
       {{ isEdit ? "Edit Scenario" : "New Scenario" }}
     </h1>
 
-    <p v-if="isEdit && store.scenarioLoading" class="text-sm text-neutral-500">Loading…</p>
-    <p v-else-if="isEdit && store.scenarioError" class="text-sm text-red-600 dark:text-red-400">
+    <p v-if="isEdit && store.scenarioLoading" class="text-body text-muted">Loading…</p>
+    <p v-else-if="isEdit && store.scenarioError" class="text-body text-danger">
       {{ store.scenarioError }}
     </p>
     <template v-else>
-      <p v-if="submitError" class="mb-3 whitespace-pre-wrap text-sm text-red-600 dark:text-red-400">
+      <p v-if="submitError" class="mb-3 whitespace-pre-wrap text-body text-danger">
         {{ submitError }}
       </p>
       <ScenarioForm
