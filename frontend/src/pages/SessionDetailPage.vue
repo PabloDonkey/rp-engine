@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { PTabs } from "pablo-design-system";
+import { PButton, PChip, PPanel, PSectionLabel, PTabs } from "pablo-design-system";
 
 import * as api from "@/api";
 import type { AdminMessage, AdminTrace } from "@/api";
@@ -413,10 +413,10 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
 
 <template>
   <div>
-    <RouterLink :to="backTo" class="text-sm text-neutral-500">&larr; Sessions</RouterLink>
+    <RouterLink :to="backTo" class="text-body text-muted">&larr; Sessions</RouterLink>
 
-    <p v-if="store.sessionLoading" class="mt-2 text-sm text-neutral-500">Loading…</p>
-    <p v-else-if="store.sessionError" class="mt-2 text-sm text-red-600 dark:text-red-400">
+    <p v-if="store.sessionLoading" class="mt-2 text-body text-muted">Loading…</p>
+    <p v-else-if="store.sessionError" class="mt-2 text-body text-danger">
       {{ store.sessionError }}
     </p>
 
@@ -424,31 +424,18 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
       <div class="mt-1 flex items-start justify-between gap-3">
         <h1 class="text-xl font-semibold">{{ store.session.scenario_definition_id }}</h1>
         <div class="flex shrink-0 gap-2">
-          <button
-            type="button"
-            class="rounded-md border border-black/10 px-3 py-1.5 text-sm font-medium dark:border-white/10"
-            @click="onExport"
-          >
-            Export
-          </button>
-          <button
-            type="button"
-            class="rounded-md border border-red-600 px-3 py-1.5 text-sm font-medium text-red-700 dark:text-red-400"
-            @click="onDelete"
-          >
-            Delete
-          </button>
+          <PButton @click="onExport">Export</PButton>
+          <PButton variant="danger" @click="onDelete">Delete</PButton>
         </div>
       </div>
-      <div class="mb-4 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+      <div class="mb-4 flex flex-wrap items-center gap-2 text-micro text-muted">
         <span>{{ new Date(store.session.created_at).toLocaleString() }}</span>
-        <span
+        <PChip
           v-if="store.session.deleted_at"
-          class="rounded border border-black/10 px-1.5 py-0.5 dark:border-white/10"
           :title="`Superseded ${new Date(store.session.deleted_at).toLocaleString()}`"
         >
           superseded
-        </span>
+        </PChip>
       </div>
 
       <!-- One compact row, one open panel. Three stacked full-width cards cost the story
@@ -459,64 +446,60 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
 
         <!-- `v-show` inside, not `v-if`: the persona draft is edit state and must survive
              opening a different panel. -->
-        <div
-          v-if="openPanel"
-          class="mt-2 max-h-[50vh] overflow-y-auto rounded-lg border border-black/10 bg-white p-3 text-sm dark:border-white/10 dark:bg-neutral-900/40"
-        >
+        <PPanel v-if="openPanel" class="mt-2 max-h-[50vh] overflow-y-auto p-3">
           <div v-show="openPanel === 'persona'">
-      <div class="mb-6 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10">
+      <PPanel class="mb-6 p-3">
         <!-- Editable here, but only here: /clear is still the only way a *player* can change
              their character. An admin sees the whole session, so they can correct one. -->
         <form v-if="canEditPersona" class="grid gap-2" @submit.prevent="onSavePersona">
-          <p v-if="!hasPersona" class="text-xs text-neutral-500">
+          <p v-if="!hasPersona" class="text-micro text-muted">
             <!-- v-pre: the placeholder is literal text, not an interpolation. -->
             This session has no persona, so <code v-pre>{{user}}</code> falls back to the
             player's Telegram name.
           </p>
-          <p v-else class="text-xs text-neutral-500">
+          <p v-else class="text-micro text-muted">
             The player cannot change this themselves — /clear starts a fresh session instead.
             Renaming re-renders past turns under the new name.
           </p>
           <label class="grid gap-1">
-            <span class="text-xs text-neutral-500">Name</span>
+            <span class="text-micro text-muted">Name</span>
             <input
               v-model="personaDraft.name"
               type="text"
               maxlength="128"
               placeholder="Sera Vane"
-              class="rounded-md border border-black/10 bg-transparent px-2 py-1.5 dark:border-white/10"
+              class="rounded-control border border-hairline bg-transparent px-2 py-1.5"
             />
           </label>
           <label class="grid gap-1">
-            <span class="text-xs text-neutral-500">Description</span>
+            <span class="text-micro text-muted">Description</span>
             <textarea
               v-model="personaDraft.description"
               rows="3"
               placeholder="A wary courier who trusts machines more than people. Loves rain, hates crowds."
-              class="rounded-md border border-black/10 bg-transparent px-2 py-1.5 dark:border-white/10"
+              class="rounded-control border border-hairline bg-transparent px-2 py-1.5"
             ></textarea>
           </label>
           <div>
-            <button
+            <PButton
               type="submit"
               :disabled="!personaDraft.name.trim() || !personaDirty || personaSaving"
-              class="rounded-md border border-black/10 px-3 py-1.5 text-sm font-medium disabled:opacity-40 dark:border-white/10"
             >
               {{ personaSaving ? "Saving…" : hasPersona ? "Update persona" : "Set persona" }}
-            </button>
+            </PButton>
           </div>
         </form>
 
         <!-- Superseded: read-only. Nothing here would ever reach a prompt again. -->
         <dl v-else-if="hasPersona" class="grid gap-2">
           <div class="flex gap-2">
-            <dt class="w-32 shrink-0 text-neutral-500">Name</dt>
+            <dt class="w-32 shrink-0 text-muted">Name</dt>
             <dd>{{ store.session.user_persona_name }}</dd>
           </div>
           <div class="flex gap-2">
-            <dt class="w-32 shrink-0 text-neutral-500">Description</dt>
+            <dt class="w-32 shrink-0 text-muted">Description</dt>
             <dd>
-              <span v-if="!store.session.user_persona_description" class="text-neutral-500">
+              <span v-if="!store.session.user_persona_description" class="text-muted">
                 None
               </span>
               <span v-else class="whitespace-pre-wrap">
@@ -524,50 +507,44 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
               </span>
             </dd>
           </div>
-          <p class="text-xs text-neutral-500">
+          <p class="text-micro text-muted">
             This session was superseded, so its persona is read-only.
           </p>
         </dl>
 
-        <p v-else class="text-sm text-neutral-500">
+        <p v-else class="text-body text-muted">
           No persona, and this session was superseded — a persona set here would never reach
           a prompt.
         </p>
-      </div>
+      </PPanel>
           </div>
           <div v-show="openPanel === 'memory'">
-      <div
-        class="mb-6 grid gap-3 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10"
-      >
+      <PPanel class="mb-6 grid gap-3 p-3">
         <!-- The same switch the player has through /memory. -->
         <div v-for="layer in MEMORY_LAYERS" :key="layer.id" class="flex items-start gap-3">
-          <button
-            type="button"
-            class="rounded border border-black/10 px-2 py-1 text-xs dark:border-white/10 disabled:opacity-50"
-            :disabled="store.memoryBusy"
-            @click="onToggleMemory(layer.id)"
-          >
+          <PButton size="sm" :disabled="store.memoryBusy" @click="onToggleMemory(layer.id)">
             {{ memoryEnabled(layer.id) ? "On" : "Off" }}
-          </button>
+          </PButton>
           <div>
             <div>{{ layer.label }}</div>
-            <div class="text-xs text-neutral-500">{{ layer.hint }}</div>
+            <div class="text-micro text-muted">{{ layer.hint }}</div>
           </div>
         </div>
 
         <!-- The story, split the way memory splits it. The numbers are the ones the
              background worker itself uses. -->
-        <div v-if="memoryStatus" class="grid gap-3 border-t border-black/10 pt-3 dark:border-white/10">
+        <div v-if="memoryStatus" class="grid gap-3 border-t border-hairline pt-3">
           <div v-if="storyMap" class="grid gap-1">
             <div class="flex flex-wrap items-baseline justify-between gap-2">
-              <span class="text-xs uppercase tracking-wide text-neutral-500">
-                The story, oldest first
-              </span>
-              <span class="font-mono text-xs tabular-nums">
+              <PSectionLabel as="span" size="sm">The story, oldest first</PSectionLabel>
+              <span class="font-mono text-micro tabular-nums">
                 {{ memoryStatus.turns_total }} turns
               </span>
             </div>
-            <div class="flex h-3 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+            <!-- Categorical, not semantic: three fixed colours distinguish recap / pending /
+                 verbatim, none of which is "the accent" or "a warning". No token in the
+                 package models that, so these three stay literal on purpose (S032 audit). -->
+            <div class="flex h-3 overflow-hidden rounded-full bg-hairline-soft">
               <div
                 class="h-full bg-teal-600"
                 :style="{ width: `${storyMap.covered.percent}%` }"
@@ -584,7 +561,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
                 :title="`${storyMap.verbatim.turns} turn(s) replayed word for word`"
               ></div>
             </div>
-            <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
+            <div class="flex flex-wrap gap-x-4 gap-y-1 text-micro text-muted">
               <span class="flex items-center gap-1.5">
                 <span class="h-2 w-2 rounded-full bg-teal-600"></span>
                 {{ storyMap.covered.turns }} in the recap
@@ -598,7 +575,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
                 {{ storyMap.verbatim.turns }} word for word
               </span>
             </div>
-            <div class="text-xs text-neutral-500">
+            <div class="text-micro text-muted">
               <template v-if="memoryStatus.whole_story_fits">
                 Every stored turn still reaches the prompt. Folding does not delete anything —
                 the recap is written ahead of the day the window has to drop them.
@@ -613,15 +590,13 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
 
           <div class="grid gap-1">
             <div class="flex flex-wrap items-baseline justify-between gap-2">
-              <span class="text-xs uppercase tracking-wide text-neutral-500">
-                Next fold
-              </span>
-              <span class="font-mono text-xs tabular-nums">
+              <PSectionLabel as="span" size="sm">Next fold</PSectionLabel>
+              <span class="font-mono text-micro tabular-nums">
                 {{ memoryStatus.pending_tokens }} / {{ memoryStatus.fold_batch_tokens }} tokens
                 ({{ foldPercent }}%)
               </span>
             </div>
-            <div class="h-2 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+            <div class="h-2 overflow-hidden rounded-full bg-hairline-soft">
               <div
                 class="h-full rounded-full transition-[width] duration-300"
                 :class="
@@ -634,7 +609,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
                 :style="{ width: `${Math.min(100, foldPercent)}%` }"
               ></div>
             </div>
-            <div class="text-xs text-neutral-500">
+            <div class="text-micro text-muted">
               {{ foldState }} · window budget {{ memoryStatus.budget_tokens }} tokens, fold line
               at {{ memoryStatus.high_water_tokens }}
             </div>
@@ -642,38 +617,31 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
 
           <div class="grid gap-1">
             <div class="flex flex-wrap items-baseline justify-between gap-2">
-              <span class="text-xs uppercase tracking-wide text-neutral-500">
-                Recap against its share
-              </span>
-              <span class="font-mono text-xs tabular-nums">
+              <PSectionLabel as="span" size="sm">Recap against its share</PSectionLabel>
+              <span class="font-mono text-micro tabular-nums">
                 {{ memoryStatus.summary_tokens }} /
                 {{ memoryStatus.summary_budget_tokens }} tokens ({{ recapPercent }}%)
               </span>
             </div>
-            <div class="h-2 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+            <div class="h-2 overflow-hidden rounded-full bg-hairline-soft">
               <div
                 class="h-full rounded-full transition-[width] duration-300"
                 :class="recapPercent > 100 ? 'bg-amber-500' : 'bg-teal-600'"
                 :style="{ width: `${Math.min(100, recapPercent)}%` }"
               ></div>
             </div>
-            <div class="text-xs text-neutral-500">
+            <div class="text-micro text-muted">
               Covers turn {{ memoryStatus.covers_through_turn }} of
               {{ memoryStatus.turns_total }}. Over its share, the next pass condenses it.
             </div>
           </div>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2 border-t border-black/10 pt-3 dark:border-white/10">
-          <button
-            type="button"
-            class="rounded border border-black/10 px-2 py-1 text-xs dark:border-white/10 disabled:opacity-50"
-            :disabled="store.memoryBusy"
-            @click="onRunSummary"
-          >
+        <div class="flex flex-wrap items-center gap-2 border-t border-hairline pt-3">
+          <PButton size="sm" :disabled="store.memoryBusy" @click="onRunSummary">
             {{ store.memoryBusy ? "Running…" : "Run summary now" }}
-          </button>
-          <span class="text-xs text-neutral-500">
+          </PButton>
+          <span class="text-micro text-muted">
             Runs the same pass the background worker runs after a turn. It waits for the
             model, so on a reasoning model it can take a few minutes.
           </span>
@@ -681,57 +649,56 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
 
         <p
           v-if="passReport"
-          class="text-xs"
-          :class="passFailed ? 'text-amber-700 dark:text-amber-400' : 'text-neutral-500'"
+          class="text-micro"
+          :class="passFailed ? 'text-warning' : 'text-muted'"
         >
           {{ passReport }}
         </p>
 
         <div v-if="store.sessionMemory?.summary" class="grid gap-1">
-          <div class="text-xs text-neutral-500">
+          <div class="text-micro text-muted">
             Story so far — covers {{ store.sessionMemory.summary.covers_through_turn }} turn(s),
             {{ store.sessionMemory.summary.tokens }} tokens, written by
             {{ store.sessionMemory.summary.model_name }} on
             {{ new Date(store.sessionMemory.summary.updated_at).toLocaleString() }}
           </div>
-          <p class="whitespace-pre-wrap rounded border border-black/10 p-2 dark:border-white/10">
+          <p class="whitespace-pre-wrap rounded-control border border-hairline p-2">
             {{ store.sessionMemory.summary.summary }}
           </p>
         </div>
-        <p v-else class="text-xs text-neutral-500">
+        <p v-else class="text-micro text-muted">
           No recap yet. It is written in the background, once the story passes the fold line.
         </p>
-      </div>
+      </PPanel>
           </div>
           <!-- Read-only: directives are set by the player over Telegram (/language, /rule,
                /director), the panel only reflects them. -->
           <div v-show="openPanel === 'directives'">
-      <dl
-        class="mb-6 grid gap-2 rounded-lg border border-black/10 p-3 text-sm dark:border-white/10"
-      >
+      <PPanel class="mb-6 p-3">
+        <dl class="grid gap-2">
         <div class="flex gap-2">
-          <dt class="w-32 shrink-0 text-neutral-500">Language</dt>
+          <dt class="w-32 shrink-0 text-muted">Language</dt>
           <dd>{{ store.session.directives.language }}</dd>
         </div>
         <div class="flex gap-2">
-          <dt class="w-32 shrink-0 text-neutral-500">Scenario rules</dt>
+          <dt class="w-32 shrink-0 text-muted">Scenario rules</dt>
           <dd>
-            <span v-if="store.session.directives.rules.length === 0" class="text-neutral-500">
+            <span v-if="store.session.directives.rules.length === 0" class="text-muted">
               None
             </span>
             <ul v-else class="flex flex-col gap-1">
               <li v-for="rule in store.session.directives.rules" :key="rule.id">
-                <span class="text-neutral-500">{{ rule.id }}.</span> {{ rule.text }}
+                <span class="text-muted">{{ rule.id }}.</span> {{ rule.text }}
               </li>
             </ul>
           </dd>
         </div>
         <div class="flex gap-2">
-          <dt class="w-32 shrink-0 text-neutral-500">Director notes</dt>
+          <dt class="w-32 shrink-0 text-muted">Director notes</dt>
           <dd>
             <span
               v-if="store.session.directives.director_instructions.length === 0"
-              class="text-neutral-500"
+              class="text-muted"
             >
               None pending
             </span>
@@ -742,33 +709,34 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
                 :key="index"
                 class="whitespace-pre-wrap"
               >
-                <span class="text-neutral-500">{{ index + 1 }}.</span> {{ note }}
+                <span class="text-muted">{{ index + 1 }}.</span> {{ note }}
               </li>
             </ul>
           </dd>
         </div>
-      </dl>
+        </dl>
+      </PPanel>
           </div>
-        </div>
+        </PPanel>
       </div>
 
       <p
         v-if="store.actionError"
-        class="mb-3 rounded-md border border-red-600/40 bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-400"
+        class="mb-3 rounded-control border border-danger bg-danger-soft px-3 py-2 text-body text-danger"
       >
         {{ store.actionError }}
       </p>
 
-      <h2 class="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
-        Transcript
-      </h2>
+      <PSectionLabel class="mb-2">Transcript</PSectionLabel>
 
       <div class="relative">
+        <!-- The scroll well's tint is deliberately not a token: it's a recessed area, not a
+             surface or a panel, and no token in the package models "recessed" (S032 audit). -->
         <div
           ref="transcriptEl"
-          class="h-[calc(100vh-24rem)] min-h-[15rem] overflow-y-auto rounded-lg border border-black/10 bg-neutral-200/60 px-3 py-3 dark:border-white/10 dark:bg-black/30"
+          class="h-[calc(100vh-24rem)] min-h-[15rem] overflow-y-auto rounded-panel border border-hairline bg-neutral-200/60 px-3 py-3 dark:bg-black/30"
         >
-          <p v-if="store.transcript.length === 0 && !pending" class="p-2 text-sm text-neutral-500">
+          <p v-if="store.transcript.length === 0 && !pending" class="p-2 text-body text-muted">
             No messages yet.
           </p>
       <ol class="flex flex-col gap-5">
@@ -783,21 +751,21 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           "
         >
           <div
-            class="mb-1.5 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-400"
+            class="mb-1.5 flex items-center gap-2 text-micro font-semibold uppercase tracking-wider text-muted"
           >
             <span>{{ roleLabel(message) }}</span>
             <span v-if="message.metadata.turn">&middot; turn {{ message.metadata.turn }}</span>
-            <span class="ml-auto flex items-center gap-2">
+            <span class="ml-auto flex items-center gap-2 normal-case">
               <!-- Only the final message is deletable, which is what enforces the ordering. -->
-              <button
+              <PButton
                 v-if="isLastMessage(index)"
-                type="button"
-                class="rounded border border-red-600/40 px-2 py-0.5 text-[11px] font-medium normal-case text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                variant="danger"
+                size="sm"
                 title="Delete this message. Only the last message can be deleted."
                 @click="onDeleteLastMessage(message)"
               >
                 Delete last
-              </button>
+              </PButton>
             </span>
           </div>
           <div
@@ -817,7 +785,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
             <button
               type="button"
               :disabled="!hasAnyDebug(message)"
-              class="mt-3 -mb-1 flex items-center gap-1.5 rounded text-[11px] font-medium uppercase tracking-wider text-neutral-400 enabled:hover:text-neutral-700 disabled:cursor-default disabled:opacity-60 dark:enabled:hover:text-neutral-200"
+              class="mt-3 -mb-1 flex items-center gap-1.5 rounded text-micro font-medium uppercase tracking-wider text-muted enabled:hover:text-ink disabled:cursor-default disabled:opacity-60"
               :aria-expanded="debugOpen(index)"
               @click="toggleDebug(index, $event)"
             >
@@ -829,7 +797,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
             <div
               v-if="debugOpen(index)"
               data-debug-row
-              class="mt-2 flex scroll-mb-24 flex-wrap gap-3 border-t border-black/10 pt-2 text-xs text-neutral-600 dark:border-white/10 dark:text-neutral-400"
+              class="mt-2 flex scroll-mb-24 flex-wrap gap-3 border-t border-hairline pt-2 text-micro text-muted"
             >
               <label
                 class="flex items-center gap-1"
@@ -883,28 +851,28 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
 
             <div
               v-if="filtersFor(index).thinking"
-              class="mt-2 overflow-x-auto whitespace-pre-wrap rounded-md bg-amber-50 p-2 text-xs dark:bg-amber-950/40"
+              class="mt-2 overflow-x-auto whitespace-pre-wrap rounded-control bg-warning-soft p-2 text-micro"
             >
               {{ message.metadata.thinking }}
             </div>
 
             <div
               v-if="filtersFor(index).systemPrompt"
-              class="mt-2 overflow-x-auto whitespace-pre-wrap rounded-md bg-neutral-50 p-2 text-xs dark:bg-neutral-800"
+              class="mt-2 overflow-x-auto whitespace-pre-wrap rounded-control bg-raised p-2 text-micro"
             >
               {{ systemPromptFor(message.metadata.turn) || "No system prompt recorded for this turn." }}
             </div>
 
             <div
               v-if="filtersFor(index).turnMeta"
-              class="mt-2 overflow-x-auto rounded-md bg-neutral-50 p-2 text-xs dark:bg-neutral-800"
+              class="mt-2 overflow-x-auto rounded-control bg-raised p-2 text-micro"
             >
               <pre>{{ JSON.stringify(turnMetaFor(message.metadata.turn), null, 2) }}</pre>
             </div>
 
             <div
               v-if="filtersFor(index).trace"
-              class="mt-2 overflow-x-auto rounded-md bg-neutral-50 p-2 text-xs dark:bg-neutral-800"
+              class="mt-2 overflow-x-auto rounded-control bg-raised p-2 text-micro"
             >
               <template v-if="tracesForTurn(message.metadata.turn).length > 0">
                 <pre
@@ -913,7 +881,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
                   >{{ JSON.stringify(trace.record, null, 2) }}</pre
                 >
               </template>
-              <span v-else class="text-neutral-500">No trace recorded for this turn.</span>
+              <span v-else class="text-muted">No trace recorded for this turn.</span>
             </div>
           </template>
         </li>
@@ -922,13 +890,16 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           <!-- The turn in flight. It is drawn here rather than pushed into `transcript`,
                which stays the server's list and nothing else. -->
           <div v-if="pending" class="mt-5 flex flex-col gap-5">
+            <!-- Bubble background/ring colours (both here and in the transcript above) are
+                 deliberately unconverted: the blue "this is you" tint is an identity signal,
+                 not a semantic one, and adopting bg-accent-soft would visibly change its hue
+                 (the package's accent is teal, not blue) -- confirm against the mockup before
+                 touching it, per the S032 audit. -->
             <div
               v-if="pending.message"
               class="ml-3 rounded-lg bg-blue-100 px-4 py-3 shadow-sm ring-1 ring-blue-600/15 sm:ml-6 dark:bg-blue-950/70 dark:ring-blue-400/15"
             >
-              <div
-                class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400"
-              >
+              <div class="mb-1.5 text-micro font-semibold uppercase tracking-wider text-muted">
                 you
               </div>
               <div class="whitespace-pre-wrap text-[15px] leading-[1.5]">
@@ -939,37 +910,27 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
               class="mr-3 rounded-lg px-4 py-3 shadow-sm ring-1 sm:mr-6"
               :class="
                 pending.error
-                  ? 'bg-red-50 ring-red-600/20 dark:bg-red-950/50 dark:ring-red-400/15'
+                  ? 'bg-danger-soft ring-red-600/20 dark:ring-red-400/15'
                   : 'bg-white ring-black/5 dark:bg-neutral-800 dark:ring-white/5'
               "
             >
               <template v-if="pending.error">
-                <div
-                  class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-red-700 dark:text-red-400"
-                >
+                <div class="mb-1.5 text-micro font-semibold uppercase tracking-wider text-danger">
                   not sent
                 </div>
-                <div class="text-[15px] text-red-800 dark:text-red-300">
+                <div class="text-[15px] text-danger">
                   {{ pending.error }}
                 </div>
-                <button
-                  type="button"
-                  class="mt-2 rounded border border-black/10 px-2 py-0.5 text-xs dark:border-white/10"
-                  @click="store.clearPendingTurn()"
-                >
+                <PButton size="sm" class="mt-2" @click="store.clearPendingTurn()">
                   Dismiss
-                </button>
+                </PButton>
               </template>
               <template v-else>
-                <div
-                  class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400"
-                >
+                <div class="mb-1.5 text-micro font-semibold uppercase tracking-wider text-muted">
                   narrator
                 </div>
-                <div class="flex items-center gap-2 font-serif text-[15px] italic text-neutral-400">
-                  <span
-                    class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-neutral-400"
-                  ></span>
+                <div class="flex items-center gap-2 font-serif text-[15px] italic text-muted">
+                  <span class="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-muted"></span>
                   writing…
                 </div>
               </template>
@@ -978,7 +939,9 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
         </div>
 
         <!-- Only while the reader is away from the newest turn. Following, there is nothing
-             to jump to. -->
+             to jump to. Not PButton, and not tokenised: this is an inverted-contrast floating
+             affordance (dark pill on light, light pill on dark), which no surface/accent
+             token models -- forcing one risks a real colour regression for no clean gain. -->
         <div v-if="unseen > 0" class="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
           <button
             type="button"

@@ -9,7 +9,11 @@
 > through the package's `styles.css`, not a separate local install — see Scope section 2).
 > Sections 4–6 (apply per route, dark mode, reading measure) are unchanged by the rescope.
 
-**Status:** 🟡 IN PROGRESS — rescoped 2026-08-29, tokens+fonts wired, primitive audit underway.
+**Status:** 🟡 IN PROGRESS — all six routes converted (2026-08-29). What's left: Section 6
+(reading measure, an open decision), and the systematic part of Verification — the full
+36-screenshot sweep, the 390px no-sideways-scroll check, and a direct focus-visible check
+(a manual pass at 1024px on four of six routes stood in for it so far, and caught a real
+dev-mode bug in the process — see Verification).
 **Depends on:** **S031**, which made the gap visible. Its session page is the only page with
 deliberate typography, and it now looks foreign beside the other five.
 **Design source:** [The Play View](https://claude.ai/code/artifact/bed99962-de97-4c5b-88d9-302fd4c2a65e)
@@ -183,23 +187,41 @@ local versions would mean maintaining two component sets for the same job — se
 Each is its own commit, so a regression is bisectable. Order corrected by the primitive
 audit above (Section 3) — by actual touched-surface size, not raw line count.
 
-- [x] `UsersPage` — 2026-08-29, `S032-design-system` (`PPanel`, `PButton`; Unblock's green
-      dropped per the audit's gap-3 recommendation)
-- [ ] `UserSessionsPage`
-- [ ] `ScenarioEditPage` — mostly `ScenarioForm` (out of scope); own surface is small
-- [ ] `ScenariosPage` — needs `PButton`'s `as` prop first (gap 1, `ScenarioImportButton`)
-- [ ] `ScenarioDetailPage`
-- [ ] `SessionDetailPage` — its Persona/Memory/Directives row already moved to `PTabs`
-      (2026-08-29, gap 2), ahead of the rest of the route's own turn. What's left: the
-      transcript, message bubbles, debug blocks, and the data-colour question above. Still
-      last, because the row was the only piece that couldn't wait.
+All six done, 2026-08-29, `S032-routes-2` (except `UsersPage`, `S032-design-system`) —
+typecheck, build, and the full 80-test suite clean after each.
+
+- [x] `UsersPage` (`PPanel`, `PButton`; Unblock's green dropped per gap-3)
+- [x] `UserSessionsPage` (`PPanel`, `PButton`)
+- [x] `ScenarioEditPage` (token-only — its own surface really was as small as guessed)
+- [x] `ScenariosPage` (`PPanel`, `PChip`, `PButton`; gap 1 closed first —
+      `ScenarioImportButton` now uses `PButton as="label"`)
+- [x] `ScenarioDetailPage` (`PChip`, `PButton`, `PSectionLabel`)
+- [x] `SessionDetailPage` (`PPanel`, `PButton`, `PChip`, `PSectionLabel`; its
+      Persona/Memory/Directives row had already moved to `PTabs`, gap 2, ahead of the
+      rest). Three things stay deliberately unconverted, each commented in place: the
+      memory story-map's categorical data-viz colours, the transcript scroll well's tint,
+      and the floating "↓ N new" pill — none has a matching token, and forcing one risks a
+      real visual regression for no gain. The user-turn blue tint and the narrator message
+      bubble are also untouched — identity signals, not chrome; the blue one specifically
+      needs mockup confirmation before anyone touches it (still open, see Section 3).
+      **Caught during verification:** a tag-type mismatch (`</div></PPanel>` where it
+      needed to be `</PPanel></div>`) that `vue-tsc`'s typecheck did not catch but `vite
+      build` did — worth remembering for the next large template edit: build, not just
+      typecheck, is the real structural check.
 
 ### 5. Dark mode gets the same care as light
 
-- [ ] Every token defined for both themes, never a colour that exists in one only.
-- [ ] Contrast checked on both grounds, and the accent checked on both.
-- [ ] The panel currently sets `color-scheme: light dark` and follows the operating system.
-      Whether to add a manual toggle is **an open question below**, not scope.
+- [x] Every token defined for both themes, never a colour that exists in one only —
+      inherited from `pablo-design-system/tokens.css`, which already does this (S032
+      didn't have to add anything here, only adopt it).
+- [x] Contrast checked on both grounds, and the accent checked on both — for the four
+      routes manually verified in Verification. The other two (`ScenarioDetailPage`,
+      `ScenarioEditPage`) weren't looked at in a real browser yet.
+- [x] ~~The panel currently sets `color-scheme: light dark`...~~ **Superseded: it now also
+      supports an explicit override.** `PThemeToggle` in the navbar sets `data-theme` on
+      `document.documentElement` when clicked; until then, `color-scheme: light dark`
+      still follows the operating system exactly as before. See the open question below,
+      now answered.
 
 ### 6. Settle the reading measure
 
@@ -221,13 +243,32 @@ number for reading long prose.
 
 ## Verification
 
-- [ ] `npm run test` green, `vue-tsc` clean, `npm run build` clean.
+- [x] `npm run test` green (80/80), `vue-tsc` clean, `npm run build` clean — after every
+      commit in this epic, not just at the end.
 - [ ] **Screenshots of all six routes at three widths (390, 1024, 1440) in both themes** —
       36 renders, captured in headless Chromium with the console checked for errors. S031
       proved the point: the page was built without ever being looked at, and every fault in
-      it was visible in the first screenshot.
-- [ ] No page scrolls sideways at 390px.
-- [ ] Keyboard focus is visible on every interactive element, in both themes.
+      it was visible in the first screenshot. **Partial, 2026-08-29:** `UsersPage`,
+      `ScenariosPage`, `UserSessionsPage`, and `SessionDetailPage` (both closed and with a
+      tab open) checked manually at 1024px against real data, light and dark, console
+      errors captured — not the full 36-render matrix (three widths × six routes), and not
+      `ScenarioDetailPage`/`ScenarioEditPage`. This pass is what caught the `fs.allow`
+      bug below; it earned its keep, but it isn't the systematic sweep this line asks for.
+- [ ] No page scrolls sideways at 390px — not checked; the manual pass above used 1024px
+      only.
+- [ ] Keyboard focus is visible on every interactive element, in both themes — not checked
+      directly, though `pablo-design-system`'s base layer supplies one `:focus-visible`
+      rule everywhere now, which is more coverage than the panel had before this epic.
+- [x] **Not in the original checklist, found by doing the manual pass above:** `npm run
+      dev` 403'd every one of `pablo-design-system`'s font files, because they live outside
+      this project's root and Vite's dev server refuses to serve files outside it by
+      default. `npm run build` never showed this — it inlines fonts into `dist/` rather
+      than serving them live — so it had been silently broken in dev mode since the
+      `styles.css` switch, four commits into this epic, with every `build`/`test`/
+      `typecheck` gate green the entire time. Fixed in `vite.config.ts`
+      (`server.fs.allow`). **The lesson:** this epic's own verification checklist — actually
+      look at the rendered page — is what caught something the automated gates structurally
+      cannot, exactly as the checklist's own reasoning (quoting S031) predicts.
 
 ## Tests the epic adds
 

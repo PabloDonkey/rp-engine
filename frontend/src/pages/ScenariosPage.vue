@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 
+import { PButton, PChip, PPanel } from "pablo-design-system";
+
 import ScenarioImportButton from "@/components/scenario/ScenarioImportButton.vue";
 import { retireMessage } from "@/components/scenario/retirePrompt";
 import type { ScenarioSummary } from "@/api";
@@ -46,16 +48,20 @@ async function run(scenarioId: string, action: () => Promise<void>): Promise<voi
       <h1 class="text-xl font-semibold">Scenarios</h1>
       <div class="flex flex-wrap items-start gap-2">
         <ScenarioImportButton :import-scenario="store.importScenario" />
+        <!-- RouterLink, not PButton: a design-system primitive that needed vue-router to
+             style a link would couple the package to one router, which the package is
+             deliberately written not to assume. Hand-matched to PButton's secondary/md
+             look instead. -->
         <RouterLink
           :to="{ name: 'scenario-create' }"
-          class="rounded-md border border-black/10 px-3 py-1.5 text-sm font-medium dark:border-white/10"
+          class="inline-flex items-center justify-center gap-1.5 rounded-control border border-hairline bg-surface px-3 py-1.5 text-body font-medium text-ink transition-colors hover:bg-raised"
         >
           New Scenario
         </RouterLink>
       </div>
     </div>
 
-    <label class="mb-3 flex items-center gap-2 text-sm">
+    <label class="mb-3 flex items-center gap-2 text-body">
       <input
         type="checkbox"
         :checked="showRetired"
@@ -64,74 +70,59 @@ async function run(scenarioId: string, action: () => Promise<void>): Promise<voi
       <span>Show retired</span>
     </label>
 
-    <p v-if="actionError" class="mb-2 text-sm text-red-600 dark:text-red-400">
+    <p v-if="actionError" class="mb-2 text-body text-danger">
       {{ actionError }}
     </p>
 
-    <p v-if="store.scenariosLoading" class="text-sm text-neutral-500">Loading…</p>
-    <p v-else-if="store.scenariosError" class="text-sm text-red-600 dark:text-red-400">
+    <p v-if="store.scenariosLoading" class="text-body text-muted">Loading…</p>
+    <p v-else-if="store.scenariosError" class="text-body text-danger">
       {{ store.scenariosError }}
     </p>
-    <p v-else-if="store.scenarios.length === 0" class="text-sm text-neutral-500">
+    <p v-else-if="store.scenarios.length === 0" class="text-body text-muted">
       No scenarios yet.
     </p>
 
     <ul class="flex flex-col gap-2">
-      <li
-        v-for="scenario in store.scenarios"
-        :key="scenario.id"
-        :class="[
-          'rounded-lg border border-black/10 bg-white p-3 dark:border-white/10 dark:bg-neutral-900',
-          scenario.is_active ? '' : 'opacity-60',
-        ]"
-      >
-        <div class="flex items-center justify-between gap-2">
-          <RouterLink
-            :to="{ name: 'scenario-detail', params: { scenarioId: scenario.id } }"
-            class="min-w-0 flex-1"
-          >
-            <div class="truncate font-medium">{{ scenario.name }}</div>
-            <div class="truncate text-xs text-neutral-500">{{ scenario.description }}</div>
-            <div class="mt-0.5 text-xs text-neutral-500">
-              {{ scenario.session_count }} live
-              {{ scenario.session_count === 1 ? "session" : "sessions" }}
+      <li v-for="scenario in store.scenarios" :key="scenario.id">
+        <PPanel :class="['p-3', scenario.is_active ? '' : 'opacity-60']">
+          <div class="flex items-center justify-between gap-2">
+            <RouterLink
+              :to="{ name: 'scenario-detail', params: { scenarioId: scenario.id } }"
+              class="min-w-0 flex-1"
+            >
+              <div class="truncate font-medium">{{ scenario.name }}</div>
+              <div class="truncate text-micro text-muted">{{ scenario.description }}</div>
+              <div class="mt-0.5 text-micro text-muted">
+                {{ scenario.session_count }} live
+                {{ scenario.session_count === 1 ? "session" : "sessions" }}
+              </div>
+            </RouterLink>
+            <div class="flex shrink-0 items-center gap-2">
+              <PChip v-if="!scenario.is_active">retired</PChip>
+              <PChip v-else-if="scenario.visibility !== 'PUBLIC'">
+                {{ scenario.visibility }}
+              </PChip>
+              <PButton
+                v-if="scenario.is_active"
+                size="sm"
+                :aria-label="`Retire ${scenario.name}`"
+                :disabled="busyId === scenario.id"
+                @click="onRetire(scenario)"
+              >
+                Retire
+              </PButton>
+              <PButton
+                v-else
+                size="sm"
+                :aria-label="`Restore ${scenario.name}`"
+                :disabled="busyId === scenario.id"
+                @click="onRestore(scenario)"
+              >
+                Restore
+              </PButton>
             </div>
-          </RouterLink>
-          <div class="flex shrink-0 items-center gap-2">
-            <span
-              v-if="!scenario.is_active"
-              class="rounded-full border border-black/10 px-2 py-0.5 text-xs text-neutral-500 dark:border-white/10"
-            >
-              retired
-            </span>
-            <span
-              v-else-if="scenario.visibility !== 'PUBLIC'"
-              class="rounded-full border border-black/10 px-2 py-0.5 text-xs text-neutral-500 dark:border-white/10"
-            >
-              {{ scenario.visibility }}
-            </span>
-            <button
-              v-if="scenario.is_active"
-              type="button"
-              :aria-label="`Retire ${scenario.name}`"
-              :disabled="busyId === scenario.id"
-              class="rounded-md border border-black/10 px-2 py-1 text-xs disabled:opacity-50 dark:border-white/10"
-              @click="onRetire(scenario)"
-            >
-              Retire
-            </button>
-            <button
-              v-else
-              type="button"
-              :aria-label="`Restore ${scenario.name}`"
-              :disabled="busyId === scenario.id"
-              class="rounded-md border border-black/10 px-2 py-1 text-xs disabled:opacity-50 dark:border-white/10"
-              @click="onRestore(scenario)"
-            >
-              Restore
-            </button>
           </div>
-        </div>
+        </PPanel>
       </li>
     </ul>
   </div>

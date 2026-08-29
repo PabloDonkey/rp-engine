@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
 
+import { PButton, PChip, PSectionLabel } from "pablo-design-system";
+
 import ScenarioReadView from "@/components/scenario/ScenarioReadView.vue";
 import { retireMessage } from "@/components/scenario/retirePrompt";
 import { useAdminStore } from "@/stores/admin";
@@ -63,12 +65,12 @@ async function runLifecycle(action: () => Promise<void>): Promise<void> {
 
 <template>
   <div>
-    <RouterLink :to="{ name: 'scenarios' }" class="text-sm text-neutral-500"
+    <RouterLink :to="{ name: 'scenarios' }" class="text-body text-muted"
       >&larr; Scenarios</RouterLink
     >
 
-    <p v-if="store.scenarioLoading" class="mt-2 text-sm text-neutral-500">Loading…</p>
-    <p v-else-if="store.scenarioError" class="mt-2 text-sm text-red-600 dark:text-red-400">
+    <p v-if="store.scenarioLoading" class="mt-2 text-body text-muted">Loading…</p>
+    <p v-else-if="store.scenarioError" class="mt-2 text-body text-danger">
       {{ store.scenarioError }}
     </p>
 
@@ -76,45 +78,27 @@ async function runLifecycle(action: () => Promise<void>): Promise<void> {
       <div class="mt-1 flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0">
           <h1 class="text-xl font-semibold">{{ store.scenario.name }}</h1>
-          <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-neutral-500">
+          <div class="mt-1 flex flex-wrap items-center gap-2 text-micro text-muted">
             <code>{{ store.scenario.id }}</code>
-            <span class="rounded border border-black/10 px-1.5 py-0.5 dark:border-white/10">
-              {{ store.scenario.visibility }}
-            </span>
+            <PChip>{{ store.scenario.visibility }}</PChip>
             <span>
               {{ sessionCount }} live {{ sessionCount === 1 ? "session" : "sessions" }}
             </span>
           </div>
         </div>
         <div class="flex shrink-0 flex-wrap gap-2">
-          <button
-            v-if="isRetired"
-            type="button"
-            :disabled="lifecycleBusy"
-            class="rounded-md border border-black/10 px-3 py-1.5 text-sm font-medium disabled:opacity-50 dark:border-white/10"
-            @click="onRestore"
-          >
+          <PButton v-if="isRetired" :disabled="lifecycleBusy" @click="onRestore">
             Restore
-          </button>
-          <button
-            v-else
-            type="button"
-            :disabled="lifecycleBusy"
-            class="rounded-md border border-black/10 px-3 py-1.5 text-sm font-medium disabled:opacity-50 dark:border-white/10"
-            @click="onRetire"
-          >
+          </PButton>
+          <PButton v-else :disabled="lifecycleBusy" @click="onRetire">
             Retire
-          </button>
-          <button
-            type="button"
-            class="rounded-md border border-black/10 px-3 py-1.5 text-sm font-medium dark:border-white/10"
-            @click="onExport"
-          >
-            Export JSON
-          </button>
+          </PButton>
+          <PButton @click="onExport">Export JSON</PButton>
+          <!-- RouterLink, not PButton: see ScenariosPage's "New Scenario" for why a
+               design-system primitive doesn't route links. -->
           <RouterLink
             :to="{ name: 'scenario-edit', params: { scenarioId } }"
-            class="rounded-md border border-black/10 px-3 py-1.5 text-sm font-medium dark:border-white/10"
+            class="inline-flex items-center justify-center gap-1.5 rounded-control border border-hairline bg-surface px-3 py-1.5 text-body font-medium text-ink transition-colors hover:bg-raised"
           >
             Edit
           </RouterLink>
@@ -123,12 +107,12 @@ async function runLifecycle(action: () => Promise<void>): Promise<void> {
 
       <p
         v-if="isRetired"
-        class="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+        class="mt-3 rounded-panel border border-warning bg-warning-soft p-3 text-body"
       >
         This scenario is retired. It is out of the catalog and <code>/play</code> refuses it.
         Stories already running it keep playing. Nothing was deleted.
       </p>
-      <p v-if="lifecycleError" class="mt-3 text-sm text-red-600 dark:text-red-400">
+      <p v-if="lifecycleError" class="mt-3 text-body text-danger">
         {{ lifecycleError }}
       </p>
 
@@ -137,11 +121,11 @@ async function runLifecycle(action: () => Promise<void>): Promise<void> {
       </div>
 
       <details class="mt-6">
-        <summary class="cursor-pointer text-sm font-semibold uppercase tracking-wide text-neutral-500">
-          Raw JSON
+        <summary class="cursor-pointer">
+          <PSectionLabel as="span" size="sm">Raw JSON</PSectionLabel>
         </summary>
         <pre
-          class="mt-2 overflow-x-auto rounded-lg border border-black/10 bg-white p-3 text-xs dark:border-white/10 dark:bg-neutral-900"
+          class="mt-2 overflow-x-auto rounded-panel border border-hairline bg-surface p-3 text-xs"
           >{{ JSON.stringify(store.scenario, null, 2) }}</pre
         >
       </details>
