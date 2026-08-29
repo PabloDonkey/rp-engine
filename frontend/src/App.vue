@@ -1,4 +1,6 @@
-<script setup lang="ts"></script>
+<script setup lang="ts">
+import { PThemeToggle } from "pablo-design-system";
+</script>
 
 <template>
   <div class="min-h-screen">
@@ -8,12 +10,17 @@
       <RouterLink to="/users" class="text-lg font-semibold tracking-tight">
         RP Engine Admin
       </RouterLink>
-      <nav class="flex gap-4 text-sm font-medium text-neutral-600 dark:text-neutral-400">
-        <RouterLink to="/users" class="hover:text-black dark:hover:text-white">Users</RouterLink>
-        <RouterLink to="/scenarios" class="hover:text-black dark:hover:text-white"
-          >Scenarios</RouterLink
-        >
-      </nav>
+      <div class="flex items-center gap-4">
+        <nav class="flex gap-4 text-sm font-medium text-neutral-600 dark:text-neutral-400">
+          <RouterLink to="/users" class="hover:text-black dark:hover:text-white"
+            >Users</RouterLink
+          >
+          <RouterLink to="/scenarios" class="hover:text-black dark:hover:text-white"
+            >Scenarios</RouterLink
+          >
+        </nav>
+        <PThemeToggle />
+      </div>
     </header>
     <main class="mx-auto max-w-5xl px-4 py-4">
       <RouterView />
