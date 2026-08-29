@@ -106,13 +106,15 @@ local versions would mean maintaining two component sets for the same job — se
      `<label>`, not a `<button>`, to work as a native file input) can't become one — same
      shape problem `PSectionLabel` already solved with its own `as` prop. Cheapest fix:
      add `as?: "button" | "label"` to `PButton`, mirroring `PSectionLabel`.
-  2. The Persona/Memory/Directives selector row (`SessionDetailPage`, `rounded-full` pills
-     with a filled active/inactive state) fits neither `PButton` (no toggle/"selected" state)
-     nor `PChip` (`rounded-control`, not `rounded-full`, and `font-mono` — wrong for a
-     human-facing tab label, not an id). This is a **tab bar**, a pattern none of the four
-     primitives cover. Needs either a `selected` prop added to `PChip` plus a shape
-     exception, or a fifth primitive — a real design decision, not a mechanical mapping,
-     flagged for Pablo before Section 4 reaches `SessionDetailPage`.
+  2. ~~The Persona/Memory/Directives selector row...~~ **Resolved 2026-08-29 — a fifth
+     primitive.** Pablo's call: style it closer to Claude's own artifact tab UI, as a new
+     primitive rather than stretching `PChip`. `pablo-design-system` gained **`PTabs`**: a
+     controlled row of disclosure buttons (`aria-expanded`, not `role="tab"` — it does not
+     implement the arrow-key navigation a real ARIA tablist promises), the open one shown as
+     a raised pill inside a `bg-raised` track. Landed in
+     `pablo-design-system` (commit `fe4a79b`) and wired into `SessionDetailPage`
+     (`S032-design-system`) ahead of that route's own turn in Section 4, since the row itself
+     had to move regardless of when the rest of the page converts.
   3. `UsersPage`'s Unblock button is green — no `success`/`good` tone exists anywhere in the
      package (Section 1 already flagged this from the token side). It is used **exactly
      once**. Recommendation: drop the green and render Unblock as `variant="secondary"` like
@@ -169,9 +171,9 @@ local versions would mean maintaining two component sets for the same job — se
 - [ ] **Anything missing gets added to `pablo-design-system`, not hacked around locally** —
       same workflow as S033: fix upstream, test there, build, then consume. Gap 1 (`PButton`
       `as` prop) is small enough to fold into whichever route needs it first
-      (`ScenariosPage`, via `ScenarioImportButton`). Gap 2 (the tab bar) needs Pablo's call
-      before `SessionDetailPage`. Gap 3 (green Unblock) is a "don't add it" recommendation,
-      not a package change.
+      (`ScenariosPage`, via `ScenarioImportButton`). Gap 2 (the tab bar) is
+      done — `PTabs`, see above. Gap 3 (green Unblock) was a "don't add it" recommendation,
+      not a package change, and landed that way in `UsersPage`.
 - [ ] The existing `components/form/` controls adopt the tokens. They do **not** get rewritten:
       `MetadataField` and `StringListField` carry tests and two bug fixes from S030, and this
       epic has no business touching that behaviour.
@@ -187,8 +189,10 @@ audit above (Section 3) — by actual touched-surface size, not raw line count.
 - [ ] `ScenarioEditPage` — mostly `ScenarioForm` (out of scope); own surface is small
 - [ ] `ScenariosPage` — needs `PButton`'s `as` prop first (gap 1, `ScenarioImportButton`)
 - [ ] `ScenarioDetailPage`
-- [ ] `SessionDetailPage` — last: closest to the target already (S031), and carries gap 2
-      (the tab bar, needs Pablo's call) and the data-colour question.
+- [ ] `SessionDetailPage` — its Persona/Memory/Directives row already moved to `PTabs`
+      (2026-08-29, gap 2), ahead of the rest of the route's own turn. What's left: the
+      transcript, message bubbles, debug blocks, and the data-colour question above. Still
+      last, because the row was the only piece that couldn't wait.
 
 ### 5. Dark mode gets the same care as light
 
@@ -249,9 +253,12 @@ the styling rather than the behaviour.
 
 ## Open questions
 
-- **A manual theme toggle.** The panel follows the operating system today. A toggle needs
-  somewhere to persist the choice, which means either `localStorage` or a settings row, and it
-  is worth asking whether it is wanted at all before building it.
+- ~~A manual theme toggle.~~ **Answered 2026-08-29: yes, in the top navbar, `localStorage`-
+  backed.** `pablo-design-system` gained `PThemeToggle` (commit `fe4a79b`) — reads
+  `localStorage` on mount, writes `data-theme` on `document.documentElement` **only if a
+  choice was actually stored**, so an unclicked toggle leaves the operating system in charge
+  exactly as before. Wired into `App.vue`'s header (`S032-design-system`). No settings row
+  needed.
 - **Whether the display face earns its place.** A serif for narrator prose is clearly right: it is a story. A display serif for page headings might just be decoration on a debugging
   tool. Try it on one page before committing all six.
 - **The empty right side.** With a wide shell and a readable measure, something has to fill
