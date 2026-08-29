@@ -90,7 +90,9 @@ async function runLifecycle(action: () => Promise<void>): Promise<void> {
           <PButton v-if="isRetired" :disabled="lifecycleBusy" @click="onRestore">
             Restore
           </PButton>
-          <PButton v-else :disabled="lifecycleBusy" @click="onRetire"> Retire </PButton>
+          <PButton v-else :disabled="lifecycleBusy" @click="onRetire">
+            Retire
+          </PButton>
           <PButton @click="onExport">Export JSON</PButton>
           <!-- RouterLink, not PButton: see ScenariosPage's "New Scenario" for why a
                design-system primitive doesn't route links. -->
