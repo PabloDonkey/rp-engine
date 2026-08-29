@@ -1,4 +1,15 @@
 @import "tailwindcss";
+/*
+ * Tokens only, not the package's full `styles.css`: that also pulls in
+ * self-hosted webfonts and a base layer that overrides `body`, both a bigger
+ * visual change than "one menu uses PMenu" calls for, and S032 (the admin
+ * panel's own design-system pass) explicitly gates installing those fonts on
+ * a yes first. `@source` is still required — Tailwind does not scan
+ * node_modules by default, so without it PMenu's token-based classes
+ * (`rounded-control`, `border-hairline`, …) generate no CSS.
+ */
+@import "pablo-design-system/tokens.css";
+@source "../node_modules/pablo-design-system/dist";
 
 :root {
   color-scheme: light dark;
