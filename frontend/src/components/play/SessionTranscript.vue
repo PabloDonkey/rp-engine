@@ -190,6 +190,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
          viewport, instead of leaving dead space under the composer. -->
     <div
       ref="transcriptEl"
+      data-testid="transcript-scroll"
       class="h-full min-h-[15rem] overflow-y-auto rounded-panel border border-hairline-soft bg-ground px-3 py-3"
     >
       <p v-if="store.transcript.length === 0 && !pending" class="p-2 text-body text-muted">

@@ -85,10 +85,13 @@ async function onRetry(): Promise<void> {
 </script>
 
 <template>
-  <!-- `min-h-0` on a flex item overrides the default `min-height: auto`, which would
-       otherwise refuse to shrink below the transcript's content height and defeat the
-       fill-then-scroll layout below. Three sections, each its own component: header
-       (title/meta/actions/tabs), transcript (scrolls on its own), composer (pinned). -->
+  <!-- `h-full` fills App.vue's `<main>` exactly -- which only works because `main` now
+       has a real, fixed height (`h-screen` on the shell plus `flex-1 min-h-0` on `main`
+       itself), not merely a `min-height`. `min-h-0` here overrides this element's own
+       flex-item default of `min-height: auto`, so it can shrink to fit that fixed box
+       instead of growing to its content's height and forcing `main` to scroll as a whole.
+       Three sections, each its own component: header (title/meta/actions/tabs),
+       transcript (scrolls on its own), composer (pinned). -->
   <div class="flex h-full min-h-0 flex-col">
     <RouterLink :to="backTo" class="shrink-0 text-body text-muted">&larr; Sessions</RouterLink>
 
