@@ -74,21 +74,21 @@ function onSelect(value: string): void {
 </script>
 
 <template>
-  <div data-composer class="relative flex items-end gap-2">
+  <div data-composer class="flex items-end gap-2">
     <textarea
       v-model="draft"
       :disabled="generating || disabled"
-      rows="2"
-      class="min-h-[2.75rem] flex-1 resize-y rounded-md border border-black/10 bg-white px-2.5 py-2 text-sm disabled:opacity-50 dark:border-white/10 dark:bg-neutral-900"
+      rows="1"
+      class="min-h-[2.5rem] flex-1 resize-y rounded-control border border-hairline bg-surface px-2.5 py-2 text-body text-ink placeholder:text-faint disabled:opacity-50"
       :placeholder="disabled ? 'This story is retired.' : 'Say or do something…'"
       @keydown.enter.exact.prevent="onSend"
     ></textarea>
 
-    <div class="relative flex shrink-0">
+    <div class="flex h-10 shrink-0">
       <button
         type="button"
         :disabled="!canSend"
-        class="rounded-l-md border border-neutral-900 bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-40 dark:border-white dark:bg-white dark:text-neutral-900"
+        class="rounded-l-control border border-accent bg-accent px-4 text-body font-medium text-accent-contrast disabled:cursor-not-allowed disabled:opacity-50"
         @click="onSend"
       >
         {{ generating ? "Writing…" : "Send" }}
@@ -99,7 +99,7 @@ function onSelect(value: string): void {
           type="button"
           :disabled="disabled"
           aria-label="More turn actions"
-          class="rounded-r-md border border-l border-neutral-900 border-l-white/25 bg-neutral-900 px-2 py-2 text-xs text-white disabled:opacity-40 dark:border-white dark:border-l-black/20 dark:bg-white dark:text-neutral-900"
+          class="h-full rounded-r-control border border-l border-accent border-l-accent-contrast/25 bg-accent px-2 text-xs text-accent-contrast disabled:cursor-not-allowed disabled:opacity-50"
         >
           ▾
         </button>
