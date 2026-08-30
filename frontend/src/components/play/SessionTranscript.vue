@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from "vue";
-import { PButton } from "pablo-design-system";
+import { computed, nextTick, reactive, ref, watch, watchEffect } from "vue";
+import { PButton, PScrollArea } from "pablo-design-system";
 
 import type { AdminMessage, AdminTrace } from "@/api";
 import { useStickToBottom } from "@/composables/useStickToBottom";
@@ -54,7 +54,15 @@ watch(
   },
 );
 
+const scrollAreaRef = ref<InstanceType<typeof PScrollArea> | null>(null);
+// `PScrollArea`'s real scrolling element, not the ref itself: `useStickToBottom` wants a
+// plain, writable `Ref<HTMLElement | null>`, and the exposed `viewport` only appears once
+// Reka mounts its own viewport child, so this stays in step with that instead of capturing
+// it once.
 const transcriptEl = ref<HTMLElement | null>(null);
+watchEffect(() => {
+  transcriptEl.value = scrollAreaRef.value?.viewport ?? null;
+});
 const { unseen, measure, settle, scrollToBottom } = useStickToBottom(transcriptEl);
 
 defineExpose({ scrollToBottom });
@@ -187,11 +195,15 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
          surface or a panel, and no token in the package models "recessed" (S032 audit).
          Height comes from the parent's flex layout, not a `calc()` guess: this fills
          whatever the header/composer leave behind, down to the true bottom of the
-         viewport, instead of leaving dead space under the composer. -->
-    <div
-      ref="transcriptEl"
+         viewport, instead of leaving dead space under the composer. `data-testid` lands on
+         `PScrollArea`'s viewport, not its root -- the root's own height is pinned to its
+         child, so it never actually overflows, and a test (or a screen reader) asking
+         "is this the thing that scrolls" needs the viewport. -->
+    <PScrollArea
+      ref="scrollAreaRef"
       data-testid="transcript-scroll"
-      class="h-full min-h-[15rem] overflow-y-auto rounded-panel border border-hairline-soft bg-ground px-3 py-3"
+      class="h-full min-h-[15rem] rounded-panel border border-hairline-soft bg-ground"
+      viewport-class="px-3 py-3"
     >
       <p v-if="store.transcript.length === 0 && !pending" class="p-2 text-body text-muted">
         No messages yet.
@@ -379,7 +391,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
           </template>
         </div>
       </div>
-    </div>
+    </PScrollArea>
 
     <!-- Only while the reader is away from the newest turn. Following, there is nothing
          to jump to. Not PButton: this wants an inverted-contrast floating affordance

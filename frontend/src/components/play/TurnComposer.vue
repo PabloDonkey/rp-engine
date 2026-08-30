@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
-import { PMenu, type MenuItem } from "pablo-design-system";
+import { PMenu, PScrollArea, type MenuItem } from "pablo-design-system";
 
 /**
  * `[ Say or do something… · Send ▾ ]` — the composer for the session page.
@@ -8,7 +8,11 @@ import { PMenu, type MenuItem } from "pablo-design-system";
  * One bordered box holds the whole row: the text field is borderless and shares the box's
  * background, so Send and the field read as one control instead of two stacked ones. The
  * field grows with what you type, up to `MAX_HEIGHT_PX`, then scrolls internally instead of
- * growing the page — sizing is automatic, there is no drag handle.
+ * growing the page — sizing is automatic, there is no drag handle. The clip-and-scroll is a
+ * `PScrollArea` wrapped around the field rather than a cap on the field's own height: the
+ * field's own height always tracks its full content (no internal overflow of its own), and
+ * `PScrollArea` scrolls once that exceeds `MAX_HEIGHT_PX` — with `visible: false`, since a
+ * scrollbar on a two-line input reads as clutter, not as help.
  *
  * Send, Continue and Retry are three ways to do one thing: get the next reply. That is what
  * a split button is for, and it leaves the commands still on the bench somewhere to land
@@ -51,12 +55,21 @@ const draft = defineModel<string>({ default: "" });
 
 const textareaEl = ref<HTMLTextAreaElement | null>(null);
 
-/** Grows the field to fit its content, capped at `MAX_HEIGHT_PX` where it scrolls instead. */
+// `PScrollArea`'s viewport is `height: 100%` of its root, and a percentage height resolves
+// against an *indeterminate* containing block (one sized by `max-height` alone, with no
+// explicit `height`) as `auto` -- so the viewport would just grow to match the field instead
+// of clipping it, and Reka would never detect an overflow to scroll. The root needs an actual
+// pixel `height`, not a cap, so this mirrors the field's own clamp one level up.
+const wellHeightPx = ref(0);
+
+/** Grows the field to fit its full content. `PScrollArea` around it caps the visible height
+ *  at `MAX_HEIGHT_PX` and scrolls past that -- the field itself never clips its own text. */
 function autoGrow(): void {
   const el = textareaEl.value;
   if (!el) return;
   el.style.height = "auto";
-  el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT_PX)}px`;
+  el.style.height = `${el.scrollHeight}px`;
+  wellHeightPx.value = Math.min(el.scrollHeight, MAX_HEIGHT_PX);
 }
 
 // Covers every way the draft can change from outside a keystroke: cleared after a send,
@@ -107,17 +120,22 @@ function onSelect(value: string): void {
     data-composer
     class="flex items-end gap-1 rounded-control border border-hairline bg-surface p-1.5 focus-within:border-accent"
   >
-    <textarea
-      ref="textareaEl"
-      v-model="draft"
-      :disabled="generating || disabled"
-      rows="1"
-      class="min-h-[1.75rem] flex-1 resize-none border-0 bg-transparent px-1.5 py-1 text-body text-ink placeholder:text-faint focus:outline-none disabled:opacity-50"
-      :style="{ maxHeight: `${MAX_HEIGHT_PX}px` }"
-      :placeholder="disabled ? 'This story is retired.' : 'Say or do something…'"
-      @input="autoGrow"
-      @keydown.enter.exact.prevent="onSend"
-    ></textarea>
+    <PScrollArea
+      :visible="false"
+      class="min-h-[1.75rem] flex-1"
+      :style="{ height: `${wellHeightPx}px` }"
+    >
+      <textarea
+        ref="textareaEl"
+        v-model="draft"
+        :disabled="generating || disabled"
+        rows="1"
+        class="block w-full resize-none overflow-hidden border-0 bg-transparent px-1.5 py-1 text-body text-ink placeholder:text-faint focus:outline-none disabled:opacity-50"
+        :placeholder="disabled ? 'This story is retired.' : 'Say or do something…'"
+        @input="autoGrow"
+        @keydown.enter.exact.prevent="onSend"
+      ></textarea>
+    </PScrollArea>
 
     <!-- `shrink-0` and no height class: the row's `items-end` keeps this pinned to the
          bottom, but nothing here stretches when the field above it grows. -->
