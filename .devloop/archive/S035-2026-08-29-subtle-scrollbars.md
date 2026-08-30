@@ -89,7 +89,7 @@ build clean across four commits.
 
 ## Follow-ups, not done here
 
-- `pablo-design-system`'s `worktree-S005-scroll-area` branch needs a push to `main` (repo
-  convention: no PR flow, but a `main` push needs Pablo) before `rp-engine`'s `package.json`
-  (`file:../../pablo-design-system`, unchanged by this epic) picks it up for anyone who
-  hasn't got the branch checked out.
+- **Closed out 2026-08-29:** `pablo-design-system`'s branch pushed to `main` (`f784f6c`).
+  `rp-engine`'s own change is up as
+  [PR #7](https://github.com/PabloDonkey/rp-engine/pull/7) (draft), branch
+  `worktree-subtle-scrollbars` — needs review and merge.
