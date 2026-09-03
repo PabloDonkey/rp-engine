@@ -267,18 +267,27 @@ claim about a story nobody can check.
 Authored facts, matched by trigger key. Scoped to a scenario definition, so every session of a
 scenario shares one lorebook.
 
-- id (UUID, PK)
-- scenario_definition_id (TEXT, indexed, FK -> scenario_definitions.id)
-- keys (TEXT[] — the trigger keys)
+- scenario_definition_id (VARCHAR(128), FK -> scenario_definitions.id ON DELETE CASCADE)
+- id (VARCHAR(128)) — together with `scenario_definition_id`, the composite PK. Entries are
+  always addressed by scenario first, matching how the rest of the code reaches them.
+- title (VARCHAR(255))
 - content (TEXT)
-- priority (INTEGER — feeds `MemoryFragment.priority`)
-- enabled (BOOLEAN)
-- search_vector (TSVECTOR, GIN index — stemmed matching over `keys`)
+- trigger_keys (TEXT[] — the phrases an operator writes)
+- trigger_query_expr (TEXT, default `""`) — the `to_tsquery` source text derived from
+  `trigger_keys` at write time (each phrase becomes an AND of its own words, phrases are
+  OR'd together). Plain text, not a `tsquery`-typed column, so no SQLAlchemy `TSQUERY` type
+  is needed; it is cast to `tsquery` only inside the matching query. No index: a scenario's
+  lorebook is a handful of rows by design, so a full scan costs nothing.
+- priority (VARCHAR(16), default `"normal"` — `low`/`normal`/`high`, a per-entry tie-break
+  fed into `MemoryFragment.priority`)
+- related_entry_ids (TEXT[]) — inert: shown to whoever edits lore, never auto-expanded
+  during retrieval
 - created_at, updated_at (timestamptz)
 
-Ranking happens in the repository, through `LorebookStore.find_matching(keywords)`. That is a
-deliberate exception to ADR-013's storage-versus-selection split, recorded in ADR-026. The
-alternative is loading the whole table into Python to rank it there.
+Ranking happens in the repository, through `PostgresLorebookStore.find_matching
+(scenario_definition_id, recall_text, *, limit)`. That is a deliberate exception to
+ADR-013's storage-versus-selection split, recorded in ADR-026. The alternative is loading
+the whole table into Python to rank it there.
 
 ### memory_facts and memory_fact_watermarks — layer 03, S025
 
