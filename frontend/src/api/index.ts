@@ -93,6 +93,20 @@ const AdminTraceSchema = z.object({
   record: z.record(z.string(), z.unknown()),
 });
 
+// One authored fact about a scenario (memory layer 02, ADR-026). `related_entry_ids` is
+// shown for reference only: retrieval never expands through it.
+const LoreEntrySchema = z.object({
+  id: z.string(),
+  scenario_definition_id: z.string(),
+  title: z.string(),
+  content: z.string(),
+  trigger_keys: z.array(z.string()),
+  priority: z.enum(["low", "normal", "high"]),
+  related_entry_ids: z.array(z.string()),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
 const ScenarioSummarySchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -121,6 +135,8 @@ export type AdminSession = z.infer<typeof AdminSessionSchema>;
 export type AdminMessage = z.infer<typeof AdminMessageSchema>;
 export type AdminTrace = z.infer<typeof AdminTraceSchema>;
 export type DeletedMessage = z.infer<typeof DeletedMessageSchema>;
+export type LoreEntry = z.infer<typeof LoreEntrySchema>;
+export type LoreEntryPriority = LoreEntry["priority"];
 export type ScenarioSummary = z.infer<typeof ScenarioSummarySchema>;
 export type ScenarioPayload = ScenarioDefinition;
 export type SessionExport = z.infer<typeof SessionExportSchema>;
@@ -291,6 +307,56 @@ export function restoreScenario(scenarioId: string): Promise<void> {
 
 export function exportSession(sessionId: string): Promise<SessionExport> {
   return request(`/sessions/${sessionId}/export`, SessionExportSchema);
+}
+
+// --- Lorebook entries (memory layer 02, ADR-026) ---
+
+export interface LoreEntryInput {
+  title: string;
+  content: string;
+  triggerKeys: string[];
+  priority: LoreEntryPriority;
+  relatedEntryIds: string[];
+}
+
+export function listLorebookEntries(scenarioId: string): Promise<LoreEntry[]> {
+  return request(`/scenarios/${scenarioId}/lorebook`, z.array(LoreEntrySchema));
+}
+
+// No id to pass in: the server generates one. Nothing in the panel asks anyone to type
+// or read it back — the title is what identifies an entry here.
+export function createLoreEntry(scenarioId: string, input: LoreEntryInput): Promise<LoreEntry> {
+  return request(`/scenarios/${scenarioId}/lorebook`, LoreEntrySchema, {
+    method: "POST",
+    body: JSON.stringify({
+      title: input.title,
+      content: input.content,
+      trigger_keys: input.triggerKeys,
+      priority: input.priority,
+      related_entry_ids: input.relatedEntryIds,
+    }),
+  });
+}
+
+export function updateLoreEntry(
+  scenarioId: string,
+  entryId: string,
+  input: LoreEntryInput,
+): Promise<LoreEntry> {
+  return request(`/scenarios/${scenarioId}/lorebook/${entryId}`, LoreEntrySchema, {
+    method: "PUT",
+    body: JSON.stringify({
+      title: input.title,
+      content: input.content,
+      trigger_keys: input.triggerKeys,
+      priority: input.priority,
+      related_entry_ids: input.relatedEntryIds,
+    }),
+  });
+}
+
+export function deleteLoreEntry(scenarioId: string, entryId: string): Promise<void> {
+  return requestVoid(`/scenarios/${scenarioId}/lorebook/${entryId}`, { method: "DELETE" });
 }
 
 // --- Playing a turn from the panel (S031) ---

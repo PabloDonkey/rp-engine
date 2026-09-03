@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from "vue";
 
 import { PButton, PChip, PSectionLabel } from "pablo-design-system";
 
+import LorebookSection from "@/components/scenario/LorebookSection.vue";
 import ScenarioReadView from "@/components/scenario/ScenarioReadView.vue";
 import { retireMessage } from "@/components/scenario/retirePrompt";
 import { useAdminStore } from "@/stores/admin";
@@ -118,6 +119,10 @@ async function runLifecycle(action: () => Promise<void>): Promise<void> {
 
       <div class="mt-5">
         <ScenarioReadView :scenario="store.scenario" />
+      </div>
+
+      <div class="mt-5">
+        <LorebookSection :scenario-id="scenarioId" />
       </div>
 
       <details class="mt-6">

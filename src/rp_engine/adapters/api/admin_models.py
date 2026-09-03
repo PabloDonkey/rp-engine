@@ -14,6 +14,7 @@ from rp_engine.core.memory.fragment import ToggleableMemorySystemId
 from rp_engine.core.memory.rolling_summary_source import RollingSummaryStatus
 from rp_engine.core.memory.session_summary import SessionSummary
 from rp_engine.core.memory.settings import MemorySettings
+from rp_engine.core.scenario.lore_entry import LoreEntry, LoreEntryPriority
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives
 
@@ -286,6 +287,52 @@ class AdminDeletedMessageResponse(BaseModel):
 
 class AdminTraceResponse(BaseModel):
     record: dict[str, object]
+
+
+class AdminLoreEntryResponse(BaseModel):
+    """One lore entry (memory layer 02, ADR-026), as authored in the admin panel."""
+
+    id: str
+    scenario_definition_id: str
+    title: str
+    content: str
+    trigger_keys: list[str]
+    priority: LoreEntryPriority
+    related_entry_ids: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_entry(cls, entry: LoreEntry) -> "AdminLoreEntryResponse":
+        return cls(
+            id=entry.id,
+            scenario_definition_id=entry.scenario_definition_id,
+            title=entry.title,
+            content=entry.content,
+            trigger_keys=list(entry.trigger_keys),
+            priority=entry.priority,
+            related_entry_ids=list(entry.related_entry_ids),
+            created_at=entry.created_at,
+            updated_at=entry.updated_at,
+        )
+
+
+class AdminLoreEntryCreateRequest(BaseModel):
+    """No `id` here: the server generates one. See `AdminService.create_lorebook_entry`."""
+
+    title: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    trigger_keys: list[str] = Field(default_factory=list)
+    priority: LoreEntryPriority = "normal"
+    related_entry_ids: list[str] = Field(default_factory=list)
+
+
+class AdminLoreEntryUpdateRequest(BaseModel):
+    title: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    trigger_keys: list[str] = Field(default_factory=list)
+    priority: LoreEntryPriority = "normal"
+    related_entry_ids: list[str] = Field(default_factory=list)
 
 
 class ScenarioSummaryResponse(BaseModel):

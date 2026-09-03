@@ -6,6 +6,9 @@ from sqlalchemy.exc import IntegrityError
 
 from rp_engine.adapters.api.admin_models import (
     AdminDeletedMessageResponse,
+    AdminLoreEntryCreateRequest,
+    AdminLoreEntryResponse,
+    AdminLoreEntryUpdateRequest,
     AdminMessageResponse,
     AdminSessionMemoryRequest,
     AdminSessionMemoryResponse,
@@ -266,6 +269,51 @@ def create_admin_router(
     async def restore_scenario(scenario_id: str) -> None:
         if not await admin_service.restore_scenario(scenario_id):
             raise HTTPException(status_code=404, detail="Scenario not found")
+
+    @router.get("/scenarios/{scenario_id}/lorebook")
+    async def list_lorebook_entries(scenario_id: str) -> list[AdminLoreEntryResponse]:
+        entries = await admin_service.list_lorebook_entries(scenario_id)
+        if entries is None:
+            raise HTTPException(status_code=404, detail="Scenario not found")
+        return [AdminLoreEntryResponse.from_entry(entry) for entry in entries]
+
+    @router.post("/scenarios/{scenario_id}/lorebook", status_code=201)
+    async def create_lorebook_entry(
+        scenario_id: str, payload: AdminLoreEntryCreateRequest
+    ) -> AdminLoreEntryResponse:
+        entry = await admin_service.create_lorebook_entry(
+            scenario_id,
+            title=payload.title,
+            content=payload.content,
+            trigger_keys=payload.trigger_keys,
+            priority=payload.priority,
+            related_entry_ids=payload.related_entry_ids,
+        )
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Scenario not found")
+        return AdminLoreEntryResponse.from_entry(entry)
+
+    @router.put("/scenarios/{scenario_id}/lorebook/{entry_id}")
+    async def update_lorebook_entry(
+        scenario_id: str, entry_id: str, payload: AdminLoreEntryUpdateRequest
+    ) -> AdminLoreEntryResponse:
+        entry = await admin_service.update_lorebook_entry(
+            scenario_id,
+            entry_id,
+            title=payload.title,
+            content=payload.content,
+            trigger_keys=payload.trigger_keys,
+            priority=payload.priority,
+            related_entry_ids=payload.related_entry_ids,
+        )
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Lore entry not found")
+        return AdminLoreEntryResponse.from_entry(entry)
+
+    @router.delete("/scenarios/{scenario_id}/lorebook/{entry_id}", status_code=204)
+    async def delete_lorebook_entry(scenario_id: str, entry_id: str) -> None:
+        if not await admin_service.delete_lorebook_entry(scenario_id, entry_id):
+            raise HTTPException(status_code=404, detail="Lore entry not found")
 
     @router.post("/scenarios/import")
     async def import_scenario(payload: dict[str, Any]) -> dict[str, Any]:

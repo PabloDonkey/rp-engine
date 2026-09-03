@@ -39,6 +39,12 @@ PRIORITY_RECENT_WINDOW = 100
 # the only thing that speaks for the part of the story the window can no longer hold, so
 # dropping it costs more than dropping any lore or fact fragment.
 PRIORITY_ROLLING_SUMMARY = 80
+# The lorebook sits below the recap: an authored fact is worth losing before the recap
+# is, because the recap is the only thing speaking for story the window has already
+# dropped, while a lore fragment is one optional piece of grounding for the turn at
+# hand. It sits above the not-yet-built layers 03 and 04, which are lower-confidence by
+# construction (extracted or similarity-ranked, not hand-written).
+PRIORITY_LOREBOOK = 60
 
 
 @dataclass(frozen=True, slots=True)

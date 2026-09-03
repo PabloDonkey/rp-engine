@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass, replace
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from rp_engine.core.conversation.message import TURN_METADATA_KEY, ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
@@ -17,10 +17,12 @@ from rp_engine.core.memory.session_summary import SessionSummary
 from rp_engine.core.memory.settings import MemorySettings
 from rp_engine.core.ports.conversation_store import ConversationStore
 from rp_engine.core.ports.generation_trace_store import GenerationTraceStore
+from rp_engine.core.ports.lorebook_store import LorebookStore
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.ports.session_summary_store import SessionSummaryStore
 from rp_engine.core.ports.user_identity_store import UserIdentityStore
+from rp_engine.core.scenario.lore_entry import LoreEntry, LoreEntryPriority
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.user import User
@@ -87,6 +89,7 @@ class AdminService:
         session_summary_store: SessionSummaryStore,
         rolling_summary_source: RollingSummarySource,
         context_budget: ContextBudget,
+        lorebook_store: LorebookStore,
     ) -> None:
         self._user_identity_store = user_identity_store
         self._scenario_session_store = scenario_session_store
@@ -96,6 +99,7 @@ class AdminService:
         self._session_summary_store = session_summary_store
         self._rolling_summary_source = rolling_summary_source
         self._context_budget = context_budget
+        self._lorebook_store = lorebook_store
 
     async def list_users(self) -> list[AdminUserSummary]:
         users = await self._user_identity_store.list_users()
@@ -299,3 +303,71 @@ class AdminService:
 
     async def get_scenario(self, scenario_id: str) -> ScenarioDefinition | None:
         return await self._scenario_definition_store.get_by_id(scenario_id)
+
+    async def list_lorebook_entries(self, scenario_id: str) -> list[LoreEntry] | None:
+        """A scenario's lore, or None when the scenario itself does not exist."""
+        if await self._scenario_definition_store.get_by_id(scenario_id) is None:
+            return None
+        return list(await self._lorebook_store.list_for_scenario(scenario_id))
+
+    async def create_lorebook_entry(
+        self,
+        scenario_id: str,
+        *,
+        title: str,
+        content: str,
+        trigger_keys: list[str],
+        priority: LoreEntryPriority,
+        related_entry_ids: list[str],
+    ) -> LoreEntry | None:
+        """Create one lore entry. None when the scenario does not exist.
+
+        The id is a generated UUID, not something an operator types: nothing outside this
+        layer needs a memorable id (`related_entry_ids` names other entries, but the panel
+        picks those from the list rather than asking someone to type one by hand). The
+        hand-authored short ids (`jane_accident`) stay a JSON-transfer-format convention —
+        see `docs/SCENARIOS.md` — because a curated file has no admin form to pick from.
+        """
+        if await self._scenario_definition_store.get_by_id(scenario_id) is None:
+            return None
+        entry = LoreEntry.create(
+            entry_id=str(uuid4()),
+            scenario_definition_id=scenario_id,
+            title=title,
+            content=content,
+            trigger_keys=trigger_keys,
+            priority=priority,
+            related_entry_ids=related_entry_ids,
+        )
+        return await self._lorebook_store.save(entry)
+
+    async def update_lorebook_entry(
+        self,
+        scenario_id: str,
+        entry_id: str,
+        *,
+        title: str,
+        content: str,
+        trigger_keys: list[str],
+        priority: LoreEntryPriority,
+        related_entry_ids: list[str],
+    ) -> LoreEntry | None:
+        """Rewrite one lore entry in place. None when it does not exist."""
+        existing = await self._lorebook_store.get(scenario_id, entry_id)
+        if existing is None:
+            return None
+        updated = existing.rewritten(
+            title=title,
+            content=content,
+            trigger_keys=trigger_keys,
+            priority=priority,
+            related_entry_ids=related_entry_ids,
+        )
+        return await self._lorebook_store.save(updated)
+
+    async def delete_lorebook_entry(self, scenario_id: str, entry_id: str) -> bool:
+        """Delete one lore entry. Returns False when it does not exist."""
+        if await self._lorebook_store.get(scenario_id, entry_id) is None:
+            return False
+        await self._lorebook_store.delete(scenario_id, entry_id)
+        return True

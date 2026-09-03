@@ -13,17 +13,23 @@ from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import ConversationIdentity
 from rp_engine.core.ports.conversation_store import ConversationStore
+from rp_engine.core.ports.lorebook_store import LorebookStore
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.infrastructure.scenario_serialization import (
+    lore_entry_from_payload,
+    lore_entry_to_payload,
     scenario_definition_from_payload,
     scenario_definition_to_payload,
     scenario_session_from_payload,
     scenario_session_to_payload,
 )
-from rp_engine.infrastructure.scenario_transfer import read_scenario_directory
+from rp_engine.infrastructure.scenario_transfer import (
+    read_scenario_directory,
+    read_scenario_lorebook_directory,
+)
 
 
 def _message_to_payload(message: ConversationMessage) -> dict[str, Any]:
@@ -51,10 +57,12 @@ class ScenarioTransferService:
         scenario_definition_store: ScenarioDefinitionStore,
         scenario_session_store: ScenarioSessionStore,
         conversation_store: ConversationStore,
+        lorebook_store: LorebookStore,
     ) -> None:
         self._scenario_definition_store = scenario_definition_store
         self._scenario_session_store = scenario_session_store
         self._conversation_store = conversation_store
+        self._lorebook_store = lorebook_store
 
     async def import_directory(self, path: Path | str) -> ImportReport:
         directory = Path(path)
@@ -62,6 +70,11 @@ class ScenarioTransferService:
         scenarios = read_scenario_directory(directory)
         for scenario in scenarios:
             await self._scenario_definition_store.save(scenario)
+        # A scenario's optional `lorebook` array ships beside its definition and is
+        # upserted the same way (ADR-026): a curated file is a seed, further edits
+        # happen in the admin panel.
+        for entry in read_scenario_lorebook_directory(directory):
+            await self._lorebook_store.save(entry)
         return ImportReport(imported=len(scenarios), skipped=total_files - len(scenarios))
 
     async def import_scenario_payload(self, payload: dict[str, Any]) -> ScenarioDefinition | None:
@@ -69,13 +82,22 @@ class ScenarioTransferService:
         if scenario is None:
             return None
         await self._scenario_definition_store.save(scenario)
+        for raw_entry in payload.get("lorebook", []):
+            if not isinstance(raw_entry, dict):
+                continue
+            entry = lore_entry_from_payload(raw_entry, scenario_definition_id=scenario.id)
+            if entry is not None:
+                await self._lorebook_store.save(entry)
         return scenario
 
     async def export_scenario(self, scenario_id: str) -> dict[str, Any] | None:
         scenario = await self._scenario_definition_store.get_by_id(scenario_id)
         if scenario is None:
             return None
-        return scenario_definition_to_payload(scenario)
+        payload = scenario_definition_to_payload(scenario)
+        entries = await self._lorebook_store.list_for_scenario(scenario_id)
+        payload["lorebook"] = [lore_entry_to_payload(entry) for entry in entries]
+        return payload
 
     async def export_session(self, session_id: UUID) -> dict[str, Any] | None:
         session = await self._scenario_session_store.get_by_id(session_id)

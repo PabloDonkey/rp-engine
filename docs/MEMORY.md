@@ -2,10 +2,12 @@
 
 How the engine decides what the model is allowed to remember.
 
-> **Status: layers 00 and 01 are built.** ADR-026 accepted the architecture on 2026-08-02 and
+> **Status: layers 00 to 02 are built.** ADR-026 accepted the architecture on 2026-08-02 and
 > S021 settled the four open decisions on 2026-08-03. S022 built the token counter, the budget,
 > the pipeline and layer 00 on 2026-08-10. S023 built the background worker and layer 01 on the
-> same day. Layers 02 to 04 are still design; S024 to S026 build them, in that order.
+> same day. S024 built layer 02, the lorebook, on 2026-09-03, piloted with a character named
+> Jane (`data/catalog/jane-butcher-shop.json`). Layers 03 and 04 are still design; S025 and S026
+> build them, in that order.
 >
 > `DumpEverythingStrategy`, which put every message ever stored into every prompt, is gone.
 
@@ -181,24 +183,66 @@ cares about will not come back the way it was said. That is what layers 02 and 0
 
 ## Layer 02 — lorebook
 
-**Ships in S024.** Authored by hand, so a wrong result is a bug someone can point at rather than
-a model that drifted.
+**Shipped in S024,** piloted with a character named Jane — a butcher whose defining trauma
+(a childhood accident), its social cost (a lost friendship), a later consequence (learning
+restraint), and an unrelated life fact (the butcher shop) became the four pilot entries in
+`data/catalog/jane-butcher-shop.json`. Authored by hand, so a wrong result is a bug someone can
+point at rather than a model that drifted.
 
 | | |
 |---|---|
 | Stores | `lorebook_entries`, scoped to a scenario definition |
-| `recall` returns | one fragment per matched entry, labelled `[Lore]`, ordered by priority |
+| `recall` returns | one fragment per matched entry, labelled `[Lore]`, priority `PRIORITY_LOREBOOK` |
 | `observe` does | nothing. A person writes this layer. The engine never learns it. |
-| Cost per turn | none. One indexed query. |
+| Cost per turn | none on the turn path. One query, over a handful of rows. |
 
-Entries carry trigger keys. `LorebookStore.find_matching(keywords)` matches them against the
-recent messages using Postgres full-text search, so `dragons` matches `dragon`. Ranking happens
-inside the repository — a deliberate exception to ADR-013, recorded in ADR-026, because the
-alternative is loading the whole table into Python to rank it there.
+**Matching direction.** Entries carry trigger keys, written by hand. `LorebookStore.find_matching`
+turns them into a Postgres `tsquery` at write time — each trigger phrase becomes an AND'd group
+of its own words, phrases are OR'd together — stored as plain text (`trigger_query_expr`) rather
+than a `tsquery`-typed column, and cast only inside the query. Matching runs
+`to_tsvector('english', recall_text) @@ to_tsquery('english', trigger_query_expr)`, ranked by
+`ts_rank`. `dragons` matches a trigger of `dragon` this way, because Postgres's English stemmer
+reduces both to the same lexeme — that is the ADR-026 example, confirmed by hand against a real
+database. **Not every related pair stems together**, though: `strength` and `strong` are
+unrelated lexemes to the stemmer, so a trigger of `strong` will not fire on text that only says
+`strength`. Write triggers as the words a player would actually type, not as a paraphrase of the
+concept — the Jane pilot's own first draft used "Jane's strength" and "people being afraid of
+Jane" as triggers, copied from a design document's prose, and neither ever fired in a second-person
+conversation where the player addresses her as "you", never "Jane". Ranking happens inside the
+repository — a deliberate exception to ADR-013, recorded in ADR-026, because the alternative is
+loading the whole table into Python to rank it there.
 
-Scenario authors and operators manage entries from the admin panel.
+**The recall window, not the whole transcript, is what gets matched.** `LorebookSource` builds its
+search text from the player's current message plus the last four stored messages
+(`RECALL_WINDOW_MESSAGES`), never the full history. This is what answers ADR-026's open question
+of how to avoid injecting the same lore on every later turn: there is no "already shown" flag to
+store, keep in sync with `/restart` and `/clear`, or get wrong. An entry simply stops matching once
+its topic scrolls past the window, the same way layer 00 lets old turns go.
 
-**What it misses.** Paraphrase that shares no stem with any key.
+**Related entries stay inert.** `related_entry_ids` is stored and shown to whoever edits an entry,
+but retrieval never expands through it — matching a chain automatically risks exactly the "dump
+the whole biography" failure this layer exists to avoid. `LorebookSource` caps a turn to the
+top three matches (`DEFAULT_MATCH_LIMIT`), ranked by `ts_rank` and then by the entry's own
+`priority` (a per-entry tie-break — `low`/`normal`/`high` — distinct from `MemoryFragment.priority`,
+which resolves budget contention between layers, not between entries within this one).
+
+Scenario authors ship a curated scenario's lore alongside it, as an optional `lorebook` array in
+the scenario JSON (see `docs/SCENARIOS.md`) — imported into Postgres on the same boot pass as the
+scenario itself. Operators then manage entries from the admin panel, the same seed-not-source
+relationship the JSON catalog already has with scenarios.
+
+**`content` is a character-card field, not a special case.** `ConversationBuilder` resolves
+`{{char}}`/`{{user}}`/`{{world}}` in a retrieved fragment's body the same way it already does for
+`characters[*].personality` and every other authored section — one code path, not a lorebook
+exception. Authors should write `{{char}}` rather than the character's literal name for the same
+reason `personality` does: a name baked into the text is wrong the moment the entry is reused for
+someone else. This is unrelated to matching — `trigger_keys` are not template-resolved, and
+resolving `{{char}}` in a trigger would not have fixed the naming bug described above under
+**Matching direction**: the player never types the character's name to begin with, so a trigger
+resolving `{{char}}` to "Jane" would fail the exact same way the literal name did.
+
+**What it misses.** Paraphrase that shares no stem with any trigger key, and any relation between
+words the English stemmer does not treat as the same lexeme.
 
 ---
 
