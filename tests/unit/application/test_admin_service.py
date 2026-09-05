@@ -12,8 +12,10 @@ from rp_engine.core.memory.context_budget import ContextBudget
 from rp_engine.core.memory.models import ConversationIdentity, MemoryKey
 from rp_engine.core.memory.rolling_summary_source import RollingSummarySource
 from rp_engine.core.memory.session_summary import SessionSummary
+from rp_engine.core.ports.lorebook_store import LorebookStore
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
+from rp_engine.core.scenario.lore_entry import LoreEntry
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.identity import UserIdentity
@@ -210,6 +212,33 @@ class FakeScenarioDefinitionStore(ScenarioDefinitionStore):
             self.items[scenario_id] = replace(stored, deleted_at=None)
 
 
+class FakeLorebookStore(LorebookStore):
+    def __init__(self) -> None:
+        self.entries: dict[tuple[str, str], LoreEntry] = {}
+
+    async def find_matching(
+        self, scenario_definition_id: str, recall_text: str, *, limit: int
+    ) -> tuple[LoreEntry, ...]:
+        return ()
+
+    async def list_for_scenario(self, scenario_definition_id: str) -> tuple[LoreEntry, ...]:
+        return tuple(
+            entry
+            for (scenario_id, _), entry in self.entries.items()
+            if scenario_id == scenario_definition_id
+        )
+
+    async def get(self, scenario_definition_id: str, entry_id: str) -> LoreEntry | None:
+        return self.entries.get((scenario_definition_id, entry_id))
+
+    async def save(self, entry: LoreEntry) -> LoreEntry:
+        self.entries[(entry.scenario_definition_id, entry.id)] = entry
+        return entry
+
+    async def delete(self, scenario_definition_id: str, entry_id: str) -> None:
+        self.entries.pop((scenario_definition_id, entry_id), None)
+
+
 def _session(*, owner_id: UUID = USER_ID) -> ScenarioSession:
     return ScenarioSession(
         id=SESSION_ID,
@@ -247,6 +276,7 @@ def _service(
             model_name=MODEL_NAME,
         ),
         context_budget=ContextBudget(context_window=FixedContextWindow(1000), share=1.0),
+        lorebook_store=FakeLorebookStore(),
     )
     return service, session_store, convo_store, traces
 

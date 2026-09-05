@@ -468,6 +468,40 @@ instead of merely late.
 
 Excluded from both: `directives`, `world_state`, `story_progress`, and the session itself.
 
+## LoreEntry
+
+> Built in S024. See ADR-026, `docs/MEMORY.md` (layer 02).
+
+One authored fact about a scenario or its characters, retrieved only when the current scene
+touches it rather than carried in every prompt. Scoped to a `ScenarioDefinition`, not to a
+`Character` — matching `Character` being an optional embedded asset rather than a root entity.
+
+* `id` (`str`)
+* `scenario_definition_id` (`str`) - scopes lookup and storage; invisible under a different
+  scenario.
+* `title` (`str`)
+* `content` (`str`) - resolves `{{char}}`/`{{user}}`/`{{world}}` the same way every other
+  authored section does; not a special case.
+* `trigger_keys` (`tuple[str, ...]`) - what a person writes. `LorebookStore.find_matching`
+  derives the actual Postgres full-text `tsquery` from these at write time, so this type stays
+  free of that detail. Not template-resolved: a trigger naming `{{char}}`'s literal name will
+  not fire in second-person play, where the player never types it.
+* `priority` (`LoreEntryPriority`, `"low" | "normal" | "high"`) - a per-entry tie-break used
+  when more entries match in one turn than the source keeps. Distinct from
+  `MemoryFragment.priority`, which resolves budget contention between layers, not between
+  entries within this one.
+* `related_entry_ids` (`tuple[str, ...]`) - shown to whoever edits an entry. Retrieval never
+  expands through it: auto-expanding a chain of related entries risks the "dump the whole
+  biography" failure this layer exists to avoid.
+* `created_at`, `updated_at` (`datetime`)
+
+`LorebookSource.recall` builds its search text from the player's current message plus the last
+`RECALL_WINDOW_MESSAGES` (4) stored messages, never the full history, and keeps at most
+`DEFAULT_MATCH_LIMIT` (3) matches per turn, ranked by `ts_rank` then by `priority`. Matching on
+the recall window rather than the full transcript is deliberate: it is what lets an entry stop
+matching once its topic scrolls past the window, instead of needing an "already shown" flag kept
+in sync with `/restart` and `/clear`.
+
 ## Session (removed)
 
 > **Historical note.** The character-centric `Session` entity (which bound

@@ -9,8 +9,10 @@ from rp_engine.application.services.scenario_transfer_service import ScenarioTra
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.models import MemoryKey
+from rp_engine.core.ports.lorebook_store import LorebookStore
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
+from rp_engine.core.scenario.lore_entry import LoreEntry
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.infrastructure.scenario_serialization import scenario_definition_to_payload
@@ -98,6 +100,37 @@ class FakeScenarioSessionStore(ScenarioSessionStore):
         return None
 
 
+class FakeLorebookStore(LorebookStore):
+    def __init__(self) -> None:
+        self.entries: dict[tuple[str, str], LoreEntry] = {}
+
+    async def find_matching(
+        self, scenario_definition_id: str, recall_text: str, *, limit: int
+    ) -> tuple[LoreEntry, ...]:
+        return tuple(
+            entry
+            for (scenario_id, _), entry in self.entries.items()
+            if scenario_id == scenario_definition_id
+        )[:limit]
+
+    async def list_for_scenario(self, scenario_definition_id: str) -> tuple[LoreEntry, ...]:
+        return tuple(
+            entry
+            for (scenario_id, _), entry in self.entries.items()
+            if scenario_id == scenario_definition_id
+        )
+
+    async def get(self, scenario_definition_id: str, entry_id: str) -> LoreEntry | None:
+        return self.entries.get((scenario_definition_id, entry_id))
+
+    async def save(self, entry: LoreEntry) -> LoreEntry:
+        self.entries[(entry.scenario_definition_id, entry.id)] = entry
+        return entry
+
+    async def delete(self, scenario_definition_id: str, entry_id: str) -> None:
+        self.entries.pop((scenario_definition_id, entry_id), None)
+
+
 class FakeConversationStore:
     def __init__(self) -> None:
         self.messages: dict[str, list[ConversationMessage]] = {}
@@ -131,6 +164,7 @@ def _service() -> tuple[
         scenario_definition_store=definition_store,
         scenario_session_store=session_store,
         conversation_store=conversation_store,
+        lorebook_store=FakeLorebookStore(),
     )
     return service, definition_store, session_store, conversation_store
 
@@ -195,7 +229,7 @@ async def test_export_scenario_round_trips() -> None:
 
     payload = await service.export_scenario("vault")
 
-    assert payload == scenario_definition_to_payload(original)
+    assert payload == {**scenario_definition_to_payload(original), "lorebook": []}
 
 
 @pytest.mark.asyncio
@@ -224,6 +258,7 @@ async def test_session_export_import_round_trips_transcript() -> None:
         scenario_definition_store=FakeScenarioDefinitionStore(),
         scenario_session_store=other_session_store,
         conversation_store=other_conversation_store,
+        lorebook_store=FakeLorebookStore(),
     )
 
     restored = await restore_service.import_session(exported)

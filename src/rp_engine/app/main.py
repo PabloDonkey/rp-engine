@@ -27,6 +27,7 @@ from rp_engine.application.services.session_directive_service import SessionDire
 from rp_engine.core.engine.orchestrator import RPOrchestrator
 from rp_engine.core.llm.generation import GenerationSettings
 from rp_engine.core.memory.context_budget import ContextBudget
+from rp_engine.core.memory.lorebook_source import LorebookSource
 from rp_engine.core.memory.pipeline import MemoryPipeline
 from rp_engine.core.memory.recent_window_source import RecentWindowSource
 from rp_engine.core.memory.rolling_summary_source import RollingSummarySource
@@ -35,6 +36,7 @@ from rp_engine.core.ports import (
     GenerationTraceStore,
     GroupIdentityStore,
     LLMProvider,
+    LorebookStore,
     ScenarioDefinitionStore,
     ScenarioSessionStore,
     SessionSummaryStore,
@@ -57,6 +59,7 @@ from rp_engine.infrastructure.postgres import (
 from rp_engine.infrastructure.postgres.repositories import (
     PostgresGenerationTraceStore,
     PostgresGroupIdentityStore,
+    PostgresLorebookStore,
     PostgresScenarioDefinitionStore,
     PostgresScenarioSessionStore,
     PostgresSessionSummaryStore,
@@ -139,6 +142,7 @@ def build_container(settings: Settings) -> AppContainer:
     session_summary_store: SessionSummaryStore = PostgresSessionSummaryStore(
         postgres_session_factory
     )
+    lorebook_store: LorebookStore = PostgresLorebookStore(postgres_session_factory)
     user_identity_store: UserIdentityStore = PostgresUserIdentityStore(postgres_session_factory)
     group_identity_store: GroupIdentityStore = PostgresGroupIdentityStore(postgres_session_factory)
     db_health_probe = PostgresHealthProbe(
@@ -151,6 +155,7 @@ def build_container(settings: Settings) -> AppContainer:
         scenario_definition_store=scenario_definition_store,
         scenario_session_store=scenario_session_store,
         conversation_store=conversation_store,
+        lorebook_store=lorebook_store,
     )
     playthrough_service = PlaythroughService(
         scenario_definition_store=scenario_definition_store,
@@ -174,12 +179,13 @@ def build_container(settings: Settings) -> AppContainer:
         high_water_share=settings.memory_summary_high_water_share,
         min_fold_share=settings.memory_summary_min_fold_share,
     )
-    # The layer list of ADR-026. Layers 02 to 04 append here as they land; nothing else
+    # The layer list of ADR-026. Layers 03 and 04 append here as they land; nothing else
     # changes when they do.
     memory_pipeline = MemoryPipeline(
         sources=[
             RecentWindowSource(token_counter=lmstudio_token_counter),
             rolling_summary_source,
+            LorebookSource(store=lorebook_store, token_counter=lmstudio_token_counter),
         ],
         context_budget=context_budget,
     )
@@ -206,6 +212,7 @@ def build_container(settings: Settings) -> AppContainer:
         session_summary_store=session_summary_store,
         rolling_summary_source=rolling_summary_source,
         context_budget=context_budget,
+        lorebook_store=lorebook_store,
     )
     telegram_authorization = TelegramAuthorization.from_directory(
         settings.telegram_authorization_dir,
