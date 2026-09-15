@@ -190,6 +190,76 @@ const directivesSummary = computed(() => {
   }
   return parts.join(" · ");
 });
+
+// Directives (S037): the panel's counterpart to /language, /rule, /director. Superseded
+// sessions stay read-only, the same rule the Persona panel above already follows — nothing
+// written there would ever reach a prompt again.
+const LANGUAGE_OPTIONS: { code: string; name: string }[] = [
+  { code: "auto", name: "Automatic" },
+  { code: "en", name: "English" },
+  { code: "es", name: "Spanish" },
+  { code: "fr", name: "French" },
+  { code: "de", name: "German" },
+  { code: "it", name: "Italian" },
+  { code: "pt", name: "Portuguese" },
+  { code: "ru", name: "Russian" },
+  { code: "ja", name: "Japanese" },
+  { code: "zh", name: "Chinese" },
+];
+
+const canEditDirectives = computed(() => store.session !== null && !store.session.deleted_at);
+
+const languageSaving = ref(false);
+async function onSelectLanguage(event: Event): Promise<void> {
+  const code = (event.target as HTMLSelectElement).value;
+  if (!store.session || code === store.session.directives.language) return;
+  languageSaving.value = true;
+  try {
+    await store.setSessionLanguage(props.sessionId, code);
+  } finally {
+    languageSaving.value = false;
+  }
+}
+
+const newRuleText = ref("");
+const ruleSaving = ref(false);
+async function onAddRule(): Promise<void> {
+  const text = newRuleText.value.trim();
+  if (!text) return;
+  ruleSaving.value = true;
+  try {
+    const ok = await store.addSessionRule(props.sessionId, text);
+    if (ok) newRuleText.value = "";
+  } finally {
+    ruleSaving.value = false;
+  }
+}
+
+// The id being removed, not a bare flag: several rules render in the same list, and only
+// the one the operator clicked should show "Removing…".
+const removingRuleId = ref<string | null>(null);
+async function onRemoveRule(ruleId: string): Promise<void> {
+  removingRuleId.value = ruleId;
+  try {
+    await store.removeSessionRule(props.sessionId, ruleId);
+  } finally {
+    removingRuleId.value = null;
+  }
+}
+
+const newDirectorNote = ref("");
+const directorSaving = ref(false);
+async function onAddDirectorNote(): Promise<void> {
+  const instruction = newDirectorNote.value.trim();
+  if (!instruction) return;
+  directorSaving.value = true;
+  try {
+    const ok = await store.addSessionDirectorInstruction(props.sessionId, instruction);
+    if (ok) newDirectorNote.value = "";
+  } finally {
+    directorSaving.value = false;
+  }
+}
 </script>
 
 <template>
@@ -448,49 +518,99 @@ const directivesSummary = computed(() => {
             line.
           </p>
         </div>
-        <!-- Read-only: directives are set by the player over Telegram (/language, /rule,
-             /director), the panel only reflects them. -->
-        <div v-show="openPanel === 'directives'">
-          <dl class="grid gap-2">
-            <div class="flex gap-2">
-              <dt class="w-32 shrink-0 text-muted">Language</dt>
-              <dd>{{ store.session.directives.language }}</dd>
-            </div>
-            <div class="flex gap-2">
-              <dt class="w-32 shrink-0 text-muted">Scenario rules</dt>
-              <dd>
-                <span v-if="store.session.directives.rules.length === 0" class="text-muted">
-                  None
-                </span>
-                <ul v-else class="flex flex-col gap-1">
-                  <li v-for="rule in store.session.directives.rules" :key="rule.id">
-                    <span class="text-muted">{{ rule.id }}.</span> {{ rule.text }}
-                  </li>
-                </ul>
-              </dd>
-            </div>
-            <div class="flex gap-2">
-              <dt class="w-32 shrink-0 text-muted">Director notes</dt>
-              <dd>
-                <span
-                  v-if="store.session.directives.director_instructions.length === 0"
-                  class="text-muted"
+        <!-- Editable here, mirroring /language, /rule, /director. Superseded sessions stay
+             read-only, the same split the Persona panel above already makes. -->
+        <div v-show="openPanel === 'directives'" class="grid gap-4">
+          <div class="grid gap-1">
+            <PSectionLabel as="span" size="sm">Language</PSectionLabel>
+            <select
+              v-if="canEditDirectives"
+              :value="store.session.directives.language"
+              :disabled="languageSaving"
+              class="rounded-control border border-hairline bg-transparent px-2 py-1.5"
+              @change="onSelectLanguage"
+            >
+              <option v-for="option in LANGUAGE_OPTIONS" :key="option.code" :value="option.code">
+                {{ option.name }}
+              </option>
+            </select>
+            <p v-else class="text-body">{{ store.session.directives.language }}</p>
+          </div>
+
+          <div class="grid gap-2">
+            <PSectionLabel as="span" size="sm">Scenario rules</PSectionLabel>
+            <p v-if="store.session.directives.rules.length === 0" class="text-micro text-muted">
+              None
+            </p>
+            <ul v-else class="flex flex-col gap-1">
+              <li
+                v-for="rule in store.session.directives.rules"
+                :key="rule.id"
+                class="flex items-start justify-between gap-2"
+              >
+                <span><span class="text-muted">{{ rule.id }}.</span> {{ rule.text }}</span>
+                <PButton
+                  v-if="canEditDirectives"
+                  size="sm"
+                  variant="danger"
+                  :disabled="removingRuleId === rule.id"
+                  @click="onRemoveRule(rule.id)"
                 >
-                  None pending
-                </span>
-                <!-- Notes stack until a reply consumes them, so all queued ones show. -->
-                <ul v-else class="flex flex-col gap-1">
-                  <li
-                    v-for="(note, index) in store.session.directives.director_instructions"
-                    :key="index"
-                    class="whitespace-pre-wrap"
-                  >
-                    <span class="text-muted">{{ index + 1 }}.</span> {{ note }}
-                  </li>
-                </ul>
-              </dd>
-            </div>
-          </dl>
+                  {{ removingRuleId === rule.id ? "Removing…" : "Remove" }}
+                </PButton>
+              </li>
+            </ul>
+            <form v-if="canEditDirectives" class="flex gap-2" @submit.prevent="onAddRule">
+              <input
+                v-model="newRuleText"
+                type="text"
+                placeholder="No fourth-wall breaks."
+                class="min-w-0 flex-1 rounded-control border border-hairline bg-transparent px-2 py-1.5"
+              />
+              <PButton size="sm" type="submit" :disabled="!newRuleText.trim() || ruleSaving">
+                {{ ruleSaving ? "Adding…" : "Add rule" }}
+              </PButton>
+            </form>
+          </div>
+
+          <div class="grid gap-2 border-t border-hairline pt-3">
+            <PSectionLabel as="span" size="sm">Director notes</PSectionLabel>
+            <p
+              v-if="store.session.directives.director_instructions.length === 0"
+              class="text-micro text-muted"
+            >
+              None pending
+            </p>
+            <!-- Notes stack until a reply consumes them, so all queued ones show. -->
+            <ul v-else class="flex flex-col gap-1">
+              <li
+                v-for="(note, index) in store.session.directives.director_instructions"
+                :key="index"
+                class="whitespace-pre-wrap"
+              >
+                <span class="text-muted">{{ index + 1 }}.</span> {{ note }}
+              </li>
+            </ul>
+            <form v-if="canEditDirectives" class="flex gap-2" @submit.prevent="onAddDirectorNote">
+              <input
+                v-model="newDirectorNote"
+                type="text"
+                placeholder="Have someone interrupt the conversation."
+                class="min-w-0 flex-1 rounded-control border border-hairline bg-transparent px-2 py-1.5"
+              />
+              <PButton size="sm" type="submit" :disabled="!newDirectorNote.trim() || directorSaving">
+                {{ directorSaving ? "Queuing…" : "Queue note" }}
+              </PButton>
+            </form>
+            <p v-if="canEditDirectives" class="text-micro text-muted">
+              Shapes the next reply only. There is no way to clear a queued note early — the
+              story's own next turn consumes and clears the whole queue.
+            </p>
+          </div>
+
+          <p v-if="!canEditDirectives" class="text-micro text-muted">
+            This session was superseded, so its directives are read-only.
+          </p>
         </div>
       </PPanel>
     </div>
