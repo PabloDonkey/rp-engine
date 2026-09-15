@@ -146,6 +146,20 @@ translates the refusal into its own vocabulary (HTTP 409, or an ordinary Telegra
 The guard is an in-process set of session ids, which is sufficient only while Telegram and
 the HTTP API share a process, as they do today in `app/main.py`.
 
+Since S036 the panel can also *start* a playthrough for an existing user:
+
+* `POST /admin/users/{user_id}/sessions` is translated to `PlaythroughService.start(...)`,
+  the same call `/play` makes. One request carries both the scenario id and the persona
+  fields — the panel has both on screen at once, so there is no
+  `TelegramPendingPersonaStore` state machine to drive. If `start` begins a genuinely new
+  session (not a resume) and a persona name was given, the route also calls
+  `PlaythroughService.set_persona(...)` before answering.
+* A user who already has a live session for the chosen scenario is resumed rather than
+  restarted — `start`'s existing behaviour — and the persona fields are ignored in that
+  case, exactly as `/play` ignores them for a Telegram resume.
+
+The directive commands (`/director`, `/rule`, `/language`, `/memory`) remain Telegram-only.
+
 ---
 
 ## Application

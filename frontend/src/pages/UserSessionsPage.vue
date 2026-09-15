@@ -24,7 +24,15 @@ async function onDelete(sessionId: string): Promise<void> {
 <template>
   <div>
     <RouterLink to="/users" class="text-body text-muted">&larr; Users</RouterLink>
-    <h1 class="mb-3 mt-1 text-xl font-semibold">Sessions</h1>
+    <div class="mb-3 mt-1 flex flex-wrap items-center justify-between gap-2">
+      <h1 class="text-xl font-semibold">Sessions</h1>
+      <RouterLink
+        :to="{ name: 'start-session', params: { userId } }"
+        class="inline-flex items-center justify-center gap-1.5 rounded-control border border-hairline bg-surface px-3 py-1.5 text-body font-medium text-ink transition-colors hover:bg-raised"
+      >
+        Start new session
+      </RouterLink>
+    </div>
 
     <p v-if="store.sessionsLoading" class="text-body text-muted">Loading…</p>
     <p v-else-if="store.sessionsError" class="text-body text-danger">

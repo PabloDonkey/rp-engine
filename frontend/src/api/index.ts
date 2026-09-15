@@ -122,6 +122,14 @@ const ScenarioSummarySchema = z.object({
 // of letting it reach a component as `unknown`.
 const ScenarioPayloadSchema = ScenarioDefinitionSchema;
 
+// What starting or resuming a playthrough hands back (S036): the session, its opening
+// line, and whether this reactivated an existing story rather than beginning a new one.
+const PlaythroughStartSchema = z.object({
+  session: AdminSessionSchema,
+  opening: z.string(),
+  resumed: z.boolean(),
+});
+
 const SessionExportSchema = z.object({
   session: z.record(z.string(), z.unknown()),
   transcript: z.array(z.record(z.string(), z.unknown())),
@@ -140,6 +148,7 @@ export type LoreEntryPriority = LoreEntry["priority"];
 export type ScenarioSummary = z.infer<typeof ScenarioSummarySchema>;
 export type ScenarioPayload = ScenarioDefinition;
 export type SessionExport = z.infer<typeof SessionExportSchema>;
+export type PlaythroughStart = z.infer<typeof PlaythroughStartSchema>;
 
 class ApiError extends Error {
   status: number;
@@ -187,6 +196,25 @@ export function listUsers(): Promise<AdminUser[]> {
 
 export function listUserSessions(userId: string): Promise<AdminSession[]> {
   return request(`/users/${userId}/sessions`, z.array(AdminSessionSchema));
+}
+
+// The panel's counterpart to `/play` plus Telegram's persona prompt, in one request. If the
+// owner already has a live session for this scenario it is resumed instead, and the persona
+// fields are ignored — an existing session keeps whatever persona it already has.
+export function startSession(
+  userId: string,
+  scenarioId: string,
+  personaName = "",
+  personaDescription = "",
+): Promise<PlaythroughStart> {
+  return request(`/users/${userId}/sessions`, PlaythroughStartSchema, {
+    method: "POST",
+    body: JSON.stringify({
+      scenario_id: scenarioId,
+      persona_name: personaName,
+      persona_description: personaDescription,
+    }),
+  });
 }
 
 export function getSession(sessionId: string): Promise<AdminSession> {

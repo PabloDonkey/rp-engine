@@ -322,6 +322,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             container.admin_service,
             container.telegram_authorization,
             container.scenario_transfer_service,
+            container.playthrough_service,
         )
     )
     app.include_router(create_play_router(container.admin_service, container.chat_service))

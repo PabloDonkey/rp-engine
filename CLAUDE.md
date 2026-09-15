@@ -67,8 +67,9 @@ adapters/  →  application/  →  core/ (engine, domain, ports)
 - **`adapters/`** — `telegram/` and `api/`. Transport concerns live here: slash-command
   parsing, **authorization/invocation policy**, message splitting. Adapters hold no business
   logic. Telegram is the fully-featured surface. Since **S031** the admin panel can also
-  advance a story — send a turn, continue, retry — but browsing scenarios, starting one, and
-  the directive commands (`/director`, `/rule`, `/language`, `/memory`) stay Telegram-only.
+  advance a story — send a turn, continue, retry — and since **S036** it can start one for an
+  existing user (a scenario picker plus the persona form, in one request). The directive
+  commands (`/director`, `/rule`, `/language`, `/memory`) stay Telegram-only.
 - **`infrastructure/`** — port implementations: `llm/lmstudio/`, `postgres/` (SQLAlchemy
   async + Alembic, the sole persistence backend), `scenario_transfer.py` (reads curated
   scenario JSON files for import), `config/settings.py` (pydantic-settings, `RP_ENGINE_`-prefixed

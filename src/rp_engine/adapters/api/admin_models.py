@@ -9,6 +9,7 @@ from rp_engine.application.services.admin_service import (
     AdminSessionMemory,
     AdminUserSummary,
 )
+from rp_engine.application.services.playthrough_service import PlaythroughStart
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.memory.fragment import ToggleableMemorySystemId
 from rp_engine.core.memory.rolling_summary_source import RollingSummaryStatus
@@ -228,6 +229,39 @@ class AdminSessionResponse(BaseModel):
             memory=AdminSessionMemoryStateResponse.from_memory(session.memory),
             user_persona_name=session.user_persona_name,
             user_persona_description=session.user_persona_description,
+        )
+
+
+class AdminStartSessionRequest(BaseModel):
+    """One web-form submission that does what `/play` plus the Telegram persona prompt do
+    together, at once: no `TelegramPendingPersonaStore` state machine, because the panel
+    already has both fields on screen.
+
+    Persona fields are optional: leaving them blank starts the session without one, exactly
+    like `/skip` on Telegram. Starting a scenario the owner already has a live session for
+    resumes that session instead (`PlaythroughService.start`'s existing behaviour) and the
+    persona fields are ignored — an existing session keeps whatever persona it already has.
+    """
+
+    scenario_id: str = Field(min_length=1)
+    persona_name: str = ""
+    persona_description: str = ""
+
+
+class AdminPlaythroughStartResponse(BaseModel):
+    """What starting or resuming a playthrough hands back: the session, its opening line,
+    and whether this reactivated an existing story rather than beginning a new one."""
+
+    session: AdminSessionResponse
+    opening: str
+    resumed: bool
+
+    @classmethod
+    def from_start(cls, start: PlaythroughStart) -> "AdminPlaythroughStartResponse":
+        return cls(
+            session=AdminSessionResponse.from_session(start.session),
+            opening=start.opening,
+            resumed=start.resumed,
         )
 
 
