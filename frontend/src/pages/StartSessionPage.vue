@@ -57,7 +57,7 @@ async function onSubmit(): Promise<void> {
           <span class="text-micro text-muted">Scenario</span>
           <select
             v-model="draft.scenarioId"
-            class="rounded-control border border-hairline bg-transparent px-2 py-1.5"
+            class="rounded-control border border-hairline bg-surface px-2 py-1.5 text-ink"
           >
             <option value="" disabled>Choose a scenario…</option>
             <option
