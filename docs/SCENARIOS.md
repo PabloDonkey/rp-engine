@@ -56,6 +56,7 @@ domain model (see `DOMAIN_MODEL.md`).
 | `visibility`      | string                   | no       | `PUBLIC` (default), `UNLISTED`, or `RESTRICTED`. See **Access** below. |
 | `allowed_group_chat_ids` | array of strings  | no       | Telegram chat ids allowed to see/play a `RESTRICTED` scenario. Ignored otherwise. |
 | `metadata`        | object (string → string or list of strings) | no | Free-form tags. A value is one string or a list of strings. See **Metadata values** below. |
+| `lorebook`        | array of objects        | no       | Memory layer 02's authored lore for this scenario (ADR-026). See **Lorebook** below. |
 
 Omitted optional fields default to empty (`{}` / `[]` / `null` / `""`).
 
@@ -104,6 +105,40 @@ not carry multi-character rules, and vice versa). The engine itself contributes 
 fixed `[Response Format]` contract describing how replies are shaped for the transport
 (actions in `*italics*`, dialogue in quotes, no labels) — that is a rendering concern, not
 roleplay content, and is not authored per scenario.
+
+### Lorebook
+
+Optional background facts, retrieved during play only when the conversation touches them
+rather than carried in every prompt — see `docs/MEMORY.md`'s layer 02 write-up for how
+matching works and why. This is a transfer-format extension, not something
+`ScenarioDefinition` itself carries: `ScenarioTransferService.import_directory` upserts
+each entry into `lorebook_entries` on the same boot pass that upserts the scenario, and
+`export_scenario` includes the scenario's current entries back out the same way. Once
+imported, entries are edited from the admin panel like any other lorebook entry — the
+JSON file is a seed, not a synced source, the same relationship it already has with the
+scenario definition itself.
+
+```json
+"lorebook": [
+  {
+    "id": "jane_accident",
+    "title": "The Accident",
+    "content": "Detailed lore text, injected when this entry is retrieved.",
+    "triggers": ["hurting someone", "losing control", "childhood"],
+    "priority": "high",
+    "related": ["jane_lost_friendship"]
+  }
+]
+```
+
+| Field       | Type             | Required | Notes |
+| ----------- | ---------------- | -------- | ----- |
+| `id`        | string           | yes      | Unique within this scenario. Only the JSON format asks for one by hand — the admin panel generates a UUID when an operator creates an entry there and never shows it, since a title is what a person actually needs to recognize an entry (including when picking "related" entries). A hand-authored short id like `jane_accident` is only for this file to be readable and for `related` to reference another entry in it. |
+| `title`     | string           | yes      | Short label, prefixed onto `content` when injected. |
+| `content`   | string           | yes      | The text injected as `[Lore]` when this entry is retrieved. Keep it short — a paragraph, not a biography. Write `{{char}}`/`{{user}}`/`{{world}}` rather than a hardcoded name, same as `characters[*].personality` — the builder resolves them the same way for every prompt section, and a name baked into the text stops matching the moment the entry is copied for a different character. |
+| `triggers`  | array of strings | no       | Short phrases, not full sentences: each one becomes an AND of its own words in a Postgres `tsquery`, so a four-word descriptive phrase rarely fires. Write the words a player would actually type. `trigger_keys` is also accepted as an alias. |
+| `priority`  | string           | no       | `low`, `normal` (default), or `high`. A per-entry tie-break among a turn's matched entries — distinct from how memory layers compete with each other for prompt budget. |
+| `related`   | array of strings | no       | Other entry ids in this scenario, for a person reading the lorebook. Retrieval never expands through it automatically. |
 
 ### Access
 

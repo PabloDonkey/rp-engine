@@ -41,6 +41,7 @@ ADR's `## Supersedes` section for the exact scope — most supersessions here ar
 | [ADR-024](0024-postgres-as-sole-persistence-backend.md) | Postgres as Sole Persistence Backend | accepted | 2026-07-24 | — |
 | [ADR-025](0025-session-reset-tiers.md) | Session Reset Tiers: `/restart` Preserves Player Settings, `/clear` Resets Them | accepted | 2026-07-27 | — |
 | [ADR-026](0026-layered-memory.md) | Layered Memory: One Port, Five Sources, Per-Session Toggles | accepted | 2026-08-02 | — |
+| [ADR-027](0027-lorebook-paraphrase-gap-trigger-phrases-not-embeddings.md) | Lorebook Paraphrase Gap - Trigger-Phrase Expansion, Not Embeddings | accepted | 2026-09-04 | — |
 
 ## File naming
 

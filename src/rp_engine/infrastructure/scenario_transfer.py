@@ -12,8 +12,12 @@ import logging
 from pathlib import Path
 from uuid import UUID
 
+from rp_engine.core.scenario.lore_entry import LoreEntry
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
-from rp_engine.infrastructure.scenario_serialization import scenario_definition_from_payload
+from rp_engine.infrastructure.scenario_serialization import (
+    lore_entry_from_payload,
+    scenario_definition_from_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,3 +53,44 @@ def read_scenario_directory(path: Path | str) -> list[ScenarioDefinition]:
         scenarios.append(scenario)
 
     return scenarios
+
+
+def read_scenario_lorebook_directory(path: Path | str) -> list[LoreEntry]:
+    """Read every scenario file's optional `lorebook` array (ADR-026, S024).
+
+    A scenario file's lore ships beside its scenario definition, the same seed-not-source
+    relationship the catalog already has: this is how Jane's pilot entries reach Postgres
+    on boot, and further edits then happen in the admin panel like any other lorebook
+    entry. Kept as a second pass over the directory, rather than folded into
+    `read_scenario_directory`, so that function's return type and existing callers are
+    untouched.
+    """
+    directory = Path(path)
+    if not directory.exists():
+        return []
+
+    entries: list[LoreEntry] = []
+    for file in sorted(directory.glob("*.json")):
+        try:
+            payload = json.loads(file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        scenario_id = payload.get("id")
+        if not isinstance(scenario_id, str):
+            continue
+        raw_entries = payload.get("lorebook", [])
+        if not isinstance(raw_entries, list):
+            logger.warning("Scenario lorebook is not a list", extra={"file": str(file)})
+            continue
+        for raw_entry in raw_entries:
+            if not isinstance(raw_entry, dict):
+                continue
+            entry = lore_entry_from_payload(raw_entry, scenario_definition_id=scenario_id)
+            if entry is None:
+                logger.warning("Lorebook entry failed validation", extra={"file": str(file)})
+                continue
+            entries.append(entry)
+
+    return entries

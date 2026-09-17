@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -69,6 +69,35 @@ class ScenarioDefinitionRecord(Base):
     )
     # Retirement stamp. Written only by the store's `delete`/`restore`, never by `save`.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class LoreEntryRecord(Base):
+    """Layer 02's authored facts, scoped to one `ScenarioDefinition` (ADR-026, S024).
+
+    `trigger_query_expr` is a derived, plain-text expression the store builds from
+    `trigger_keys` at write time — phrase groups AND'd internally, alternatives OR'd,
+    e.g. `(hurting & someone) | (accidental & injury)`. It is cast to `tsquery` only at
+    query time (`to_tsquery('english', trigger_query_expr)`), which avoids needing a
+    `tsquery`-typed column. No index on it: a scenario's lorebook is a handful of rows by
+    design ("precision over recall"), so a full scan costs nothing.
+    """
+
+    __tablename__ = "lorebook_entries"
+
+    scenario_definition_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("scenario_definitions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger_keys: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+    trigger_query_expr: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    priority: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")
+    related_entry_ids: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ScenarioSessionRecord(Base):

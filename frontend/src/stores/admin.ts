@@ -7,6 +7,7 @@ import type {
   AdminSession,
   AdminTrace,
   AdminUser,
+  PlaythroughStart,
   ScenarioPayload,
   ScenarioSummary,
   SessionMemory,
@@ -50,6 +51,11 @@ export const useAdminStore = defineStore("admin", {
     sessions: [] as AdminSession[],
     sessionsLoading: false,
     sessionsError: null as string | null,
+
+    // Starting a session from the panel (S036). Kept apart from `actionError` — that one
+    // belongs to the session detail page, and a failed start has nothing to do with it.
+    startSessionBusy: false,
+    startSessionError: null as string | null,
 
     session: null as AdminSession | null,
     transcript: [] as AdminMessage[],
@@ -133,6 +139,28 @@ export const useAdminStore = defineStore("admin", {
         this.sessionError = error instanceof Error ? error.message : String(error);
       } finally {
         this.sessionLoading = false;
+      }
+    },
+
+    // One request that does what `/play` plus Telegram's persona prompt do as two turns:
+    // the form already has both the scenario and the persona fields on screen. Resuming an
+    // existing session (the server's call, not this one) comes back with `resumed: true` and
+    // no persona change, since the fields on the form describe a *new* character.
+    async startSession(
+      userId: string,
+      scenarioId: string,
+      personaName: string,
+      personaDescription: string,
+    ): Promise<PlaythroughStart | null> {
+      this.startSessionError = null;
+      this.startSessionBusy = true;
+      try {
+        return await api.startSession(userId, scenarioId, personaName, personaDescription);
+      } catch (error) {
+        this.startSessionError = error instanceof Error ? error.message : String(error);
+        return null;
+      } finally {
+        this.startSessionBusy = false;
       }
     },
 

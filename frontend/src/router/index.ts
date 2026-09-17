@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import UsersPage from "@/pages/UsersPage.vue";
 import UserSessionsPage from "@/pages/UserSessionsPage.vue";
+import StartSessionPage from "@/pages/StartSessionPage.vue";
 import SessionDetailPage from "@/pages/SessionDetailPage.vue";
 import ScenariosPage from "@/pages/ScenariosPage.vue";
 import ScenarioDetailPage from "@/pages/ScenarioDetailPage.vue";
@@ -16,6 +17,12 @@ const router = createRouter({
       path: "/users/:userId/sessions",
       name: "user-sessions",
       component: UserSessionsPage,
+      props: true,
+    },
+    {
+      path: "/users/:userId/sessions/new",
+      name: "start-session",
+      component: StartSessionPage,
       props: true,
     },
     {

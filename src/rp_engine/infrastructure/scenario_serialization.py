@@ -13,6 +13,7 @@ from rp_engine.core.character.character import Character
 from rp_engine.core.memory.fragment import ToggleableMemorySystemId
 from rp_engine.core.memory.settings import MemorySettings, MemorySourceBudget
 from rp_engine.core.metadata import Metadata, MetadataValue
+from rp_engine.core.scenario.lore_entry import LoreEntry, LoreEntryPriority
 from rp_engine.core.scenario.scenario_definition import ScenarioDefinition
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import (
@@ -157,6 +158,43 @@ def characters_to_payload(characters: dict[str, Character]) -> dict[str, Any]:
 
 def characters_from_payload(data: dict[str, Any]) -> dict[str, Character]:
     return {role: character_from_payload(value) for role, value in data.items()}
+
+
+_LORE_ENTRY_PRIORITIES: frozenset[str] = frozenset(get_args(LoreEntryPriority))
+
+
+def lore_entry_to_payload(entry: LoreEntry) -> dict[str, Any]:
+    return {
+        "id": entry.id,
+        "title": entry.title,
+        "content": entry.content,
+        "trigger_keys": list(entry.trigger_keys),
+        "priority": entry.priority,
+        "related": list(entry.related_entry_ids),
+    }
+
+
+def lore_entry_from_payload(
+    data: dict[str, Any], *, scenario_definition_id: str
+) -> LoreEntry | None:
+    """Read one lorebook entry from a scenario file's `lorebook` array.
+
+    Same tolerance as the rest of the transfer format: a malformed entry returns `None`
+    rather than raising, so one bad entry does not fail the whole scenario file.
+    """
+    try:
+        priority = data.get("priority", "normal")
+        return LoreEntry.create(
+            entry_id=data["id"],
+            scenario_definition_id=scenario_definition_id,
+            title=data["title"],
+            content=data["content"],
+            trigger_keys=[str(key) for key in data.get("triggers", data.get("trigger_keys", []))],
+            priority=priority if priority in _LORE_ENTRY_PRIORITIES else "normal",
+            related_entry_ids=[str(entry_id) for entry_id in data.get("related", [])],
+        )
+    except (KeyError, ValueError, TypeError):
+        return None
 
 
 def scenario_definition_to_payload(scenario: ScenarioDefinition) -> dict[str, Any]:

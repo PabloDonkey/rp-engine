@@ -6,17 +6,23 @@ from sqlalchemy.exc import IntegrityError
 
 from rp_engine.adapters.api.admin_models import (
     AdminDeletedMessageResponse,
+    AdminLoreEntryCreateRequest,
+    AdminLoreEntryResponse,
+    AdminLoreEntryUpdateRequest,
     AdminMessageResponse,
+    AdminPlaythroughStartResponse,
     AdminSessionMemoryRequest,
     AdminSessionMemoryResponse,
     AdminSessionPersonaRequest,
     AdminSessionResponse,
+    AdminStartSessionRequest,
     AdminTraceResponse,
     AdminUserResponse,
     ScenarioSummaryResponse,
 )
 from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.application.services.admin_service import AdminService
+from rp_engine.application.services.playthrough_service import PlaythroughService
 from rp_engine.application.services.scenario_transfer_service import ScenarioTransferService
 from rp_engine.core.user.user import User
 from rp_engine.infrastructure.scenario_serialization import scenario_definition_to_payload
@@ -33,6 +39,7 @@ def create_admin_router(
     admin_service: AdminService,
     telegram_authorization: TelegramAuthorization | None,
     scenario_transfer_service: ScenarioTransferService,
+    playthrough_service: PlaythroughService,
 ) -> APIRouter:
     router = APIRouter(prefix="/admin")
 
@@ -58,6 +65,39 @@ def create_admin_router(
             raise HTTPException(status_code=404, detail="User not found")
         sessions = await admin_service.list_user_sessions(user_id)
         return [AdminSessionResponse.from_session(session) for session in sessions]
+
+    @router.post("/users/{user_id}/sessions", status_code=201)
+    async def start_session(
+        user_id: UUID, payload: AdminStartSessionRequest
+    ) -> AdminPlaythroughStartResponse:
+        """Begin a playthrough for an existing user — the panel's counterpart to `/play`.
+
+        One request does what `/play` plus Telegram's persona prompt do as two separate
+        turns: the panel already has both the scenario and the persona fields on screen, so
+        there is no `TelegramPendingPersonaStore` state machine to drive here.
+
+        A user who already has a live session for this scenario is resumed rather than
+        restarted (`PlaythroughService.start`'s existing behaviour), and the persona fields
+        are ignored in that case — an existing session keeps whatever persona it already
+        has.
+        """
+        user = await admin_service.get_user(user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        started = await playthrough_service.start(
+            owner_kind="user", owner_id=user_id, scenario_id=payload.scenario_id
+        )
+        if started is None:
+            raise HTTPException(status_code=404, detail="Scenario not found")
+        if not started.resumed and payload.persona_name.strip():
+            with_persona = await playthrough_service.set_persona(
+                session_id=started.session.id,
+                name=payload.persona_name.strip(),
+                description=payload.persona_description,
+            )
+            if with_persona is not None:
+                started = with_persona
+        return AdminPlaythroughStartResponse.from_start(started)
 
     @router.get("/sessions/{session_id}")
     async def get_session(session_id: UUID) -> AdminSessionResponse:
@@ -266,6 +306,51 @@ def create_admin_router(
     async def restore_scenario(scenario_id: str) -> None:
         if not await admin_service.restore_scenario(scenario_id):
             raise HTTPException(status_code=404, detail="Scenario not found")
+
+    @router.get("/scenarios/{scenario_id}/lorebook")
+    async def list_lorebook_entries(scenario_id: str) -> list[AdminLoreEntryResponse]:
+        entries = await admin_service.list_lorebook_entries(scenario_id)
+        if entries is None:
+            raise HTTPException(status_code=404, detail="Scenario not found")
+        return [AdminLoreEntryResponse.from_entry(entry) for entry in entries]
+
+    @router.post("/scenarios/{scenario_id}/lorebook", status_code=201)
+    async def create_lorebook_entry(
+        scenario_id: str, payload: AdminLoreEntryCreateRequest
+    ) -> AdminLoreEntryResponse:
+        entry = await admin_service.create_lorebook_entry(
+            scenario_id,
+            title=payload.title,
+            content=payload.content,
+            trigger_keys=payload.trigger_keys,
+            priority=payload.priority,
+            related_entry_ids=payload.related_entry_ids,
+        )
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Scenario not found")
+        return AdminLoreEntryResponse.from_entry(entry)
+
+    @router.put("/scenarios/{scenario_id}/lorebook/{entry_id}")
+    async def update_lorebook_entry(
+        scenario_id: str, entry_id: str, payload: AdminLoreEntryUpdateRequest
+    ) -> AdminLoreEntryResponse:
+        entry = await admin_service.update_lorebook_entry(
+            scenario_id,
+            entry_id,
+            title=payload.title,
+            content=payload.content,
+            trigger_keys=payload.trigger_keys,
+            priority=payload.priority,
+            related_entry_ids=payload.related_entry_ids,
+        )
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Lore entry not found")
+        return AdminLoreEntryResponse.from_entry(entry)
+
+    @router.delete("/scenarios/{scenario_id}/lorebook/{entry_id}", status_code=204)
+    async def delete_lorebook_entry(scenario_id: str, entry_id: str) -> None:
+        if not await admin_service.delete_lorebook_entry(scenario_id, entry_id):
+            raise HTTPException(status_code=404, detail="Lore entry not found")
 
     @router.post("/scenarios/import")
     async def import_scenario(payload: dict[str, Any]) -> dict[str, Any]:

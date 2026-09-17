@@ -7,6 +7,9 @@ from rp_engine.infrastructure.postgres.repositories.generation_trace_store impor
 from rp_engine.infrastructure.postgres.repositories.group_identity_store import (
     PostgresGroupIdentityStore,
 )
+from rp_engine.infrastructure.postgres.repositories.lorebook_store import (
+    PostgresLorebookStore,
+)
 from rp_engine.infrastructure.postgres.repositories.scenario_definition_store import (
     PostgresScenarioDefinitionStore,
 )
@@ -24,6 +27,7 @@ __all__ = [
     "PostgresConversationStore",
     "PostgresGenerationTraceStore",
     "PostgresGroupIdentityStore",
+    "PostgresLorebookStore",
     "PostgresScenarioDefinitionStore",
     "PostgresScenarioSessionStore",
     "PostgresSessionSummaryStore",

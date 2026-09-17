@@ -16,6 +16,7 @@ from rp_engine.application.services.admin_service import (
     AdminSessionMemory,
     AdminUserSummary,
 )
+from rp_engine.application.services.playthrough_service import PlaythroughStart
 from rp_engine.core.conversation.message import ConversationMessage
 from rp_engine.core.conversation.role import ConversationRole
 from rp_engine.core.memory.rolling_summary_source import RollingSummaryStatus
@@ -759,3 +760,100 @@ def test_the_memory_panel_reports_no_recap_before_the_first_pass(tmp_path: Path)
     body = client.get(f"/admin/sessions/{SESSION_ID}/memory").json()
 
     assert body["summary"] is None
+
+
+# --- Starting a session from the panel (S036) ---
+
+
+def test_start_session_404_when_the_user_is_missing(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_user = AsyncMock(return_value=None)
+
+    response = client.post(f"/admin/users/{USER_ID}/sessions", json={"scenario_id": "vault"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "User not found"
+
+
+def test_start_session_404_when_the_scenario_does_not_exist(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_user = AsyncMock(return_value=_telegram_user())
+    container.playthrough_service.start = AsyncMock(return_value=None)
+
+    response = client.post(f"/admin/users/{USER_ID}/sessions", json={"scenario_id": "nope"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Scenario not found"
+
+
+def test_start_session_begins_a_new_playthrough_and_sets_the_persona(tmp_path: Path) -> None:
+    """One request does what `/play` plus Telegram's persona prompt do as two turns."""
+    client, container = _setup(tmp_path)
+    container.admin_service.get_user = AsyncMock(return_value=_telegram_user())
+    started = PlaythroughStart(session=_session(), scenario=_scenario(), opening="You wake.")
+    container.playthrough_service.start = AsyncMock(return_value=started)
+    with_persona = PlaythroughStart(
+        session=_session().with_persona(name="Sera Vane", description="A wary courier."),
+        scenario=_scenario(),
+        opening="You wake.",
+    )
+    container.playthrough_service.set_persona = AsyncMock(return_value=with_persona)
+
+    response = client.post(
+        f"/admin/users/{USER_ID}/sessions",
+        json={
+            "scenario_id": "vault",
+            "persona_name": "Sera Vane",
+            "persona_description": "A wary courier.",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["opening"] == "You wake."
+    assert body["resumed"] is False
+    assert body["session"]["user_persona_name"] == "Sera Vane"
+    container.playthrough_service.start.assert_awaited_once_with(
+        owner_kind="user", owner_id=USER_ID, scenario_id="vault"
+    )
+    container.playthrough_service.set_persona.assert_awaited_once_with(
+        session_id=SESSION_ID, name="Sera Vane", description="A wary courier."
+    )
+
+
+def test_start_session_without_a_persona_name_does_not_call_set_persona(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_user = AsyncMock(return_value=_telegram_user())
+    started = PlaythroughStart(session=_session(), scenario=_scenario(), opening="You wake.")
+    container.playthrough_service.start = AsyncMock(return_value=started)
+    container.playthrough_service.set_persona = AsyncMock()
+
+    response = client.post(f"/admin/users/{USER_ID}/sessions", json={"scenario_id": "vault"})
+
+    assert response.status_code == 201
+    assert response.json()["session"]["user_persona_name"] is None
+    container.playthrough_service.set_persona.assert_not_awaited()
+
+
+def test_start_session_resuming_an_existing_session_ignores_the_persona_fields(
+    tmp_path: Path,
+) -> None:
+    """Starting a scenario the owner already has a live session for resumes it — the persona
+    fields on the form describe a *new* character and must not touch the session already in
+    progress."""
+    client, container = _setup(tmp_path)
+    container.admin_service.get_user = AsyncMock(return_value=_telegram_user())
+    started = PlaythroughStart(
+        session=_session(), scenario=_scenario(), opening="Where you left off.", resumed=True
+    )
+    container.playthrough_service.start = AsyncMock(return_value=started)
+    container.playthrough_service.set_persona = AsyncMock()
+
+    response = client.post(
+        f"/admin/users/{USER_ID}/sessions",
+        json={"scenario_id": "vault", "persona_name": "Someone else"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["resumed"] is True
+    container.playthrough_service.set_persona.assert_not_awaited()

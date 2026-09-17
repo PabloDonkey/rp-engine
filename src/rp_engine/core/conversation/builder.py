@@ -313,7 +313,7 @@ class ConversationBuilder:
 
         messages.append(
             self._system_message(
-                self._memory_text(payload.memory_fragments),
+                self._memory_text(payload.memory_fragments, payload=payload, character=character),
                 section=PROMPT_SECTION_MEMORY,
             )
         )
@@ -332,20 +332,36 @@ class ConversationBuilder:
             metadata={PROMPT_SECTION_METADATA_KEY: section},
         )
 
-    @staticmethod
-    def _memory_text(fragments: tuple[MemoryFragment, ...]) -> str:
+    def _memory_text(
+        self,
+        fragments: tuple[MemoryFragment, ...],
+        *,
+        payload: ScenarioConversationInput,
+        character: Character | None,
+    ) -> str:
         """Render what the memory layers recalled, as one block.
 
         The verbatim recent turns are not here: they are chat messages, not text, and they
         reach the model as themselves. This block holds what layers 01 to 04 recalled — a
         summary, lore, facts — each under its own label.
 
+        Each fragment goes through the same `{{char}}`/`{{user}}`/`{{world}}` resolution as
+        every other authored section. It matters most for layer 02: lore is written like a
+        character-card field (see `docs/SCENARIOS.md`), so a lore author should be able to
+        write `{{char}}` instead of hardcoding a name that stops matching the moment a
+        scenario is copied for a different character. A machine-written fragment (the
+        rolling summary) carries no placeholders, so resolving it is a no-op.
+
         With no layer beyond the recent window, nothing is recalled and the block falls
         back to the one-line hint the prompt carried before memory layers existed.
         """
         if not fragments:
             return MEMORY_HINT
-        return "\n\n".join(f"{fragment.label}\n{fragment.body}" for fragment in fragments)
+        return "\n\n".join(
+            f"{fragment.label}\n"
+            f"{self._resolve_templates(value=fragment.body, payload=payload, character=character)}"
+            for fragment in fragments
+        )
 
     def _build_scenario_intro(
         self,
