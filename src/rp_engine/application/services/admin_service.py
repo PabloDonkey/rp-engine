@@ -166,6 +166,76 @@ class AdminService:
         )
         return await self._scenario_session_store.save(session.with_memory(memory))
 
+    async def set_session_language(
+        self,
+        session_id: UUID,
+        *,
+        language: str,
+    ) -> ScenarioSession | None:
+        """Set the persistent reply-language preference; None when the session is missing.
+
+        Raises `ValueError` on an unsupported code — the same validation `/language` uses.
+        """
+        session = await self._scenario_session_store.get_by_id(session_id)
+        if session is None:
+            return None
+        updated = session.directives.with_language(language)
+        return await self._scenario_session_store.save(session.with_directives(updated))
+
+    async def add_session_rule(
+        self,
+        session_id: UUID,
+        *,
+        text: str,
+    ) -> ScenarioSession | None:
+        """Append a persistent scenario rule; None when the session is missing.
+
+        Raises `ValueError` on empty text, the same validation `/rule add` uses.
+        """
+        session = await self._scenario_session_store.get_by_id(session_id)
+        if session is None:
+            return None
+        updated, _rule = session.directives.with_rule(text)
+        return await self._scenario_session_store.save(session.with_directives(updated))
+
+    async def remove_session_rule(
+        self,
+        session_id: UUID,
+        *,
+        rule_id: str,
+    ) -> ScenarioSession | None:
+        """Remove a rule by id; None when the session is missing.
+
+        Raises `ValueError` when the session has no rule with that id, mirroring
+        `/rule remove`'s own "No rule with id ..." reply.
+        """
+        session = await self._scenario_session_store.get_by_id(session_id)
+        if session is None:
+            return None
+        updated = session.directives.without_rule(rule_id)
+        if updated is None:
+            raise ValueError(f"No rule with id {rule_id}.")
+        return await self._scenario_session_store.save(session.with_directives(updated))
+
+    async def add_session_director_instruction(
+        self,
+        session_id: UUID,
+        *,
+        instruction: str,
+    ) -> ScenarioSession | None:
+        """Queue another one-turn director note; None when the session is missing.
+
+        Raises `ValueError` on empty text, the same validation `/director` uses. Notes stack
+        until the next successful generation consumes and clears the whole queue
+        (`ChatService`) — there is no panel action to clear them early, because `/director`
+        has no such command either.
+        """
+        session = await self._scenario_session_store.get_by_id(session_id)
+        if session is None:
+            return None
+        updated = session.directives.with_director_instruction(instruction)
+        return await self._scenario_session_store.save(session.with_directives(updated))
+
     async def get_session_memory(self, session_id: UUID) -> AdminSessionMemory | None:
         """What the panel shows for memory; None when the session is missing.
 

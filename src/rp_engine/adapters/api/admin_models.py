@@ -52,8 +52,12 @@ class AdminScenarioRuleResponse(BaseModel):
 
 
 class AdminSessionDirectivesResponse(BaseModel):
-    """The player's directives, read-only: the panel shows what the player set over
-    Telegram, it does not author it."""
+    """The session's language, rules, and queued director notes.
+
+    Read from the same `SessionDirectives` a player sets over Telegram; since S037 the
+    panel can write them too (`AdminSessionLanguageRequest`, `AdminSessionRuleRequest`,
+    `AdminSessionDirectorInstructionRequest`), through the same domain validation
+    `/language`, `/rule`, and `/director` use."""
 
     language: str
     rules: list[AdminScenarioRuleResponse]
@@ -275,6 +279,28 @@ class AdminSessionPersonaRequest(BaseModel):
 
     name: str
     description: str = ""
+
+
+class AdminSessionLanguageRequest(BaseModel):
+    """Mirrors `/language <code>`. Validated by `SessionDirectives.with_language`, which
+    raises on a code outside `SUPPORTED_LANGUAGES` — the route turns that into a 400."""
+
+    language: str = Field(min_length=1)
+
+
+class AdminSessionRuleRequest(BaseModel):
+    """Mirrors `/rule add <text>`. Validated by `SessionDirectives.with_rule`, which raises
+    on empty text — the route turns that into a 400."""
+
+    text: str = Field(min_length=1)
+
+
+class AdminSessionDirectorInstructionRequest(BaseModel):
+    """Mirrors `/director <instruction>`. Validated by
+    `SessionDirectives.with_director_instruction`, which raises on empty text — the route
+    turns that into a 400."""
+
+    instruction: str = Field(min_length=1)
 
 
 class AdminMessageResponse(BaseModel):

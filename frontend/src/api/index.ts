@@ -256,6 +256,41 @@ export function setSessionPersona(
   });
 }
 
+// Mirrors /language <code>. Validated server-side against SUPPORTED_LANGUAGES.
+export function setSessionLanguage(sessionId: string, language: string): Promise<AdminSession> {
+  return request(`/sessions/${sessionId}/language`, AdminSessionSchema, {
+    method: "PUT",
+    body: JSON.stringify({ language }),
+  });
+}
+
+// Mirrors /rule add <text>.
+export function addSessionRule(sessionId: string, text: string): Promise<AdminSession> {
+  return request(`/sessions/${sessionId}/rules`, AdminSessionSchema, {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
+// Mirrors /rule remove <id>.
+export function removeSessionRule(sessionId: string, ruleId: string): Promise<AdminSession> {
+  return request(`/sessions/${sessionId}/rules/${ruleId}`, AdminSessionSchema, {
+    method: "DELETE",
+  });
+}
+
+// Mirrors /director <instruction>: queues one more note for the next reply only. No call
+// clears the queue early — /director has no such command either.
+export function addSessionDirectorInstruction(
+  sessionId: string,
+  instruction: string,
+): Promise<AdminSession> {
+  return request(`/sessions/${sessionId}/director`, AdminSessionSchema, {
+    method: "POST",
+    body: JSON.stringify({ instruction }),
+  });
+}
+
 // Which layers run, how close the next recap is, and what the recap says — one call.
 export function getSessionMemory(sessionId: string): Promise<SessionMemory> {
   return request(`/sessions/${sessionId}/memory`, SessionMemorySchema);

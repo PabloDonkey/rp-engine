@@ -158,7 +158,24 @@ Since S036 the panel can also *start* a playthrough for an existing user:
   restarted — `start`'s existing behaviour — and the persona fields are ignored in that
   case, exactly as `/play` ignores them for a Telegram resume.
 
-The directive commands (`/director`, `/rule`, `/language`, `/memory`) remain Telegram-only.
+Since S037 the panel can also write session directives, not just read them:
+
+* `PUT /admin/sessions/{id}/language`, `POST /admin/sessions/{id}/rules`,
+  `DELETE /admin/sessions/{id}/rules/{rule_id}`, and `POST /admin/sessions/{id}/director`
+  are translated to `AdminService`'s `set_session_language`/`add_session_rule`/
+  `remove_session_rule`/`add_session_director_instruction`, which call the same
+  `SessionDirectives` mutators (`with_language`, `with_rule`, `without_rule`,
+  `with_director_instruction`) `SessionDirectiveService` uses for Telegram — the domain
+  validation is shared, only the transport differs.
+* A `ValueError` from that validation (an unsupported language code, empty rule or
+  director text) maps to HTTP 400; an unknown rule id on `DELETE .../rules/{rule_id}` maps
+  to 404; a session already superseded by `/restart` or `/clear` is refused with 409, the
+  same guard `set_session_persona` already applies — nothing written there would ever
+  reach a prompt again.
+* There is no route to clear the director-note queue early: `/director` has no such
+  command either, since the notes clear themselves once the next generation consumes them.
+
+`/restart` and `/clear` (the two session reset tiers) remain Telegram-only.
 
 ---
 
