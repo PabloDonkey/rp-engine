@@ -2,6 +2,8 @@
 
 ## 🔵 Backlog
 
+### **S038** · Login system — the admin panel has had no authentication since S009, relying on Tailscale network trust instead. Design not started yet — this card only reserves the id. → [epic](epics/S038-login-system.md)
+
 ### Admin panel — show superseded sessions — S016 left the *presentation* out of scope: the session list should render a muted "superseded" badge with `deleted_at`, sort newest-first, and `session_count` on the users list needs a deliberate call (live-only today, vs "3 live / 7 total" which is the more useful number for analysis). Backend is already done — `AdminService.list_user_sessions` passes `include_deleted=True` and the API returns `created_at`/`updated_at`/`deleted_at`. _(bare card — gets an S### if it grows)_ → see [S016](archive/S016-2026-07-27-session-soft-delete-lifecycle.md)
 
 ### Memory layers 03–04 — ids reserved by the ADR-026 design, deliberately not epics yet: **S025** fact & state store (extraction, bi-temporal validity, deterministic conflict resolution — the background worker it needs now exists, built in S023), **S026** vector recall (**only if a concrete failure demands it** — pgvector means swapping both the compose and testcontainers images, plus a second resident embedding model). Design the `EmbeddingProvider` port in S021, ship full-text first. **S024 (layer 02, lorebook) is done — see Done (recent).** → [design](https://claude.ai/code/artifact/c77560f4-99c2-4566-8b1c-9687d3893ac5)
