@@ -118,16 +118,19 @@ Substantial design docs live in `docs/` — read the relevant one before large c
 | `docs/MEMORY.md` | the five memory layers — what each stores, returns and costs (ADR-026; design, not built) |
 | `docs/ROADMAP.md` | milestones |
 
-## Dev-loop tracking (`.devloop/`)
+## Tickets (in Pablo's second brain, not in this repository)
 
-Tactical execution tracking, **committed to git** like `docs/`, but answering a different
-question: `docs/` holds strategy and rationale, `.devloop/` holds what is in flight right now.
+Tickets live in the Obsidian vault, outside this repository:
+`~/second-brain/10-Projects/rp-engine/tickets/`. `docs/` holds strategy and rationale. The
+vault holds what is in flight. The old `.devloop/` folder is gone. Its history stays in git:
+`git log -- .devloop`.
 
-- `.devloop/BOARD.md` — kanban (VSCode "Markdown Kanban" extension), the glance view.
-- `.devloop/epics/S###-<slug>.md` — one checklist per active epic. Each epic has a stable,
-  incremental **story id** `S###` (assigned at creation, persists into the archive).
-- `.devloop/archive/S###-YYYY-MM-DD-<slug>.md` — frozen, completed epics; **never edit**.
-
-When starting/finishing a unit of work, follow `.devloop/README.md`: create/move the epic
-file, take the next `S###`, and move its board card between columns. Next story number:
-`ls .devloop/epics .devloop/archive | grep -oE 'S[0-9]+' | sort -u | tail -1`.
+- Read `~/second-brain/CLAUDE.md` (ticket rules) and `~/second-brain/10-Projects/rp-engine/rp-engine.md`
+  (ID format, reserved IDs) before you create or change a ticket.
+- One file per ticket: `S### <Short title>.md`. The `status` field is `todo`, `now`,
+  `blocked`, or `done`. Only one ticket in the whole vault is `now`.
+- Next ID: `ls ~/second-brain/10-Projects/rp-engine/tickets | grep -oE '^S[0-9]+' | sort | tail -1`, plus one.
+- Commit scopes keep the ID: `feat(S041): ...`.
+- **Starting work:** set the ticket to `now`. Keep its checklist current as you go.
+- **Finishing work:** set `status: done` and `done: YYYY-MM-DD`, then write a `## Result` section.
+- The vault is a separate local git repository. Never commit in it without asking Pablo.
