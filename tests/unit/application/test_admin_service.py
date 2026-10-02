@@ -476,6 +476,133 @@ async def test_set_session_memory_source_returns_none_for_an_unknown_session() -
 
 
 @pytest.mark.asyncio
+async def test_set_session_language_stores_the_normalized_code() -> None:
+    service, store, _, _ = _service(sessions=[_session(owner_id=USER_ID)])
+
+    updated = await service.set_session_language(SESSION_ID, language="FR")
+
+    assert updated is not None and updated.directives.language == "fr"
+    assert store.sessions[SESSION_ID].directives.language == "fr"
+
+
+@pytest.mark.asyncio
+async def test_set_session_language_rejects_an_unsupported_code() -> None:
+    service, _, _, _ = _service(sessions=[_session(owner_id=USER_ID)])
+
+    with pytest.raises(ValueError):
+        await service.set_session_language(SESSION_ID, language="klingon")
+
+
+@pytest.mark.asyncio
+async def test_set_session_language_returns_none_for_an_unknown_session() -> None:
+    service, _, _, _ = _service()
+
+    assert await service.set_session_language(SESSION_ID, language="en") is None
+
+
+@pytest.mark.asyncio
+async def test_add_session_rule_appends_and_persists_it() -> None:
+    service, store, _, _ = _service(sessions=[_session(owner_id=USER_ID)])
+
+    updated = await service.add_session_rule(SESSION_ID, text="No fourth-wall breaks.")
+
+    assert updated is not None
+    assert [rule.text for rule in updated.directives.rules] == ["No fourth-wall breaks."]
+    assert [rule.text for rule in store.sessions[SESSION_ID].directives.rules] == [
+        "No fourth-wall breaks."
+    ]
+
+
+@pytest.mark.asyncio
+async def test_add_session_rule_rejects_empty_text() -> None:
+    service, _, _, _ = _service(sessions=[_session(owner_id=USER_ID)])
+
+    with pytest.raises(ValueError):
+        await service.add_session_rule(SESSION_ID, text="   ")
+
+
+@pytest.mark.asyncio
+async def test_add_session_rule_returns_none_for_an_unknown_session() -> None:
+    service, _, _, _ = _service()
+
+    assert await service.add_session_rule(SESSION_ID, text="Some rule") is None
+
+
+@pytest.mark.asyncio
+async def test_remove_session_rule_drops_it() -> None:
+    session = _session(owner_id=USER_ID)
+    directives, rule = session.directives.with_rule("No fourth-wall breaks.")
+    session = session.with_directives(directives)
+    service, store, _, _ = _service(sessions=[session])
+
+    updated = await service.remove_session_rule(SESSION_ID, rule_id=rule.id)
+
+    assert updated is not None and updated.directives.rules == ()
+    assert store.sessions[SESSION_ID].directives.rules == ()
+
+
+@pytest.mark.asyncio
+async def test_remove_session_rule_rejects_an_unknown_rule_id() -> None:
+    service, _, _, _ = _service(sessions=[_session(owner_id=USER_ID)])
+
+    with pytest.raises(ValueError):
+        await service.remove_session_rule(SESSION_ID, rule_id="nope")
+
+
+@pytest.mark.asyncio
+async def test_remove_session_rule_returns_none_for_an_unknown_session() -> None:
+    service, _, _, _ = _service()
+
+    assert await service.remove_session_rule(SESSION_ID, rule_id="1") is None
+
+
+@pytest.mark.asyncio
+async def test_add_session_director_instruction_queues_it() -> None:
+    service, store, _, _ = _service(sessions=[_session(owner_id=USER_ID)])
+
+    updated = await service.add_session_director_instruction(
+        SESSION_ID, instruction="Have someone interrupt."
+    )
+
+    assert updated is not None
+    assert updated.directives.director_instructions == ("Have someone interrupt.",)
+    assert store.sessions[SESSION_ID].directives.director_instructions == (
+        "Have someone interrupt.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_session_director_instruction_stacks_on_top_of_a_pending_one() -> None:
+    session = _session(owner_id=USER_ID)
+    session = session.with_directives(session.directives.with_director_instruction("First."))
+    service, store, _, _ = _service(sessions=[session])
+
+    updated = await service.add_session_director_instruction(SESSION_ID, instruction="Second.")
+
+    assert updated is not None
+    assert updated.directives.director_instructions == ("First.", "Second.")
+    assert store.sessions[SESSION_ID].directives.director_instructions == ("First.", "Second.")
+
+
+@pytest.mark.asyncio
+async def test_add_session_director_instruction_rejects_empty_text() -> None:
+    service, _, _, _ = _service(sessions=[_session(owner_id=USER_ID)])
+
+    with pytest.raises(ValueError):
+        await service.add_session_director_instruction(SESSION_ID, instruction="   ")
+
+
+@pytest.mark.asyncio
+async def test_add_session_director_instruction_returns_none_for_an_unknown_session() -> None:
+    service, _, _, _ = _service()
+
+    assert (
+        await service.add_session_director_instruction(SESSION_ID, instruction="Note")
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_get_session_memory_reports_the_recap_and_the_settings() -> None:
     stored = SessionSummary.create(
         session_id=SESSION_ID,

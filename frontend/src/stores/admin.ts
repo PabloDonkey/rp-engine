@@ -200,6 +200,52 @@ export const useAdminStore = defineStore("admin", {
       }
     },
 
+    // --- Directives (S037): the panel's counterpart to /language, /rule, /director ---
+
+    async setSessionLanguage(sessionId: string, language: string): Promise<boolean> {
+      this.actionError = null;
+      try {
+        this.session = await api.setSessionLanguage(sessionId, language);
+        return true;
+      } catch (error) {
+        this.actionError = error instanceof Error ? error.message : String(error);
+        return false;
+      }
+    },
+
+    async addSessionRule(sessionId: string, text: string): Promise<boolean> {
+      this.actionError = null;
+      try {
+        this.session = await api.addSessionRule(sessionId, text);
+        return true;
+      } catch (error) {
+        this.actionError = error instanceof Error ? error.message : String(error);
+        return false;
+      }
+    },
+
+    async removeSessionRule(sessionId: string, ruleId: string): Promise<boolean> {
+      this.actionError = null;
+      try {
+        this.session = await api.removeSessionRule(sessionId, ruleId);
+        return true;
+      } catch (error) {
+        this.actionError = error instanceof Error ? error.message : String(error);
+        return false;
+      }
+    },
+
+    async addSessionDirectorInstruction(sessionId: string, instruction: string): Promise<boolean> {
+      this.actionError = null;
+      try {
+        this.session = await api.addSessionDirectorInstruction(sessionId, instruction);
+        return true;
+      } catch (error) {
+        this.actionError = error instanceof Error ? error.message : String(error);
+        return false;
+      }
+    },
+
     async setSessionMemorySource(
       sessionId: string,
       sourceId: string,

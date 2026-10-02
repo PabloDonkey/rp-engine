@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
 
@@ -11,10 +12,13 @@ from rp_engine.adapters.api.admin_models import (
     AdminLoreEntryUpdateRequest,
     AdminMessageResponse,
     AdminPlaythroughStartResponse,
+    AdminSessionDirectorInstructionRequest,
+    AdminSessionLanguageRequest,
     AdminSessionMemoryRequest,
     AdminSessionMemoryResponse,
     AdminSessionPersonaRequest,
     AdminSessionResponse,
+    AdminSessionRuleRequest,
     AdminStartSessionRequest,
     AdminTraceResponse,
     AdminUserResponse,
@@ -24,6 +28,7 @@ from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.application.services.admin_service import AdminService
 from rp_engine.application.services.playthrough_service import PlaythroughService
 from rp_engine.application.services.scenario_transfer_service import ScenarioTransferService
+from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.user import User
 from rp_engine.infrastructure.scenario_serialization import scenario_definition_to_payload
 
@@ -182,6 +187,91 @@ def create_admin_router(
         if memory is None:
             raise HTTPException(status_code=404, detail="Session not found")
         return AdminSessionMemoryResponse.from_memory(memory)
+
+    async def _require_live_session_for_write(session_id: UUID) -> None:
+        """Same refusal `set_session_persona` and the play routes give a superseded session:
+        nothing written here would ever reach a prompt again, so it is refused rather than
+        silently accepted as a no-op."""
+        session = await admin_service.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session.is_deleted:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This session was superseded by a restart or clear, so a directive "
+                    "would never reach a prompt. Set it on the live session instead."
+                ),
+            )
+
+    async def _directive_response(
+        session_id: UUID, run: Callable[[], Awaitable[ScenarioSession | None]]
+    ) -> AdminSessionResponse:
+        """Shared tail for the four directive-write routes below: check the session is live,
+        turn a domain `ValueError` into 400, a missing session into 404, and otherwise
+        answer with the fresh session the same way `set_session_persona` does.
+
+        `run` is a callable, not an awaited coroutine, so the service is only invoked once
+        the liveness guard has passed — an already-built coroutine would otherwise sit
+        unused (and unawaited) whenever the guard rejects the request.
+        """
+        await _require_live_session_for_write(session_id)
+        try:
+            updated = await run()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        transcript = await admin_service.get_session_transcript(session_id)
+        return AdminSessionResponse.from_session(updated, message_count=len(transcript))
+
+    @router.put("/sessions/{session_id}/language")
+    async def set_session_language(
+        session_id: UUID, payload: AdminSessionLanguageRequest
+    ) -> AdminSessionResponse:
+        """Mirrors `/language <code>`."""
+        return await _directive_response(
+            session_id,
+            lambda: admin_service.set_session_language(session_id, language=payload.language),
+        )
+
+    @router.post("/sessions/{session_id}/rules", status_code=201)
+    async def add_session_rule(
+        session_id: UUID, payload: AdminSessionRuleRequest
+    ) -> AdminSessionResponse:
+        """Mirrors `/rule add <text>`."""
+        return await _directive_response(
+            session_id, lambda: admin_service.add_session_rule(session_id, text=payload.text)
+        )
+
+    @router.delete("/sessions/{session_id}/rules/{rule_id}")
+    async def remove_session_rule(session_id: UUID, rule_id: str) -> AdminSessionResponse:
+        """Mirrors `/rule remove <id>`. A `ValueError` here means the id did not match any
+        rule on this session, so it maps to 404 rather than the 400 the other three
+        directive routes use for a validation failure."""
+        await _require_live_session_for_write(session_id)
+        try:
+            updated = await admin_service.remove_session_rule(session_id, rule_id=rule_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        transcript = await admin_service.get_session_transcript(session_id)
+        return AdminSessionResponse.from_session(updated, message_count=len(transcript))
+
+    @router.post("/sessions/{session_id}/director", status_code=201)
+    async def add_session_director_instruction(
+        session_id: UUID, payload: AdminSessionDirectorInstructionRequest
+    ) -> AdminSessionResponse:
+        """Mirrors `/director <instruction>`: queues one more note for the next reply only.
+        There is no route to clear the queue early — `/director` has no such command
+        either, since the notes clear themselves once a generation consumes them."""
+        return await _directive_response(
+            session_id,
+            lambda: admin_service.add_session_director_instruction(
+                session_id, instruction=payload.instruction
+            ),
+        )
 
     @router.post("/sessions/{session_id}/memory/refresh")
     async def refresh_session_summary(session_id: UUID) -> AdminSessionMemoryResponse:

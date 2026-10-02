@@ -312,6 +312,227 @@ def test_set_session_persona_404_when_the_session_is_missing(tmp_path: Path) -> 
     assert response.status_code == 404
 
 
+def test_set_session_language_updates_it(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    session = _session()
+    updated = session.with_directives(session.directives.with_language("fr"))
+    container.admin_service.get_session = AsyncMock(return_value=session)
+    container.admin_service.set_session_language = AsyncMock(return_value=updated)
+    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+
+    response = client.put(f"/admin/sessions/{SESSION_ID}/language", json={"language": "fr"})
+
+    assert response.status_code == 200
+    assert response.json()["directives"]["language"] == "fr"
+    container.admin_service.set_session_language.assert_awaited_once_with(
+        SESSION_ID, language="fr"
+    )
+
+
+def test_set_session_language_400_on_an_unsupported_code(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.set_session_language = AsyncMock(
+        side_effect=ValueError("Unsupported language code: xx")
+    )
+
+    response = client.put(f"/admin/sessions/{SESSION_ID}/language", json={"language": "xx"})
+
+    assert response.status_code == 400
+
+
+def test_set_session_language_404_when_the_session_is_missing(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=None)
+    container.admin_service.set_session_language = AsyncMock()
+
+    response = client.put(f"/admin/sessions/{SESSION_ID}/language", json={"language": "en"})
+
+    assert response.status_code == 404
+    container.admin_service.set_session_language.assert_not_awaited()
+
+
+def test_set_session_language_409_for_a_superseded_session(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session().mark_deleted())
+    container.admin_service.set_session_language = AsyncMock()
+
+    response = client.put(f"/admin/sessions/{SESSION_ID}/language", json={"language": "en"})
+
+    assert response.status_code == 409
+    container.admin_service.set_session_language.assert_not_awaited()
+
+
+def test_add_session_rule_appends_it(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    session = _session()
+    rule_directives, _rule = session.directives.with_rule("No fourth-wall breaks.")
+    updated = session.with_directives(rule_directives)
+    container.admin_service.get_session = AsyncMock(return_value=session)
+    container.admin_service.add_session_rule = AsyncMock(return_value=updated)
+    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+
+    response = client.post(
+        f"/admin/sessions/{SESSION_ID}/rules", json={"text": "No fourth-wall breaks."}
+    )
+
+    assert response.status_code == 201
+    assert [r["text"] for r in response.json()["directives"]["rules"]] == [
+        "No fourth-wall breaks."
+    ]
+
+
+def test_add_session_rule_422_on_empty_text(tmp_path: Path) -> None:
+    # Pydantic's min_length=1 refuses the blank string before the route body ever runs.
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.add_session_rule = AsyncMock()
+
+    response = client.post(f"/admin/sessions/{SESSION_ID}/rules", json={"text": ""})
+
+    assert response.status_code == 422
+    container.admin_service.add_session_rule.assert_not_awaited()
+
+
+def test_add_session_rule_400_on_whitespace_only_text(tmp_path: Path) -> None:
+    # Passes pydantic's length check, fails `SessionDirectives.with_rule`'s own.
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.add_session_rule = AsyncMock(
+        side_effect=ValueError("Rule text must not be empty.")
+    )
+
+    response = client.post(f"/admin/sessions/{SESSION_ID}/rules", json={"text": "   "})
+
+    assert response.status_code == 400
+
+
+def test_add_session_rule_404_when_the_session_is_missing(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=None)
+    container.admin_service.add_session_rule = AsyncMock()
+
+    response = client.post(f"/admin/sessions/{SESSION_ID}/rules", json={"text": "A rule"})
+
+    assert response.status_code == 404
+    container.admin_service.add_session_rule.assert_not_awaited()
+
+
+def test_add_session_rule_409_for_a_superseded_session(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session().mark_deleted())
+    container.admin_service.add_session_rule = AsyncMock()
+
+    response = client.post(f"/admin/sessions/{SESSION_ID}/rules", json={"text": "A rule"})
+
+    assert response.status_code == 409
+    container.admin_service.add_session_rule.assert_not_awaited()
+
+
+def test_remove_session_rule_drops_it(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.remove_session_rule = AsyncMock(return_value=_session())
+    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+
+    response = client.delete(f"/admin/sessions/{SESSION_ID}/rules/1")
+
+    assert response.status_code == 200
+    container.admin_service.remove_session_rule.assert_awaited_once_with(
+        SESSION_ID, rule_id="1"
+    )
+
+
+def test_remove_session_rule_404_on_an_unknown_rule_id(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.remove_session_rule = AsyncMock(
+        side_effect=ValueError("No rule with id 9.")
+    )
+
+    response = client.delete(f"/admin/sessions/{SESSION_ID}/rules/9")
+
+    assert response.status_code == 404
+
+
+def test_remove_session_rule_404_when_the_session_is_missing(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=None)
+    container.admin_service.remove_session_rule = AsyncMock()
+
+    response = client.delete(f"/admin/sessions/{SESSION_ID}/rules/1")
+
+    assert response.status_code == 404
+    container.admin_service.remove_session_rule.assert_not_awaited()
+
+
+def test_remove_session_rule_409_for_a_superseded_session(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session().mark_deleted())
+    container.admin_service.remove_session_rule = AsyncMock()
+
+    response = client.delete(f"/admin/sessions/{SESSION_ID}/rules/1")
+
+    assert response.status_code == 409
+    container.admin_service.remove_session_rule.assert_not_awaited()
+
+
+def test_add_session_director_instruction_queues_it(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    session = _session()
+    updated = session.with_directives(
+        session.directives.with_director_instruction("Have someone interrupt.")
+    )
+    container.admin_service.get_session = AsyncMock(return_value=session)
+    container.admin_service.add_session_director_instruction = AsyncMock(return_value=updated)
+    container.admin_service.get_session_transcript = AsyncMock(return_value=[])
+
+    response = client.post(
+        f"/admin/sessions/{SESSION_ID}/director",
+        json={"instruction": "Have someone interrupt."},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["directives"]["director_instructions"] == [
+        "Have someone interrupt."
+    ]
+
+
+def test_add_session_director_instruction_422_on_empty_text(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session())
+    container.admin_service.add_session_director_instruction = AsyncMock()
+
+    response = client.post(f"/admin/sessions/{SESSION_ID}/director", json={"instruction": ""})
+
+    assert response.status_code == 422
+    container.admin_service.add_session_director_instruction.assert_not_awaited()
+
+
+def test_add_session_director_instruction_404_when_the_session_is_missing(
+    tmp_path: Path,
+) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=None)
+    container.admin_service.add_session_director_instruction = AsyncMock()
+
+    response = client.post(f"/admin/sessions/{SESSION_ID}/director", json={"instruction": "Note"})
+
+    assert response.status_code == 404
+    container.admin_service.add_session_director_instruction.assert_not_awaited()
+
+
+def test_add_session_director_instruction_409_for_a_superseded_session(tmp_path: Path) -> None:
+    client, container = _setup(tmp_path)
+    container.admin_service.get_session = AsyncMock(return_value=_session().mark_deleted())
+    container.admin_service.add_session_director_instruction = AsyncMock()
+
+    response = client.post(f"/admin/sessions/{SESSION_ID}/director", json={"instruction": "Note"})
+
+    assert response.status_code == 409
+    container.admin_service.add_session_director_instruction.assert_not_awaited()
+
+
 def test_get_session_transcript(tmp_path: Path) -> None:
     client, container = _setup(tmp_path)
     container.admin_service.get_session = AsyncMock(return_value=_session())
