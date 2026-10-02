@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import { PButton, PChip, PPanel, PSectionLabel, PTabs } from "pablo-design-system";
+import { PButton, PChip, PPanel, PSectionLabel, PSelect, PTabs } from "pablo-design-system";
+import type { SelectOption } from "pablo-design-system";
 
 import { useAdminStore } from "@/stores/admin";
 
@@ -194,24 +195,23 @@ const directivesSummary = computed(() => {
 // Directives (S037): the panel's counterpart to /language, /rule, /director. Superseded
 // sessions stay read-only, the same rule the Persona panel above already follows — nothing
 // written there would ever reach a prompt again.
-const LANGUAGE_OPTIONS: { code: string; name: string }[] = [
-  { code: "auto", name: "Automatic" },
-  { code: "en", name: "English" },
-  { code: "es", name: "Spanish" },
-  { code: "fr", name: "French" },
-  { code: "de", name: "German" },
-  { code: "it", name: "Italian" },
-  { code: "pt", name: "Portuguese" },
-  { code: "ru", name: "Russian" },
-  { code: "ja", name: "Japanese" },
-  { code: "zh", name: "Chinese" },
+const LANGUAGE_OPTIONS: SelectOption[] = [
+  { value: "auto", label: "Automatic" },
+  { value: "en", label: "English" },
+  { value: "es", label: "Spanish" },
+  { value: "fr", label: "French" },
+  { value: "de", label: "German" },
+  { value: "it", label: "Italian" },
+  { value: "pt", label: "Portuguese" },
+  { value: "ru", label: "Russian" },
+  { value: "ja", label: "Japanese" },
+  { value: "zh", label: "Chinese" },
 ];
 
 const canEditDirectives = computed(() => store.session !== null && !store.session.deleted_at);
 
 const languageSaving = ref(false);
-async function onSelectLanguage(event: Event): Promise<void> {
-  const code = (event.target as HTMLSelectElement).value;
+async function onSelectLanguage(code: string): Promise<void> {
   if (!store.session || code === store.session.directives.language) return;
   languageSaving.value = true;
   try {
@@ -523,17 +523,13 @@ async function onAddDirectorNote(): Promise<void> {
         <div v-show="openPanel === 'directives'" class="grid gap-4">
           <div class="grid gap-1">
             <PSectionLabel as="span" size="sm">Language</PSectionLabel>
-            <select
+            <PSelect
               v-if="canEditDirectives"
-              :value="store.session.directives.language"
+              :model-value="store.session.directives.language"
+              :options="LANGUAGE_OPTIONS"
               :disabled="languageSaving"
-              class="rounded-control border border-hairline bg-transparent px-2 py-1.5"
-              @change="onSelectLanguage"
-            >
-              <option v-for="option in LANGUAGE_OPTIONS" :key="option.code" :value="option.code">
-                {{ option.name }}
-              </option>
-            </select>
+              @update:model-value="onSelectLanguage"
+            />
             <p v-else class="text-body">{{ store.session.directives.language }}</p>
           </div>
 

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 
-import { PButton, PPanel } from "pablo-design-system";
+import { PButton, PPanel, PSelect } from "pablo-design-system";
+import type { SelectOption } from "pablo-design-system";
 
 import { useAdminStore } from "@/stores/admin";
 
@@ -17,6 +18,10 @@ const router = useRouter();
 
 const draft = reactive({ scenarioId: "", personaName: "", personaDescription: "" });
 const submitting = ref(false);
+
+const scenarioOptions = computed<SelectOption[]>(() =>
+  store.scenarios.map((scenario) => ({ value: scenario.id, label: scenario.name })),
+);
 
 onMounted(() => store.fetchScenarios(false));
 
@@ -55,19 +60,11 @@ async function onSubmit(): Promise<void> {
       <form class="grid gap-3" @submit.prevent="onSubmit">
         <label class="grid gap-1">
           <span class="text-micro text-muted">Scenario</span>
-          <select
+          <PSelect
             v-model="draft.scenarioId"
-            class="rounded-control border border-hairline bg-surface px-2 py-1.5 text-ink"
-          >
-            <option value="" disabled>Choose a scenario…</option>
-            <option
-              v-for="scenario in store.scenarios"
-              :key="scenario.id"
-              :value="scenario.id"
-            >
-              {{ scenario.name }}
-            </option>
-          </select>
+            :options="scenarioOptions"
+            placeholder="Choose a scenario…"
+          />
           <span v-if="store.scenarios.length === 0" class="text-micro text-muted">
             No scenarios in the catalog yet.
           </span>
