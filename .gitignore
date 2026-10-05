@@ -13,3 +13,6 @@ wheels/
 data/
 
 .env
+
+# Local backups made before a risky change (see pablo-ai-os)
+.backups/
