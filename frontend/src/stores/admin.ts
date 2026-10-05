@@ -118,8 +118,19 @@ export const useAdminStore = defineStore("admin", {
       }
     },
 
-    async fetchSessionDetail(sessionId: string): Promise<void> {
-      this.sessionLoading = true;
+    /**
+     * `silent` skips the `sessionLoading` flag. `SessionDetailPage` renders `Loading…`
+     * *instead of* the page while it is set, which unmounts `SessionTranscript` (and with
+     * it `PScrollArea`'s viewport) and remounts a fresh one once the fetch resolves — a new
+     * DOM node starts at `scrollTop: 0`, so the reader's position (or the "follow the
+     * bottom" the composer just asked for) is lost. Fine, even wanted, for the first load
+     * of a session; wrong for the re-read a turn action does after its own request lands,
+     * where the page is already showing a story and nothing should visibly reload under
+     * the reader.
+     */
+    async fetchSessionDetail(sessionId: string, options: { silent?: boolean } = {}): Promise<void> {
+      const { silent = false } = options;
+      if (!silent) this.sessionLoading = true;
       this.sessionError = null;
       // Loading a session clears any stale action error, so one failed delete does not
       // follow the user onto a different session.
@@ -138,7 +149,7 @@ export const useAdminStore = defineStore("admin", {
       } catch (error) {
         this.sessionError = error instanceof Error ? error.message : String(error);
       } finally {
-        this.sessionLoading = false;
+        if (!silent) this.sessionLoading = false;
       }
     },
 
@@ -176,8 +187,9 @@ export const useAdminStore = defineStore("admin", {
         // Re-read rather than splicing locally: the server is the authority on what is left,
         // and this also refreshes message_count and the traces that were deleted with the
         // turn. A silently-diverging local copy is what makes a failed delete look like a
-        // delete that "did not refresh".
-        await this.fetchSessionDetail(sessionId);
+        // delete that "did not refresh". `silent` because the page is already showing this
+        // story -- see `fetchSessionDetail`'s own docstring for why that matters.
+        await this.fetchSessionDetail(sessionId, { silent: true });
         return deleted;
       } catch (error) {
         this.actionError = error instanceof Error ? error.message : String(error);
@@ -409,7 +421,10 @@ export const useAdminStore = defineStore("admin", {
         // Cleared only once the refetched transcript is in. Clearing it first drops
         // `isGenerating` while the old transcript is still on screen, which re-enables Send
         // and lets a second turn go out against a story the operator cannot see yet.
-        await this.fetchSessionDetail(sessionId);
+        // `silent`: see `fetchSessionDetail`'s docstring -- without it this refetch flips
+        // `sessionLoading`, which unmounts and remounts the transcript and resets its
+        // scroll to the top the instant the reply lands.
+        await this.fetchSessionDetail(sessionId, { silent: true });
         this.pendingTurn = null;
         return true;
       } catch (error) {

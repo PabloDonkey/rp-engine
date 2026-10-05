@@ -127,6 +127,27 @@ test("a second turn is refused while the transcript is still being re-read", asy
   expect(store.pendingTurn).toBeNull();
 });
 
+test("a turn's own refetch never flips sessionLoading", async () => {
+  // `SessionDetailPage` renders `Loading…` *instead of* the page while `sessionLoading` is
+  // true, which unmounts `SessionTranscript` -- and with it `PScrollArea`'s viewport -- and
+  // mounts a fresh one once the refetch resolves. A brand new scroll container starts at
+  // `scrollTop: 0`, so the reader's position (or the "follow the bottom" a send/continue/
+  // retry just asked for) is lost the instant the reply lands. Regression test for that.
+  const store = useAdminStore();
+  sendTurn.mockResolvedValue({ role: "character", content: "…", metadata: {} });
+  const refetch = deferred<never[]>();
+  getSessionTranscript.mockReturnValue(refetch.promise);
+
+  const inFlight = store.playTurn("s1", "first");
+  await vi.waitFor(() => expect(getSessionTranscript).toHaveBeenCalledOnce());
+  expect(store.sessionLoading).toBe(false);
+
+  refetch.resolve([]);
+  await inFlight;
+
+  expect(store.sessionLoading).toBe(false);
+});
+
 test("continue and retry send no message of their own", async () => {
   const store = useAdminStore();
   const pending = deferred<unknown>();
