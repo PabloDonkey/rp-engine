@@ -43,7 +43,7 @@ async function onToggleBlock(user: AdminUser): Promise<void> {
             </div>
           </RouterLink>
           <PButton
-            :variant="user.is_blocked ? 'secondary' : 'danger'"
+            :tone="user.is_blocked ? 'neutral' : 'danger'"
             class="shrink-0"
             @click="onToggleBlock(user)"
           >

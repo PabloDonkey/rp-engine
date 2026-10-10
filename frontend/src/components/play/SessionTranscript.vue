@@ -228,7 +228,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
               <!-- Only the final message is deletable, which is what enforces the ordering. -->
               <PButton
                 v-if="isLastMessage(index)"
-                variant="danger"
+                tone="danger"
                 size="sm"
                 title="Delete this message. Only the last message can be deleted."
                 @click="onDeleteLastMessage(message)"

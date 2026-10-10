@@ -281,7 +281,7 @@ async function onAddDirectorNote(): Promise<void> {
       </div>
       <div class="flex shrink-0 gap-2">
         <PButton size="sm" @click="emit('export')">Export</PButton>
-        <PButton size="sm" variant="danger" @click="emit('delete')">Delete</PButton>
+        <PButton size="sm" tone="danger" @click="emit('delete')">Delete</PButton>
       </div>
     </div>
 
@@ -548,7 +548,7 @@ async function onAddDirectorNote(): Promise<void> {
                 <PButton
                   v-if="canEditDirectives"
                   size="sm"
-                  variant="danger"
+                  tone="danger"
                   :disabled="removingRuleId === rule.id"
                   @click="onRemoveRule(rule.id)"
                 >
