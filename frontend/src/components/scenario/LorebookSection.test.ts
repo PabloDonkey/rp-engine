@@ -25,10 +25,10 @@ const friendship: LoreEntry = {
   priority: "normal",
 };
 
-const listLorebookEntries = vi.fn(async () => [] as LoreEntry[]);
-const createLoreEntry = vi.fn(async () => accident);
-const updateLoreEntry = vi.fn(async () => accident);
-const deleteLoreEntry = vi.fn(async () => undefined);
+const listLorebookEntries = vi.fn(async (..._args: unknown[]) => [] as LoreEntry[]);
+const createLoreEntry = vi.fn(async (..._args: unknown[]) => accident);
+const updateLoreEntry = vi.fn(async (..._args: unknown[]) => accident);
+const deleteLoreEntry = vi.fn(async (..._args: unknown[]) => undefined);
 
 vi.mock("@/api", () => ({
   listLorebookEntries: (...args: unknown[]) => listLorebookEntries(...args),

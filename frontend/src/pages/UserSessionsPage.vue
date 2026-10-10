@@ -54,7 +54,7 @@ async function onDelete(sessionId: string): Promise<void> {
               {{ new Date(session.created_at).toLocaleString() }}
             </div>
           </RouterLink>
-          <PButton variant="danger" class="shrink-0" @click="onDelete(session.id)">
+          <PButton tone="danger" class="shrink-0" @click="onDelete(session.id)">
             Delete
           </PButton>
         </PPanel>
