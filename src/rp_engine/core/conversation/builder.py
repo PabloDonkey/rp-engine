@@ -12,11 +12,6 @@ from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives, language_name
 from rp_engine.core.user.user import User
 
-# Session metadata keys used to carry short-lived continuity context when the active
-# character changes. Written by the character switching flow, read here.
-SWITCH_CONTEXT_TO_CHARACTER_ID = "switch_context_to_character_id"
-SWITCH_CONTEXT_SUMMARY = "switch_context_summary"
-
 # Every system message says which section it is. Readers that need one section by name —
 # the generation trace, and anything added later — look it up by this label instead of by
 # position. Position is not a contract: sections are added, and each one that is added
@@ -32,7 +27,6 @@ PROMPT_SECTION_LANGUAGE = "language"
 PROMPT_SECTION_SESSION_RULES = "session_rules"
 PROMPT_SECTION_DIRECTOR_INSTRUCTIONS = "director_instructions"
 PROMPT_SECTION_MEMORY = "memory"
-PROMPT_SECTION_SWITCH_CONTEXT = "switch_context"
 
 # Added after the character cards when a prompt holds two or more of them.
 MULTI_CHARACTER_INSTRUCTION = (
@@ -57,9 +51,6 @@ class ScenarioConversationInput:
     # What layers 01 to 04 recalled, rendered into the memory section of the system
     # prompt. Empty until S023 lands the first of them.
     memory_fragments: tuple[MemoryFragment, ...] = ()
-    # Optional explicit active character override; when absent the active character is
-    # resolved from the session's participants (or the scenario's single character).
-    active_character_id: str | None = None
 
 
 class ConversationBuilder:
@@ -181,7 +172,6 @@ class ConversationBuilder:
         return ConversationBuilder.resolve_active_character(
             scenario=payload.scenario,
             session=payload.session,
-            active_character_id=payload.active_character_id,
         )
 
     @staticmethod
@@ -189,21 +179,14 @@ class ConversationBuilder:
         *,
         scenario: ScenarioDefinition,
         session: ScenarioSession,
-        active_character_id: str | None = None,
     ) -> Character | None:
         """Resolve the first character, if any. `{{char}}` outside the cards means this one.
 
         Scenarios may be characterless (freeform). When characters exist, the first one is
-        chosen by explicit override, then by the session's participants, then by falling
-        back to the scenario's sole character.
+        chosen by the session's participants, then by falling back to the scenario's sole
+        character.
         """
         if not scenario.characters:
-            return None
-
-        if active_character_id is not None:
-            for character in scenario.characters.values():
-                if character.id == active_character_id:
-                    return character
             return None
 
         for role, character_id in session.active_participants.items():
@@ -361,10 +344,6 @@ class ConversationBuilder:
             )
         )
 
-        switch_context = self._switch_context_message(payload, character)
-        if switch_context is not None:
-            messages.append(switch_context)
-
         return messages
 
     @staticmethod
@@ -514,31 +493,6 @@ class ConversationBuilder:
             "acknowledge that a director exists.\n"
             f"{notes}"
         )
-
-    def _switch_context_message(
-        self,
-        payload: ScenarioConversationInput,
-        character: Character | None,
-    ) -> ConversationMessage | None:
-        metadata = payload.session.metadata
-        to_character_id = metadata.get(SWITCH_CONTEXT_TO_CHARACTER_ID, "").strip()
-        summary = metadata.get(SWITCH_CONTEXT_SUMMARY, "").strip()
-        if not summary:
-            return None
-        active_character_id = character.id if character is not None else ""
-        if to_character_id and to_character_id != active_character_id:
-            return None
-
-        content = self._resolve_templates(
-            value=(
-                "Additional context from the previous character interaction:\n"
-                f"{summary}\n"
-                "Treat this as temporary continuity context, not long-term memory."
-            ),
-            payload=payload,
-            character=character,
-        )
-        return self._system_message(content, section=PROMPT_SECTION_SWITCH_CONTEXT)
 
     def _resolve_message_templates(
         self,

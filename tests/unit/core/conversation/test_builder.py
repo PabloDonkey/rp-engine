@@ -246,43 +246,6 @@ def test_build_continue_uses_continue_prompt() -> None:
     assert "Continue the narration" in last.content
 
 
-def test_builder_includes_switch_summary_context_when_present() -> None:
-    builder = ConversationBuilder()
-    character = _character(description="Ancient dragon mage", greeting="Hello")
-    scenario = _scenario(characters={"protagonist": character})
-    session = _session(
-        active_participants={"protagonist": "belzebuth"},
-        metadata={
-            "switch_context_to_character_id": "belzebuth",
-            "switch_context_summary": (
-                "The user found a hidden lab and wants to proceed carefully."
-            ),
-        },
-    )
-    user = User(id=OWNER_ID, display_name="Pablo")
-
-    conversation = builder.build(
-        ScenarioConversationInput(
-            scenario=scenario,
-            session=session,
-            user=user,
-            memory_messages=[],
-            user_message="Continue.",
-        )
-    )
-
-    system_messages = [
-        message.content
-        for message in conversation.messages
-        if message.role == ConversationRole.SYSTEM
-    ]
-    assert any(
-        "Additional context from the previous character interaction:" in message
-        for message in system_messages
-    )
-    assert any("hidden lab" in message for message in system_messages)
-
-
 def _system_contents(conversation: object) -> list[str]:
     return [
         message.content
