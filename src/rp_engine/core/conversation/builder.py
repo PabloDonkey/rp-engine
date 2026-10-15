@@ -12,11 +12,6 @@ from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives, language_name
 from rp_engine.core.user.user import User
 
-# Session metadata keys used to carry short-lived continuity context when the active
-# character changes. Written by the character switching flow, read here.
-SWITCH_CONTEXT_TO_CHARACTER_ID = "switch_context_to_character_id"
-SWITCH_CONTEXT_SUMMARY = "switch_context_summary"
-
 # Every system message says which section it is. Readers that need one section by name —
 # the generation trace, and anything added later — look it up by this label instead of by
 # position. Position is not a contract: sections are added, and each one that is added
@@ -32,7 +27,11 @@ PROMPT_SECTION_LANGUAGE = "language"
 PROMPT_SECTION_SESSION_RULES = "session_rules"
 PROMPT_SECTION_DIRECTOR_INSTRUCTIONS = "director_instructions"
 PROMPT_SECTION_MEMORY = "memory"
-PROMPT_SECTION_SWITCH_CONTEXT = "switch_context"
+
+# Added after the character cards when a prompt holds two or more of them.
+MULTI_CHARACTER_INSTRUCTION = (
+    "Play every character above. Make clear in the prose who acts and who speaks."
+)
 
 # What the memory section says when no layer beyond the recent window recalled anything.
 MEMORY_HINT = "Use conversation history to keep continuity and character consistency."
@@ -52,9 +51,6 @@ class ScenarioConversationInput:
     # What layers 01 to 04 recalled, rendered into the memory section of the system
     # prompt. Empty until S023 lands the first of them.
     memory_fragments: tuple[MemoryFragment, ...] = ()
-    # Optional explicit active character override; when absent the active character is
-    # resolved from the session's participants (or the scenario's single character).
-    active_character_id: str | None = None
 
 
 class ConversationBuilder:
@@ -176,7 +172,6 @@ class ConversationBuilder:
         return ConversationBuilder.resolve_active_character(
             scenario=payload.scenario,
             session=payload.session,
-            active_character_id=payload.active_character_id,
         )
 
     @staticmethod
@@ -184,33 +179,51 @@ class ConversationBuilder:
         *,
         scenario: ScenarioDefinition,
         session: ScenarioSession,
-        active_character_id: str | None = None,
     ) -> Character | None:
-        """Resolve which character is currently speaking, if any.
+        """Resolve the first character, if any. `{{char}}` outside the cards means this one.
 
-        Scenarios may be characterless (freeform). When characters exist, the active
-        one is chosen by explicit override, then by the session's participants, then by
-        falling back to the scenario's sole character.
+        Scenarios may be characterless (freeform). This is the first card of
+        `_card_characters`.
         """
-        if not scenario.characters:
-            return None
+        cards = ConversationBuilder._card_characters(scenario, session)
+        return cards[0] if cards else None
 
-        if active_character_id is not None:
-            for character in scenario.characters.values():
-                if character.id == active_character_id:
-                    return character
-            return None
-
-        for role, character_id in session.active_participants.items():
-            if role in scenario.characters:
-                return scenario.characters[role]
-            for character in scenario.characters.values():
-                if character.id == character_id:
-                    return character
-
-        if len(scenario.characters) == 1:
-            return next(iter(scenario.characters.values()))
+    @staticmethod
+    def _match_participant(
+        scenario: ScenarioDefinition,
+        role: str,
+        character_id: str,
+    ) -> Character | None:
+        """Find the scenario character for one participant: by role key, then by id."""
+        if role in scenario.characters:
+            return scenario.characters[role]
+        for character in scenario.characters.values():
+            if character.id == character_id:
+                return character
         return None
+
+    @staticmethod
+    def _card_characters(
+        scenario: ScenarioDefinition,
+        session: ScenarioSession,
+    ) -> list[Character]:
+        """Every character whose card goes into the prompt, sorted by role name.
+
+        The sort is in code because the database does not keep the key order of
+        `active_participants`. A character appears once, even if two participants match it.
+        When no participant matches and the scenario has exactly one character, that
+        character is the only card.
+        """
+        cards: list[Character] = []
+        for role in sorted(session.active_participants):
+            character = ConversationBuilder._match_participant(
+                scenario, role, session.active_participants[role]
+            )
+            if character is not None and character not in cards:
+                cards.append(character)
+        if not cards and len(scenario.characters) == 1:
+            cards.append(next(iter(scenario.characters.values())))
+        return cards
 
     def _build_system_messages(
         self,
@@ -223,19 +236,25 @@ class ConversationBuilder:
         if scenario_intro is not None:
             messages.append(scenario_intro)
 
-        if character is not None:
-            character_definition = self._resolve_templates(
-                value=(
-                    f"[Character]\n {character.name}\n"
-                    f"[Description]\n {character.description}\n"
-                    f"[Personality]\n {character.personality}\n"
-                    f"[Greeting]\n {character.greeting}"
-                ),
-                payload=payload,
-                character=character,
-            )
+        cards = self._card_characters(payload.scenario, payload.session)
+        if cards:
+            blocks = [
+                self._resolve_templates(
+                    value=(
+                        f"[Character]\n {card.name}\n"
+                        f"[Description]\n {card.description}\n"
+                        f"[Personality]\n {card.personality}\n"
+                        f"[Greeting]\n {card.greeting}"
+                    ),
+                    payload=payload,
+                    character=card,
+                )
+                for card in cards
+            ]
+            if len(cards) > 1:
+                blocks.append(MULTI_CHARACTER_INSTRUCTION)
             messages.append(
-                self._system_message(character_definition, section=PROMPT_SECTION_CHARACTER)
+                self._system_message("\n\n".join(blocks), section=PROMPT_SECTION_CHARACTER)
             )
 
         world = payload.scenario.world
@@ -318,10 +337,6 @@ class ConversationBuilder:
             )
         )
 
-        switch_context = self._switch_context_message(payload, character)
-        if switch_context is not None:
-            messages.append(switch_context)
-
         return messages
 
     @staticmethod
@@ -398,7 +413,7 @@ class ConversationBuilder:
         return """[Response Format]
                 Write naturally. Never include labels such as "Narration", "Action", or "Dialogue".
                 Keep scene descriptions brief and only describe observable events.
-                Write the character's physical actions in *italics*.
+                Write the characters' physical actions in *italics*.
                 Write spoken dialogue in quotation marks.
                 Prefer dialogue and interaction over exposition.
                 Avoid long monologues.
@@ -471,31 +486,6 @@ class ConversationBuilder:
             "acknowledge that a director exists.\n"
             f"{notes}"
         )
-
-    def _switch_context_message(
-        self,
-        payload: ScenarioConversationInput,
-        character: Character | None,
-    ) -> ConversationMessage | None:
-        metadata = payload.session.metadata
-        to_character_id = metadata.get(SWITCH_CONTEXT_TO_CHARACTER_ID, "").strip()
-        summary = metadata.get(SWITCH_CONTEXT_SUMMARY, "").strip()
-        if not summary:
-            return None
-        active_character_id = character.id if character is not None else ""
-        if to_character_id and to_character_id != active_character_id:
-            return None
-
-        content = self._resolve_templates(
-            value=(
-                "Additional context from the previous character interaction:\n"
-                f"{summary}\n"
-                "Treat this as temporary continuity context, not long-term memory."
-            ),
-            payload=payload,
-            character=character,
-        )
-        return self._system_message(content, section=PROMPT_SECTION_SWITCH_CONTEXT)
 
     def _resolve_message_templates(
         self,

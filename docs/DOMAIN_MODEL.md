@@ -223,8 +223,7 @@ A value is one string, or a list of strings. `ScenarioDefinition`, `World`, `Cha
 so a plain string map was never the real shape.
 
 Session metadata, message metadata and LLM response metadata stay `dict[str, str]`. The
-engine writes those itself and reads them back as strings. One such read is the switch
-context in `core/conversation/builder.py`.
+engine writes those itself and reads them back as strings.
 
 `metadata_from_payload` in `infrastructure/scenario_serialization.py` normalizes what a
 stored or imported payload holds. A string stays a string. A list of strings stays a list.
