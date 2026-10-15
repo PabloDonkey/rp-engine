@@ -182,21 +182,11 @@ class ConversationBuilder:
     ) -> Character | None:
         """Resolve the first character, if any. `{{char}}` outside the cards means this one.
 
-        Scenarios may be characterless (freeform). When characters exist, the first one is
-        chosen by the session's participants, then by falling back to the scenario's sole
-        character.
+        Scenarios may be characterless (freeform). This is the first card of
+        `_card_characters`.
         """
-        if not scenario.characters:
-            return None
-
-        for role, character_id in session.active_participants.items():
-            character = ConversationBuilder._match_participant(scenario, role, character_id)
-            if character is not None:
-                return character
-
-        if len(scenario.characters) == 1:
-            return next(iter(scenario.characters.values()))
-        return None
+        cards = ConversationBuilder._card_characters(scenario, session)
+        return cards[0] if cards else None
 
     @staticmethod
     def _match_participant(
@@ -216,20 +206,25 @@ class ConversationBuilder:
     def _card_characters(
         scenario: ScenarioDefinition,
         session: ScenarioSession,
-        active_character: Character | None,
     ) -> list[Character]:
-        """Every character whose card goes into the prompt, in participant order.
+        """Every character whose card goes into the prompt, sorted by role name.
 
-        A character appears once, even if two participants match it. When no participant
-        matches, the active character (the scenario's sole character) is the only card.
+        The sort is in code because the database does not keep the key order of
+        `active_participants`. A character appears once, even if two participants match it.
+        When no participant matches and the scenario has exactly one character, that
+        character is the only card.
         """
         cards: list[Character] = []
-        for role, character_id in session.active_participants.items():
-            character = ConversationBuilder._match_participant(scenario, role, character_id)
+        if not scenario.characters:
+            return cards
+        for role in sorted(session.active_participants):
+            character = ConversationBuilder._match_participant(
+                scenario, role, session.active_participants[role]
+            )
             if character is not None and character not in cards:
                 cards.append(character)
-        if not cards and active_character is not None:
-            cards.append(active_character)
+        if not cards and len(scenario.characters) == 1:
+            cards.append(next(iter(scenario.characters.values())))
         return cards
 
     def _build_system_messages(
@@ -243,7 +238,7 @@ class ConversationBuilder:
         if scenario_intro is not None:
             messages.append(scenario_intro)
 
-        cards = self._card_characters(payload.scenario, payload.session, character)
+        cards = self._card_characters(payload.scenario, payload.session)
         if cards:
             blocks = [
                 self._resolve_templates(
