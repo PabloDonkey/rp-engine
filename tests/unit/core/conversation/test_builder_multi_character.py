@@ -26,9 +26,15 @@ def _character(char_id: str, name: str, **overrides: str) -> Character:
         "description": "{{char}} is called " + name,
         "personality": "Calm",
         "greeting": "I am {{char}}",
+        **overrides,
     }
-    fields.update(overrides)
-    return Character(id=char_id, name=name, **fields)
+    return Character(
+        id=char_id,
+        name=name,
+        description=fields["description"],
+        personality=fields["personality"],
+        greeting=fields["greeting"],
+    )
 
 
 def _build(
@@ -90,11 +96,32 @@ def test_two_characters_send_both_cards_in_participant_order() -> None:
     assert "[Greeting]\n I am Bob" in card
 
 
-def test_cards_follow_the_order_of_active_participants() -> None:
+def test_cards_are_sorted_by_role_name_not_by_written_order() -> None:
     conversation = _build(_two_characters(), {"rival": "bob", "hero": "alice"})
 
     card = _section(conversation, PROMPT_SECTION_CHARACTER)
-    assert card.index("[Character]\n Bob") < card.index("[Character]\n Alice")
+    assert card.index("[Character]\n Alice") < card.index("[Character]\n Bob")
+
+
+def test_first_card_and_char_outside_cards_follow_the_sorted_role_order() -> None:
+    characters = {
+        "narrator": _character("nora", "Nora"),
+        "jane": _character("jane_id", "Jane"),
+    }
+    world = World(id="default", name="Main", description="Home of {{char}}")
+    conversation = _build(characters, {"narrator": "nora", "jane": "jane_id"}, world=world)
+
+    card = _section(conversation, PROMPT_SECTION_CHARACTER)
+    assert card.index("[Character]\n Jane") < card.index("[Character]\n Nora")
+    assert "Home of Jane" in _section(conversation, "world")
+
+
+def test_sole_character_is_the_only_card_when_no_participant_matches() -> None:
+    conversation = _build({"hero": _character("alice", "Alice")}, {"ghost": "nobody"})
+
+    card = _section(conversation, PROMPT_SECTION_CHARACTER)
+    assert card.count("[Character]") == 1
+    assert "[Character]\n Alice" in card
 
 
 def test_participant_is_matched_by_character_id_when_role_is_unknown() -> None:
@@ -189,5 +216,5 @@ def test_char_outside_the_cards_is_the_first_characters_name() -> None:
         rules=["{{char}} never lies"],
     )
 
-    assert "Home of Bob" in _section(conversation, "world")
-    assert "Bob never lies" in _section(conversation, "scenario_rules")
+    assert "Home of Alice" in _section(conversation, "world")
+    assert "Alice never lies" in _section(conversation, "scenario_rules")
