@@ -215,8 +215,6 @@ class ConversationBuilder:
         character is the only card.
         """
         cards: list[Character] = []
-        if not scenario.characters:
-            return cards
         for role in sorted(session.active_participants):
             character = ConversationBuilder._match_participant(
                 scenario, role, session.active_participants[role]

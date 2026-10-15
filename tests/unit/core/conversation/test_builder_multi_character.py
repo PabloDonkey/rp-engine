@@ -86,7 +86,7 @@ def _two_characters() -> dict[str, Character]:
     }
 
 
-def test_two_characters_send_both_cards_in_participant_order() -> None:
+def test_two_characters_send_both_cards_in_role_name_order() -> None:
     conversation = _build(_two_characters(), {"hero": "alice", "rival": "bob"})
 
     card = _section(conversation, PROMPT_SECTION_CHARACTER)
