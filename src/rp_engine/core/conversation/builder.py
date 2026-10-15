@@ -34,6 +34,11 @@ PROMPT_SECTION_DIRECTOR_INSTRUCTIONS = "director_instructions"
 PROMPT_SECTION_MEMORY = "memory"
 PROMPT_SECTION_SWITCH_CONTEXT = "switch_context"
 
+# Added after the character cards when a prompt holds two or more of them.
+MULTI_CHARACTER_INSTRUCTION = (
+    "Play every character above. Make clear in the prose who acts and who speaks."
+)
+
 # What the memory section says when no layer beyond the recent window recalled anything.
 MEMORY_HINT = "Use conversation history to keep continuity and character consistency."
 
@@ -186,11 +191,11 @@ class ConversationBuilder:
         session: ScenarioSession,
         active_character_id: str | None = None,
     ) -> Character | None:
-        """Resolve which character is currently speaking, if any.
+        """Resolve the first character, if any. `{{char}}` outside the cards means this one.
 
-        Scenarios may be characterless (freeform). When characters exist, the active
-        one is chosen by explicit override, then by the session's participants, then by
-        falling back to the scenario's sole character.
+        Scenarios may be characterless (freeform). When characters exist, the first one is
+        chosen by explicit override, then by the session's participants, then by falling
+        back to the scenario's sole character.
         """
         if not scenario.characters:
             return None
@@ -202,15 +207,47 @@ class ConversationBuilder:
             return None
 
         for role, character_id in session.active_participants.items():
-            if role in scenario.characters:
-                return scenario.characters[role]
-            for character in scenario.characters.values():
-                if character.id == character_id:
-                    return character
+            character = ConversationBuilder._match_participant(scenario, role, character_id)
+            if character is not None:
+                return character
 
         if len(scenario.characters) == 1:
             return next(iter(scenario.characters.values()))
         return None
+
+    @staticmethod
+    def _match_participant(
+        scenario: ScenarioDefinition,
+        role: str,
+        character_id: str,
+    ) -> Character | None:
+        """Find the scenario character for one participant: by role key, then by id."""
+        if role in scenario.characters:
+            return scenario.characters[role]
+        for character in scenario.characters.values():
+            if character.id == character_id:
+                return character
+        return None
+
+    @staticmethod
+    def _card_characters(
+        scenario: ScenarioDefinition,
+        session: ScenarioSession,
+        active_character: Character | None,
+    ) -> list[Character]:
+        """Every character whose card goes into the prompt, in participant order.
+
+        A character appears once, even if two participants match it. When no participant
+        matches, the active character (the scenario's sole character) is the only card.
+        """
+        cards: list[Character] = []
+        for role, character_id in session.active_participants.items():
+            character = ConversationBuilder._match_participant(scenario, role, character_id)
+            if character is not None and character not in cards:
+                cards.append(character)
+        if not cards and active_character is not None:
+            cards.append(active_character)
+        return cards
 
     def _build_system_messages(
         self,
@@ -223,19 +260,25 @@ class ConversationBuilder:
         if scenario_intro is not None:
             messages.append(scenario_intro)
 
-        if character is not None:
-            character_definition = self._resolve_templates(
-                value=(
-                    f"[Character]\n {character.name}\n"
-                    f"[Description]\n {character.description}\n"
-                    f"[Personality]\n {character.personality}\n"
-                    f"[Greeting]\n {character.greeting}"
-                ),
-                payload=payload,
-                character=character,
-            )
+        cards = self._card_characters(payload.scenario, payload.session, character)
+        if cards:
+            blocks = [
+                self._resolve_templates(
+                    value=(
+                        f"[Character]\n {card.name}\n"
+                        f"[Description]\n {card.description}\n"
+                        f"[Personality]\n {card.personality}\n"
+                        f"[Greeting]\n {card.greeting}"
+                    ),
+                    payload=payload,
+                    character=card,
+                )
+                for card in cards
+            ]
+            if len(cards) > 1:
+                blocks.append(MULTI_CHARACTER_INSTRUCTION)
             messages.append(
-                self._system_message(character_definition, section=PROMPT_SECTION_CHARACTER)
+                self._system_message("\n\n".join(blocks), section=PROMPT_SECTION_CHARACTER)
             )
 
         world = payload.scenario.world
@@ -398,7 +441,7 @@ class ConversationBuilder:
         return """[Response Format]
                 Write naturally. Never include labels such as "Narration", "Action", or "Dialogue".
                 Keep scene descriptions brief and only describe observable events.
-                Write the character's physical actions in *italics*.
+                Write the characters' physical actions in *italics*.
                 Write spoken dialogue in quotation marks.
                 Prefer dialogue and interaction over exposition.
                 Avoid long monologues.
