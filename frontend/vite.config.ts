@@ -7,6 +7,16 @@ import { playwright } from "@vitest/browser-playwright";
 // From `vitest/config`, not `vite`: it is the same `defineConfig` widened to accept the
 // `test` block below. Importing it from `vite` type-errors on that block.
 import { defineConfig } from "vitest/config";
+import { loadEnv } from "vite";
+
+// Vite blocks host names it does not know (403). Extra host names, for example the
+// Tailscale name of the PC, come from the root .env, because they are local to one
+// machine and must not be in git.
+const rootEnv = loadEnv("", fileURLToPath(new URL("..", import.meta.url)), "RP_ENGINE_");
+const allowedHosts = (rootEnv.RP_ENGINE_FRONTEND_ALLOWED_HOSTS ?? "")
+  .split(",")
+  .map((host) => host.trim())
+  .filter(Boolean);
 
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
@@ -18,6 +28,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5174,
+    allowedHosts,
     proxy: {
       "/admin": {
         target: "http://localhost:8000",
