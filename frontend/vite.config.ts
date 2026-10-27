@@ -18,6 +18,8 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5174,
+    // Vite blocks host names it does not know (403). This is the Tailscale name of the PC.
+    allowedHosts: ["pablo-linux-mint.tail201279.ts.net"],
     proxy: {
       "/admin": {
         target: "http://localhost:8000",
