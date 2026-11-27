@@ -79,7 +79,13 @@ onBeforeUnmount(() => {
 });
 
 // The same button can get a new message. Stop the old audio first.
-watch(() => props.text, cancel);
+watch(
+  () => props.text,
+  () => {
+    cancel();
+    error.value = null;
+  },
+);
 
 const label = computed(
   () => ({ idle: "Play message", loading: "Loading audio", playing: "Stop" })[state.value],
