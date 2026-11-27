@@ -183,13 +183,13 @@ def test_no_synthesizer_when_the_model_setting_is_empty() -> None:
 
 
 def test_no_synthesizer_when_the_package_is_missing() -> None:
-    settings = Settings(speech_model="hexgrad/test-model")
+    settings = Settings(speech_model="hexgrad/Kokoro-82M")
 
     assert build_speech_synthesizer(settings, package_installed=lambda: False) is None
 
 
 def test_a_synthesizer_is_built_when_enabled_and_the_package_is_present() -> None:
-    settings = Settings(speech_model="hexgrad/test-model")
+    settings = Settings(speech_model="hexgrad/Kokoro-82M")
 
     synthesizer = build_speech_synthesizer(settings, package_installed=lambda: True)
 
