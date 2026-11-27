@@ -22,7 +22,6 @@ from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.ports.session_summary_store import SessionSummaryStore
 from rp_engine.core.ports.speech_synthesizer import (
     InsufficientGpuMemoryError,
-    SpeechError,
     SpeechSynthesizer,
 )
 from rp_engine.core.ports.token_counter import TokenCounter
@@ -49,7 +48,6 @@ __all__ = [
     "ScenarioDefinitionStore",
     "ScenarioSessionStore",
     "SessionSummaryStore",
-    "SpeechError",
     "SpeechSynthesizer",
     "TokenCounter",
     "UserIdentityStore",

@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     speech_instruct: str = "A tense, quiet storyteller."
     speech_language: str = "auto"
     # The model is not loaded when the graphics card has less free memory than this (MiB).
-    speech_min_free_mib: int = Field(default=5000, ge=0)
+    speech_min_free_mib: int = Field(default=4700, ge=0)
 
     debug_status_enabled: bool = False
     debug_generation_trace: Literal["off", "errors", "all"] = "off"

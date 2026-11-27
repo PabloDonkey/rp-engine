@@ -177,6 +177,24 @@ Since S037 the panel can also write session directives, not just read them:
 
 `/restart` and `/clear` (the two session reset tiers) remain Telegram-only.
 
+### Voice acting (RP-062)
+
+The panel can read a narrator message aloud.
+
+* `SpeechSynthesizer` is the port, in `core/ports/speech_synthesizer.py`. It has one call,
+  `synthesize(text) -> bytes`, and returns a WAV file. It blocks, and it is not safe for
+  concurrent calls.
+* `QwenSpeechSynthesizer` in `infrastructure/speech/` implements it with a local Qwen3-TTS
+  model. It imports torch and `qwen_tts` only when it loads the model, on the first request.
+  The packages come from the optional `speech` extra (`uv sync --extra speech`).
+* Speech is off when `RP_ENGINE_SPEECH_MODEL` is empty or the package is missing.
+  `app/main.py` then passes no synthesizer to the admin router.
+* `POST /admin/speech` takes `{"text": ...}` and returns `audio/wav`. The route runs the
+  synthesizer in a worker thread under one `asyncio.Lock`, so one request generates at a time.
+  Blank text gives 422. No synthesizer gives 503 "Speech is not enabled". Too little free
+  graphics card memory (`InsufficientGpuMemoryError`) gives 503 "Not enough graphics card
+  memory".
+
 ---
 
 ## Application

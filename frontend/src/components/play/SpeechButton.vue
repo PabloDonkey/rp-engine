@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 
 import { synthesizeSpeech } from "@/api";
 import {
@@ -20,6 +20,14 @@ const error = ref<string | null>(null);
 
 let audio: HTMLAudioElement | null = null;
 let url: string | null = null;
+// Counts the requests. Leaving the page or changing the text starts a new count, so a late
+// answer for an old request does not start playback.
+let generation = 0;
+
+function cancel(): void {
+  generation += 1;
+  release();
+}
 
 function release(): void {
   audio?.pause();
@@ -32,15 +40,19 @@ function release(): void {
 async function play(): Promise<void> {
   error.value = null;
   state.value = "loading";
+  const mine = ++generation;
   try {
     const blob = await synthesizeSpeech(props.text);
+    if (mine !== generation) return;
     url = URL.createObjectURL(blob);
     const player = new Audio(url);
     player.onended = release;
     audio = player;
     await player.play();
+    if (mine !== generation) return;
     state.value = "playing";
   } catch (caught) {
+    if (mine !== generation) return;
     release();
     if (
       caught instanceof Error &&
@@ -56,13 +68,18 @@ async function play(): Promise<void> {
 
 async function onClick(): Promise<void> {
   if (state.value === "playing") {
-    release();
+    cancel();
     return;
   }
   await play();
 }
 
-onBeforeUnmount(release);
+onBeforeUnmount(() => {
+  cancel();
+});
+
+// The same button can get a new message. Stop the old audio first.
+watch(() => props.text, cancel);
 
 const label = computed(
   () => ({ idle: "Play message", loading: "Loading audio", playing: "Stop" })[state.value],

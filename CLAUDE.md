@@ -52,7 +52,7 @@ adapters/  →  application/  →  core/ (engine, domain, ports)
 ```
 
 - **`core/ports/`** — Protocol interfaces the core depends on (`LLMProvider`,
-  `ConversationStore`, `ScenarioDefinitionStore`, `ScenarioSessionStore`, …). Everything
+  `ConversationStore`, `ScenarioDefinitionStore`, `ScenarioSessionStore`, `SpeechSynthesizer`, …). Everything
   the domain needs from the outside world is a port; `infrastructure/` provides the impls.
 - **`core/`** — domain + engine. Domain entities are **immutable** (`frozen=True` dataclasses
   with factory methods). `core/engine/orchestrator.py` (`RPOrchestrator`) drives a turn;

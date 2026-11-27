@@ -212,7 +212,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
       <ol class="flex flex-col gap-5">
         <li
           v-for="(message, index) in store.transcript"
-          :key="index"
+          :key="`${sessionId}-${index}`"
           class="group rounded-control px-4 py-3"
           :class="
             message.role === 'user'
