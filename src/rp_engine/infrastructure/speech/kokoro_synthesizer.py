@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 
 _MIB = 1024 * 1024
 _PCM_MAX = 32767
+# The repository IDs that kokoro knows. `KModel` looks the ID up in a fixed table, so any
+# other value fails with a KeyError on the first request.
+KNOWN_MODELS = ("hexgrad/Kokoro-82M", "hexgrad/Kokoro-82M-v1.1-zh")
 SAMPLE_RATE = 24000  # Kokoro always makes 24 kHz audio.
 
 
@@ -128,6 +131,13 @@ def build_speech_synthesizer(
     """
     if not settings.speech_model:
         logger.info("Speech disabled")
+        return None
+    if settings.speech_model not in KNOWN_MODELS:
+        logger.warning(
+            "RP_ENGINE_SPEECH_MODEL is not a model that kokoro knows; use one of %s. "
+            "Speech disabled.",
+            ", ".join(KNOWN_MODELS),
+        )
         return None
     if not package_installed():
         logger.warning(

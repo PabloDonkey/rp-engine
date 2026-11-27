@@ -103,7 +103,8 @@ uv sync
 
 The admin panel can read story messages aloud with a local voice model. This is optional and
 needs a graphics card. To use it, install the extra package and set
-`RP_ENGINE_SPEECH_MODEL=hexgrad/Kokoro-82M` (the Kokoro voice model; see `.env.example`). The
+`RP_ENGINE_SPEECH_MODEL=hexgrad/Kokoro-82M` (the Kokoro voice model; see `.env.example`). Kokoro knows only two IDs, `hexgrad/Kokoro-82M`
+and `hexgrad/Kokoro-82M-v1.1-zh`. Any other value turns speech off. The
 voice is fixed for all messages. Change it with `RP_ENGINE_SPEECH_VOICE`:
 
 ```bash
