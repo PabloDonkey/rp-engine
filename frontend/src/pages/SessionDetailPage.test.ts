@@ -79,6 +79,8 @@ vi.mock("@/api", () => ({
   getSessionTraces: async () => [],
   getSessionMemory: async () => memory,
   exportSession: async () => ({}),
+  // The transcript renders a play button, which imports this.
+  synthesizeSpeech: async () => new Blob([]),
 }));
 
 // `SessionDetailPage.vue` imports `useRouter` directly, so that half needs the module

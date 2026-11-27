@@ -101,6 +101,14 @@ docs/
 uv sync
 ```
 
+The admin panel can read story messages aloud with a local voice model. This is optional and
+needs a graphics card. To use it, install the extra package and set
+`RP_ENGINE_SPEECH_MODEL` (see `.env.example`):
+
+```bash
+uv sync --extra speech
+```
+
 ## Environment setup
 
 ```bash

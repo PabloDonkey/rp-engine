@@ -20,6 +20,11 @@ from rp_engine.core.ports.processing_feedback import (
 from rp_engine.core.ports.scenario_definition_store import ScenarioDefinitionStore
 from rp_engine.core.ports.scenario_session_store import ScenarioSessionStore
 from rp_engine.core.ports.session_summary_store import SessionSummaryStore
+from rp_engine.core.ports.speech_synthesizer import (
+    InsufficientGpuMemoryError,
+    SpeechError,
+    SpeechSynthesizer,
+)
 from rp_engine.core.ports.token_counter import TokenCounter
 from rp_engine.core.ports.user_identity_store import UserIdentityStore
 from rp_engine.core.ports.world_store import WorldStore
@@ -33,6 +38,7 @@ __all__ = [
     "GenerationTraceStore",
     "GroupIdentityStore",
     "IdentityResolverPort",
+    "InsufficientGpuMemoryError",
     "LLMProvider",
     "LorebookStore",
     "MemorySource",
@@ -43,6 +49,8 @@ __all__ = [
     "ScenarioDefinitionStore",
     "ScenarioSessionStore",
     "SessionSummaryStore",
+    "SpeechError",
+    "SpeechSynthesizer",
     "TokenCounter",
     "UserIdentityStore",
     "WorldStore",

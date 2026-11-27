@@ -40,6 +40,7 @@ from rp_engine.core.ports import (
     ScenarioDefinitionStore,
     ScenarioSessionStore,
     SessionSummaryStore,
+    SpeechSynthesizer,
     TokenCounter,
     UserIdentityStore,
 )
@@ -65,6 +66,7 @@ from rp_engine.infrastructure.postgres.repositories import (
     PostgresSessionSummaryStore,
     PostgresUserIdentityStore,
 )
+from rp_engine.infrastructure.speech import build_speech_synthesizer
 from rp_engine.infrastructure.tasks import AsyncioTaskScheduler
 
 logger = logging.getLogger(__name__)
@@ -98,6 +100,7 @@ class AppContainer:
     telegram_authorization: TelegramAuthorization
     telegram_runtime: TelegramRuntime | None
     task_scheduler: AsyncioTaskScheduler
+    speech_synthesizer: SpeechSynthesizer | None
     runtime_state: RuntimeState
     db_health_probe: PostgresHealthProbe
     db_startup_check_fail_fast: bool
@@ -269,6 +272,9 @@ def build_container(settings: Settings) -> AppContainer:
     else:
         logger.info("Telegram adapter disabled")
 
+    # None when speech is off or the `speech` extra is not installed. Loads no model here.
+    speech_synthesizer = build_speech_synthesizer(settings)
+
     logger.info(
         "Dependencies created",
         extra={
@@ -294,6 +300,7 @@ def build_container(settings: Settings) -> AppContainer:
         telegram_authorization=telegram_authorization,
         telegram_runtime=telegram_runtime,
         task_scheduler=task_scheduler,
+        speech_synthesizer=speech_synthesizer,
         runtime_state=RuntimeState(),
         db_health_probe=db_health_probe,
         db_startup_check_fail_fast=settings.postgres_startup_check_fail_fast,
@@ -323,6 +330,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             container.telegram_authorization,
             container.scenario_transfer_service,
             container.playthrough_service,
+            container.speech_synthesizer,
         )
     )
     app.include_router(create_play_router(container.admin_service, container.chat_service))
