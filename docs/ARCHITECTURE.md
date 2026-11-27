@@ -184,8 +184,10 @@ The panel can read a narrator message aloud.
 * `SpeechSynthesizer` is the port, in `core/ports/speech_synthesizer.py`. It has one call,
   `synthesize(text) -> bytes`, and returns a WAV file. It blocks, and it is not safe for
   concurrent calls.
-* `QwenSpeechSynthesizer` in `infrastructure/speech/` implements it with a local Qwen3-TTS
-  model. It imports torch and `qwen_tts` only when it loads the model, on the first request.
+* `KokoroSpeechSynthesizer` in `infrastructure/speech/` implements it with the local
+  Kokoro-82M model. It uses one fixed voice (`RP_ENGINE_SPEECH_VOICE`) and takes no tone
+  instruction. It imports torch and `kokoro` only when it loads the model, on the first
+  request.
   The packages come from the optional `speech` extra (`uv sync --extra speech`).
 * Speech is off when `RP_ENGINE_SPEECH_MODEL` is empty or the package is missing.
   `app/main.py` then passes no synthesizer to the admin router.

@@ -1,6 +1,6 @@
-from rp_engine.infrastructure.speech.qwen_synthesizer import (
-    QwenSpeechSynthesizer,
+from rp_engine.infrastructure.speech.kokoro_synthesizer import (
+    KokoroSpeechSynthesizer,
     build_speech_synthesizer,
 )
 
-__all__ = ["QwenSpeechSynthesizer", "build_speech_synthesizer"]
+__all__ = ["KokoroSpeechSynthesizer", "build_speech_synthesizer"]

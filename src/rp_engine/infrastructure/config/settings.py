@@ -92,12 +92,12 @@ class Settings(BaseSettings):
 
     # Voice acting in the admin panel (needs the `speech` extra: `uv sync --extra speech`).
     # An empty model turns the feature off. The model loads on the first request, not at boot.
-    speech_model: str = ""
-    speech_speaker: str = "ryan"
-    speech_instruct: str = "A tense, quiet storyteller."
-    speech_language: str = "auto"
+    speech_model: str = ""  # A Hugging Face repo ID. To turn on: hexgrad/Kokoro-82M
+    speech_voice: str = "am_michael"
+    # The Kokoro language code ("a" is American English). The voice must match the language.
+    speech_lang_code: str = "a"
     # The model is not loaded when the graphics card has less free memory than this (MiB).
-    speech_min_free_mib: int = Field(default=4700, ge=0)
+    speech_min_free_mib: int = Field(default=1500, ge=0)
 
     debug_status_enabled: bool = False
     debug_generation_trace: Literal["off", "errors", "all"] = "off"

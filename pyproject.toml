@@ -18,7 +18,8 @@ dependencies = [
 [project.optional-dependencies]
 # Voice acting in the admin panel. Install with `uv sync --extra speech`.
 speech = [
-    "qwen-tts",
+    "kokoro>=0.9.4",
+    "soundfile",
 ]
 
 [dependency-groups]

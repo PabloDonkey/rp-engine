@@ -4,8 +4,8 @@ import logging
 import sys
 import wave
 from array import array
-from collections.abc import Callable, Sequence
-from typing import Any, Protocol
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from typing import Protocol
 
 from rp_engine.core.ports.speech_synthesizer import InsufficientGpuMemoryError, SpeechSynthesizer
 from rp_engine.infrastructure.config.settings import Settings
@@ -14,24 +14,29 @@ logger = logging.getLogger(__name__)
 
 _MIB = 1024 * 1024
 _PCM_MAX = 32767
+SAMPLE_RATE = 24000  # Kokoro always makes 24 kHz audio.
 
 
-class SpeechModel(Protocol):
-    """The part of `qwen_tts.Qwen3TTSModel` this adapter uses."""
+class SpeechPipeline(Protocol):
+    """Text and voice in, audio chunks out. Each chunk is a list of float samples."""
 
-    def generate_custom_voice(self, **kwargs: Any) -> tuple[Sequence[Sequence[float]], int]: ...
+    def __call__(self, text: str, voice: str) -> Iterable[Sequence[float]]: ...
 
 
-def _load_qwen_model(model_name: str) -> SpeechModel:
-    # Imported here, not at the top of the file: torch and qwen_tts belong to the optional
+def _load_kokoro_pipeline(model_name: str, lang_code: str) -> SpeechPipeline:
+    # Imported here, not at the top of the file: torch and kokoro belong to the optional
     # `speech` extra. The module must import (and mypy and the tests must run) without them.
-    import torch
-    from qwen_tts import Qwen3TTSModel
+    from kokoro import KPipeline
 
-    model: SpeechModel = Qwen3TTSModel.from_pretrained(
-        model_name, device_map="cuda:0", dtype=torch.bfloat16
-    )
-    return model
+    pipeline = KPipeline(lang_code=lang_code, repo_id=model_name, device="cuda")
+
+    def run(text: str, voice: str) -> Iterator[Sequence[float]]:
+        for result in pipeline(text, voice=voice):
+            if result.audio is not None:
+                # A torch tensor is slow to walk in Python. `tolist()` makes plain floats.
+                yield result.audio.tolist()
+
+    return run
 
 
 def _free_gpu_memory_mib() -> int:
@@ -58,10 +63,10 @@ def _to_wav_bytes(samples: Sequence[float], sample_rate: int) -> bytes:
     return buffer.getvalue()
 
 
-class QwenSpeechSynthesizer:
-    """Speaks text with Qwen3-TTS (CustomVoice) on the local graphics card.
+class KokoroSpeechSynthesizer:
+    """Speaks text with Kokoro-82M on the local graphics card.
 
-    The model loads on the first request and then stays loaded. Before the load, the
+    The pipeline loads on the first request and then stays loaded. Before the load, the
     adapter checks free graphics card memory, so a busy card (for example one that is
     running LM Studio) gives a clear error instead of a crash.
 
@@ -72,36 +77,30 @@ class QwenSpeechSynthesizer:
         self,
         *,
         model_name: str,
-        speaker: str,
-        instruct: str,
-        language: str,
+        voice: str,
+        lang_code: str,
         min_free_mib: int,
-        load_model: Callable[[str], SpeechModel] = _load_qwen_model,
+        load_pipeline: Callable[[str, str], SpeechPipeline] = _load_kokoro_pipeline,
         free_memory_mib: Callable[[], int] = _free_gpu_memory_mib,
     ) -> None:
         self._model_name = model_name
-        self._speaker = speaker
-        self._instruct = instruct
-        self._language = language
+        self._voice = voice
+        self._lang_code = lang_code
         self._min_free_mib = min_free_mib
-        self._load_model = load_model
+        self._load_pipeline = load_pipeline
         self._free_memory_mib = free_memory_mib
-        self._model: SpeechModel | None = None
+        self._pipeline: SpeechPipeline | None = None
 
     def synthesize(self, text: str) -> bytes:
-        model = self._loaded_model()
-        waves, sample_rate = model.generate_custom_voice(
-            text=text,
-            speaker=self._speaker,
-            language=self._language,
-            instruct=self._instruct,
-            non_streaming_mode=True,
-        )
-        return _to_wav_bytes(waves[0], sample_rate)
+        pipeline = self._loaded_pipeline()
+        samples: list[float] = []
+        for chunk in pipeline(text, self._voice):
+            samples.extend(chunk)
+        return _to_wav_bytes(samples, SAMPLE_RATE)
 
-    def _loaded_model(self) -> SpeechModel:
-        if self._model is not None:
-            return self._model
+    def _loaded_pipeline(self) -> SpeechPipeline:
+        if self._pipeline is not None:
+            return self._pipeline
         free_mib = self._free_memory_mib()
         if free_mib < self._min_free_mib:
             logger.warning(
@@ -110,18 +109,18 @@ class QwenSpeechSynthesizer:
             )
             raise InsufficientGpuMemoryError()
         logger.info("Loading speech model", extra={"model": self._model_name})
-        self._model = self._load_model(self._model_name)
-        return self._model
+        self._pipeline = self._load_pipeline(self._model_name, self._lang_code)
+        return self._pipeline
 
 
-def _qwen_tts_installed() -> bool:
-    return importlib.util.find_spec("qwen_tts") is not None
+def _kokoro_installed() -> bool:
+    return importlib.util.find_spec("kokoro") is not None
 
 
 def build_speech_synthesizer(
     settings: Settings,
     *,
-    package_installed: Callable[[], bool] = _qwen_tts_installed,
+    package_installed: Callable[[], bool] = _kokoro_installed,
 ) -> SpeechSynthesizer | None:
     """Return the synthesizer, or None when speech is off or the `speech` extra is missing.
 
@@ -132,15 +131,14 @@ def build_speech_synthesizer(
         return None
     if not package_installed():
         logger.warning(
-            "RP_ENGINE_SPEECH_MODEL is set, but qwen_tts is not installed; "
+            "RP_ENGINE_SPEECH_MODEL is set, but kokoro is not installed; "
             "run `uv sync --extra speech`. Speech disabled."
         )
         return None
     logger.info("Speech enabled", extra={"model": settings.speech_model})
-    return QwenSpeechSynthesizer(
+    return KokoroSpeechSynthesizer(
         model_name=settings.speech_model,
-        speaker=settings.speech_speaker,
-        instruct=settings.speech_instruct,
-        language=settings.speech_language,
+        voice=settings.speech_voice,
+        lang_code=settings.speech_lang_code,
         min_free_mib=settings.speech_min_free_mib,
     )
