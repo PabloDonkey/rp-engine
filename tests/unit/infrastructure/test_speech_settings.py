@@ -15,7 +15,7 @@ def test_speech_defaults() -> None:
     assert settings.speech_speaker == "ryan"
     assert settings.speech_instruct == "A tense, quiet storyteller."
     assert settings.speech_language == "auto"
-    assert settings.speech_min_free_mib == 5000
+    assert settings.speech_min_free_mib == 4700
 
 
 def test_speech_settings_read_the_rp_engine_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
