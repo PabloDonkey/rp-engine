@@ -1,8 +1,9 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 
 from rp_engine.adapters.api.admin_models import (
@@ -19,6 +20,7 @@ from rp_engine.adapters.api.admin_models import (
     AdminSessionPersonaRequest,
     AdminSessionResponse,
     AdminSessionRuleRequest,
+    AdminSpeechRequest,
     AdminStartSessionRequest,
     AdminTraceResponse,
     AdminUserResponse,
@@ -28,6 +30,7 @@ from rp_engine.adapters.telegram.authorization import TelegramAuthorization
 from rp_engine.application.services.admin_service import AdminService
 from rp_engine.application.services.playthrough_service import PlaythroughService
 from rp_engine.application.services.scenario_transfer_service import ScenarioTransferService
+from rp_engine.core.ports.speech_synthesizer import InsufficientGpuMemoryError, SpeechSynthesizer
 from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.user.user import User
 from rp_engine.infrastructure.scenario_serialization import scenario_definition_to_payload
@@ -45,13 +48,30 @@ def create_admin_router(
     telegram_authorization: TelegramAuthorization | None,
     scenario_transfer_service: ScenarioTransferService,
     playthrough_service: PlaythroughService,
+    speech_synthesizer: SpeechSynthesizer | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/admin")
+    # One generation at a time: the model holds one graphics card, and a second request
+    # waits here instead of running beside the first.
+    speech_lock = asyncio.Lock()
 
     def _is_blocked(telegram_external_id: str | None) -> bool:
         if telegram_authorization is None or telegram_external_id is None:
             return False
         return not telegram_authorization.has_explicit_private_user(telegram_external_id)
+
+    @router.post("/speech")
+    async def speak(payload: AdminSpeechRequest) -> Response:
+        """Read one message aloud. Returns WAV audio; nothing is stored."""
+        if speech_synthesizer is None:
+            raise HTTPException(status_code=503, detail="Speech is not enabled")
+        async with speech_lock:
+            try:
+                # Loading and generating block for seconds, so they run off the event loop.
+                audio = await asyncio.to_thread(speech_synthesizer.synthesize, payload.text)
+            except InsufficientGpuMemoryError as error:
+                raise HTTPException(status_code=503, detail=str(error)) from error
+        return Response(content=audio, media_type="audio/wav")
 
     @router.get("/users")
     async def list_users() -> list[AdminUserResponse]:

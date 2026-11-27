@@ -3,6 +3,7 @@ import { computed, nextTick, reactive, ref, watch, watchEffect } from "vue";
 import { PButton, PScrollArea } from "pablo-design-system";
 
 import type { AdminMessage, AdminTrace } from "@/api";
+import SpeechButton from "@/components/play/SpeechButton.vue";
 import { useStickToBottom } from "@/composables/useStickToBottom";
 import { useAdminStore } from "@/stores/admin";
 
@@ -211,7 +212,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
       <ol class="flex flex-col gap-5">
         <li
           v-for="(message, index) in store.transcript"
-          :key="index"
+          :key="`${sessionId}-${index}`"
           class="group rounded-control px-4 py-3"
           :class="
             message.role === 'user'
@@ -225,6 +226,7 @@ function turnMetaFor(turn: string | undefined): Record<string, unknown> {
             <span>{{ roleLabel(message) }}</span>
             <span v-if="message.metadata.turn">&middot; turn {{ message.metadata.turn }}</span>
             <span class="ml-auto flex items-center gap-2 normal-case">
+              <SpeechButton v-if="message.role === 'character'" :text="message.content" />
               <!-- Only the final message is deletable, which is what enforces the ordering. -->
               <PButton
                 v-if="isLastMessage(index)"

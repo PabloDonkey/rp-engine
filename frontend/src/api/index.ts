@@ -190,6 +190,12 @@ async function requestVoid(path: string, init?: RequestInit): Promise<void> {
   await send(path, init);
 }
 
+/** Read one message aloud. Resolves with the WAV audio. Throws `ApiError` with the server detail. */
+export async function synthesizeSpeech(text: string): Promise<Blob> {
+  const response = await send("/speech", { method: "POST", body: JSON.stringify({ text }) });
+  return response.blob();
+}
+
 export function listUsers(): Promise<AdminUser[]> {
   return request("/users", z.array(AdminUserSchema));
 }

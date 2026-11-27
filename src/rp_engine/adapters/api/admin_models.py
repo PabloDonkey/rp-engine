@@ -20,6 +20,17 @@ from rp_engine.core.scenario.scenario_session import ScenarioSession
 from rp_engine.core.scenario.session_directives import SessionDirectives
 
 
+class AdminSpeechRequest(BaseModel):
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def _text_must_not_be_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("text must not be empty")
+        return value
+
+
 class AdminUserResponse(BaseModel):
     id: UUID
     display_name: str

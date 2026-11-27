@@ -90,6 +90,15 @@ class Settings(BaseSettings):
     # updating". The call runs in the background, so a generous cap costs no player time.
     memory_summary_max_tokens: int = Field(default=6144, ge=1)
 
+    # Voice acting in the admin panel (needs the `speech` extra: `uv sync --extra speech`).
+    # An empty model turns the feature off. The model loads on the first request, not at boot.
+    speech_model: str = ""  # A Hugging Face repo ID. To turn on: hexgrad/Kokoro-82M
+    speech_voice: str = "am_michael"
+    # The Kokoro language code ("a" is American English). The voice must match the language.
+    speech_lang_code: str = "a"
+    # The model is not loaded when the graphics card has less free memory than this (MiB).
+    speech_min_free_mib: int = Field(default=1500, ge=0)
+
     debug_status_enabled: bool = False
     debug_generation_trace: Literal["off", "errors", "all"] = "off"
     default_world_id: str = "default"
