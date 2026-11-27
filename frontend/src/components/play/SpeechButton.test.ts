@@ -159,5 +159,8 @@ test("a not-enough-memory error does not hide the button", async () => {
 
   const second = render(SpeechButton, { props: { text: "Again." } });
 
-  await expect.element(second.getByRole("button", { name: "Play message" })).toBeVisible();
+  // Both buttons are on the page, so look only inside the second render.
+  await expect
+    .poll(() => second.container.querySelector("button")?.getAttribute("aria-label"))
+    .toBe("Play message");
 });
