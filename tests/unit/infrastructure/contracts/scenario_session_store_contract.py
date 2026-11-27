@@ -50,7 +50,9 @@ async def assert_scenario_session_store_contract(store: ScenarioSessionStore) ->
 
     # Active tracking is per owner.
     assert await store.get_active_for_owner(owner_kind="user", owner_id=USER_ID) is None
-    await store.set_active_for_owner(owner_kind="user", owner_id=USER_ID, session_id=session.id)
+    await store.set_active_for_owner(
+        owner_kind="user", owner_id=USER_ID, session_id=session.id
+    )
     active = await store.get_active_for_owner(owner_kind="user", owner_id=USER_ID)
     assert active is not None
     assert active.id == session.id
@@ -137,7 +139,6 @@ async def assert_live_session_counts_contract(store: ScenarioSessionStore) -> No
     The admin scenario list shows this number on every row, so it must come from one query,
     and it must count live sessions only — a superseded story is not somebody playing.
     """
-
     # Scoped to two ids of its own, so this contract can run after another that leaves
     # sessions behind.
     async def counts() -> dict[str, int]:
