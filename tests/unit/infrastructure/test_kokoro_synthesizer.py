@@ -3,16 +3,16 @@ import wave
 from collections.abc import Sequence
 
 import pytest
-from rp_engine.infrastructure.speech.kokoro_synthesizer import (
-    KokoroSpeechSynthesizer,
-    build_speech_synthesizer,
-)
 
 from rp_engine.core.ports.speech_synthesizer import (
     InsufficientGpuMemoryError,
     SpeechSynthesizer,
 )
 from rp_engine.infrastructure.config.settings import Settings
+from rp_engine.infrastructure.speech.kokoro_synthesizer import (
+    KokoroSpeechSynthesizer,
+    build_speech_synthesizer,
+)
 
 
 class FakePipeline:
